@@ -18,6 +18,8 @@ a deletion can't miss an instance that is still on its way.
 import math
 from dataclasses import dataclass, field
 
+from loguru import logger
+
 from exo.master.placement import (
     cancel_unnecessary_downloads,
     delete_instance,
@@ -197,17 +199,28 @@ def _keep(
             download_status=state.downloads,
             node_rdma_ctl=state.node_rdma_ctl,
         )
-    except ValueError as error:
+        (instance_id,) = [i for i in placement if i not in state.instances]
+    except Exception as error:
+        # A model that fits nowhere says why with a ValueError. Anything else placement raises
+        # is this deployment's problem too: it must not stop the keeper keeping the others.
         attempt.retry_at = now + UNPLACEABLE_RETRY
         attempt.unplaceable_on = shape
-        if deployment.placement_error == str(error):
+        reason = (
+            str(error)
+            if isinstance(error, ValueError)
+            else f"{type(error).__name__}: {error}"
+        )
+        if deployment.placement_error == reason:
             return []
+        if not isinstance(error, ValueError):
+            logger.opt(exception=error).warning(
+                f"Placing {deployment.model_card.model_id} failed unexpectedly"
+            )
         return [
             DeploymentPlacementFailed(
-                deployment_id=deployment.deployment_id, error=str(error)
+                deployment_id=deployment.deployment_id, error=reason
             )
         ]
-    (instance_id,) = [i for i in placement if i not in state.instances]
     attempt.instance_id, attempt.placed_at, attempt.ready = instance_id, now, False
     attempt.unplaceable_on = None
     return [

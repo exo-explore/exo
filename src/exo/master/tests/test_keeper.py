@@ -6,10 +6,11 @@ times, and applies what it returns, so the tests follow the keeper exactly as th
 
 import copy
 import random
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 import pytest
 
+from exo.master import keeper as keeper_module
 from exo.master.keeper import (
     FIRST_BACKOFF,
     MAX_BACKOFF,
@@ -565,6 +566,60 @@ def test_an_unplaceable_deployment_does_not_hold_up_the_others():
         now += 1
 
     assert len(_instances_of(state, MODEL_A)) == 1
+
+
+def _crashing_for[**P, R](model_id: ModelId, place: Callable[P, R]) -> Callable[P, R]:
+    """`place`, but raising an unexpected error for one model."""
+
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        command = args[0]
+        if (
+            isinstance(command, PlaceInstance)
+            and command.model_card.model_id == model_id
+        ):
+            raise KeyError("some node")
+        return place(*args, **kwargs)
+
+    return wrapper
+
+
+def test_a_deployment_whose_placement_crashes_does_not_hold_up_the_others(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Placement raising something unexpected for one model is that deployment's problem: it is
+    reported and tried again later, and the other deployments are still kept."""
+    broken = _model("test/broken")
+    monkeypatch.setattr(
+        keeper_module,
+        "place_instance",
+        _crashing_for(broken.model_id, keeper_module.place_instance),
+    )
+    keeper = Keeper(started_at=START)
+    # The keeper goes through deployments in id order: the broken one first
+    failing = _deployment(broken).model_copy(
+        update={"deployment_id": DeploymentId("a")}
+    )
+    working = _deployment(MODEL_A).model_copy(
+        update={"deployment_id": DeploymentId("b")}
+    )
+    state = _apply(
+        _cluster(2),
+        [DeploymentCreated(deployment=failing), DeploymentCreated(deployment=working)],
+    )
+
+    events = keeper.step(state, AFTER_GRACE)
+    (failed,) = events
+    assert isinstance(failed, DeploymentPlacementFailed)
+    assert failed.error == "KeyError: 'some node'"
+    state = _apply(state, events)
+    state = _apply(state, keeper.step(state, AFTER_GRACE + 1))
+
+    assert len(_instances_of(state, MODEL_A)) == 1
+    assert keeper.step(state, AFTER_GRACE + 2) == []
+    assert (
+        deployment_status(state.deployments[failing.deployment_id], state)
+        == "cant_place"
+    )
 
 
 # Deployments coming and going
