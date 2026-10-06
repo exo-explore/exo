@@ -249,14 +249,12 @@ impl Discovery {
 
         let addrs = self.ifaces.lock().clone();
         debug!("announcing Hello({nonce:?}) to {addrs:?}");
-        // rev so .remove() doesn't break things
-        for (i, addr) in addrs.into_iter().enumerate().rev() {
+        // A failed send says nothing lasting about the interface: it is the interface watcher that
+        // joins and leaves groups, and it never re-adds an interface it has already joined, so
+        // dropping an address here would silence this node on that interface for good.
+        for addr in addrs {
             match self.sock.send_to(&buf, addr).await {
                 Ok(bytes) => trace!("sent {bytes} to {addr}"),
-                Err(e) if e.kind() == io::ErrorKind::HostUnreachable => {
-                    debug!("disabling discovery address {addr}: {e}");
-                    _ = self.ifaces.lock().swap_remove(i);
-                }
                 Err(e) => debug!("failed to reach {addr}: {e}"),
             }
         }
@@ -337,3 +335,27 @@ impl Message for WhatsUp {
     const KIND: Kind = Kind::WhatsUp;
 }
 impl_alloc!(WhatsUp);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A send error on one interface must not remove its address: only the interface watcher
+    /// manages the list, and it never re-adds an interface it has already joined.
+    #[tokio::test]
+    async fn announce_keeps_addresses_whose_send_fails() {
+        let zid = ZenohId::try_from(&[1u8; 16][..]).expect("a valid zenoh id");
+        let discovery = Discovery::new(zid, [0; 8], 0, 0)
+            .await
+            .expect("discovery binds an ephemeral port");
+        // an interface index nothing joined: macOS reports EHOSTUNREACH for most unused small
+        // indices, other platforms report a different error, and the list must survive either way
+        let unjoined = SocketAddrV6::new(GROUP, 1, 0, 2);
+        discovery.ifaces.lock().push(unjoined);
+        let before = discovery.ifaces.lock().clone();
+
+        discovery.announce().await.expect("announce never fails");
+
+        assert_eq!(*discovery.ifaces.lock(), before);
+    }
+}
