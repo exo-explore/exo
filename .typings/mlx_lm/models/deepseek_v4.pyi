@@ -10,6 +10,33 @@ from .base import BaseModelArgs
 from .cache import ArraysCache, RotatingKVCache
 from .switch_layers import SwitchGLU
 
+_K_COMP: str
+_K_IDX: str
+
+def scaled_dot_product_attention(
+    queries: mx.array,
+    keys: mx.array,
+    values: mx.array,
+    cache: Any,
+    scale: float,
+    mask: Optional[mx.array],
+    sinks: Optional[mx.array] = None,
+) -> mx.array: ...
+def hc_sinkhorn_collapse(
+    mixes: mx.array,
+    scale: mx.array,
+    base: mx.array,
+    x: mx.array,
+    hc_mult: int,
+    sinkhorn_iters: int,
+    eps: mx.array | float,
+) -> tuple[mx.array, mx.array, mx.array]: ...
+def _hc_expand_ops(
+    f_out: mx.array, residual: mx.array, post: mx.array, comb: mx.array
+) -> mx.array: ...
+
+_moe_gate_kernel: object
+
 @dataclass
 class ModelArgs(BaseModelArgs):
     model_type: str
@@ -54,7 +81,7 @@ class DeepseekV4RoPE(nn.Module):
     def __call__(
         self,
         x: mx.array,
-        offset: int = 0,
+        offset: int | mx.array = 0,
         inverse: bool = False,
     ) -> mx.array: ...
 
@@ -62,6 +89,12 @@ class HyperConnection(nn.Module):
     dim: int
     hc_mult: int
     norm_eps: float
+    sinkhorn_iters: int
+    hc_eps: float
+    fn: mx.array
+    base: mx.array
+    scale: mx.array
+    _eps_arr: mx.array
 
     def __init__(
         self,
@@ -71,6 +104,10 @@ class HyperConnection(nn.Module):
         sinkhorn_iters: int,
         hc_eps: float,
     ) -> None: ...
+    def hc_pre(self, x: mx.array) -> tuple[mx.array, mx.array, mx.array]: ...
+    def hc_post(
+        self, f_out: mx.array, residual: mx.array, post: mx.array, comb: mx.array
+    ) -> mx.array: ...
 
 class HyperHead(nn.Module):
     dim: int
@@ -114,6 +151,25 @@ class Compressor(nn.Module):
     ) -> mx.array: ...
 
 class Indexer(nn.Module):
+    dim: int
+    n_heads: int
+    head_dim: int
+    rope_head_dim: int
+    index_topk: int
+    compress_ratio: int
+    softmax_scale: float
+    rope: DeepseekV4RoPE
+    wq_b: nn.Linear
+    weights_proj: nn.Linear
+    compressor: Compressor
+
+    def __call__(
+        self,
+        x: mx.array,
+        qr: mx.array,
+        cache: "DeepseekV4Cache",
+        offset: Any,
+    ) -> Optional[mx.array]: ...
     def __init__(
         self,
         args: ModelArgs,
@@ -164,6 +220,8 @@ class DeepseekV4Cache:
     def filter(self, batch_indices: mx.array) -> None: ...
     def extend(self, other: "DeepseekV4Cache") -> None: ...
     def extract(self, idx: int) -> "DeepseekV4Cache": ...
+    def get_branch(self, key: str) -> _CompressorBranch: ...
+    def pooled_lengths(self, key: str) -> Optional[List[int]]: ...
     @classmethod
     def merge(cls, caches: List["DeepseekV4Cache"]) -> "DeepseekV4Cache": ...
 
@@ -197,9 +255,10 @@ class V4Attention(nn.Module):
     def __call__(
         self,
         x: mx.array,
-        mask: Optional[mx.array] = None,
         cache: Optional[Any] = None,
     ) -> mx.array: ...
+    def _sink_for(self, dtype: mx.Dtype) -> mx.array: ...
+    def _grouped_output_projection(self, out: mx.array) -> mx.array: ...
 
 class DeepseekV4MLP(nn.Module):
     gate_proj: nn.Linear
@@ -216,10 +275,20 @@ class DeepseekV4MLP(nn.Module):
 
 class MoEGate(nn.Module):
     weight: mx.array
+    layer_id: int
+    n_routed: int
+    top_k: int
+    hash: bool
+    score_func: str
+    route_scale: float
+    norm_topk_prob: bool
+    e_score_correction_bias: mx.array
+    tid2eid: mx.array
+    _route_scale_arr: mx.array
 
     def __init__(self, args: ModelArgs, layer_id: int) -> None: ...
     def __call__(
-        self, x: mx.array, input_ids: mx.array
+        self, x: mx.array, input_ids: Optional[mx.array] = None
     ) -> tuple[mx.array, mx.array]: ...
 
 class DeepseekV4MoE(nn.Module):

@@ -17,6 +17,7 @@ from numpy.typing import ArrayLike as _ArrayLike
 
 from . import cuda as cuda
 from . import distributed as distributed
+from . import fast as fast
 from . import metal as metal
 from . import random as random
 
