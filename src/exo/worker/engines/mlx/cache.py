@@ -120,48 +120,80 @@ def _copy_cache_list(cl: CacheList) -> CacheList:
     return CacheList(*copied)
 
 
-def _detached_copy_or_none(a: mx.array | None) -> mx.array | None:
-    if a is None:
-        return None
-    out = _detached_copy(a)
-    mx.eval(out)
-    return out
+def _detached_copies(arrays: list[mx.array | None]) -> list[mx.array | None]:
+    """Batched `_detached_copy`: two GPU syncs in total instead of one per array."""
+    staged = [
+        None if a is None else a.astype(mx.float32) if a.dtype == mx.bfloat16 else a
+        for a in arrays
+    ]
+    mx.eval([s for s in staged if s is not None])
+    copies: list[mx.array | None] = []
+    for original, host in zip(arrays, staged, strict=True):
+        if original is None or host is None:
+            copies.append(None)
+            continue
+        copy = mx.array(np.array(host))
+        copies.append(
+            copy.astype(mx.bfloat16) if original.dtype == mx.bfloat16 else copy
+        )
+    mx.eval([c for c in copies if c is not None])
+    return copies
 
 
-def _copy_compressor_branch(b: CompressorBranch) -> CompressorBranch:
-    out = CompressorBranch.__new__(CompressorBranch)
-    out.buffer_kv = _detached_copy_or_none(b.buffer_kv)
-    out.buffer_gate = _detached_copy_or_none(b.buffer_gate)
-    out.prev_kv = _detached_copy_or_none(b.prev_kv)
-    out.prev_gate = _detached_copy_or_none(b.prev_gate)
-    out.pool = _detached_copy_or_none(b.pool)
-    out.buffer_lengths = deepcopy(b.buffer_lengths)
-    out.pool_lengths = deepcopy(b.pool_lengths)
-    out.buffer_count = deepcopy(b.buffer_count)
-    out._new_pool_lengths = deepcopy(b._new_pool_lengths)
-    return out
+def _copy_v4_caches(caches: list[DeepseekV4Cache]) -> list[DeepseekV4Cache]:
+    sources: list[mx.array | None] = []
+    for c in caches:
+        local: RotatingKVCache = c.local
+        if local.keys is None or local.values is None:
+            sources.extend([None, None])
+        else:
+            n = min(local.max_size, local.keys.shape[2])
+            sources.extend([local.keys[..., -n:, :], local.values[..., -n:, :]])
+        for branch in c._branches.values():
+            sources.extend(
+                [
+                    branch.buffer_kv,
+                    branch.buffer_gate,
+                    branch.prev_kv,
+                    branch.prev_gate,
+                    branch.pool,
+                ]
+            )
+    copies = iter(_detached_copies(sources))
+
+    snaps: list[DeepseekV4Cache] = []
+    for c in caches:
+        local = c.local
+        local_snap = RotatingKVCache.__new__(RotatingKVCache)
+        local_snap.keys = next(copies)
+        local_snap.values = next(copies)
+        local_snap.offset = local.offset
+        local_snap._idx = 0 if local_snap.keys is None else local_snap.keys.shape[2]
+        local_snap.keep = local.keep
+        local_snap.max_size = local.max_size
+
+        snap = DeepseekV4Cache.__new__(DeepseekV4Cache)
+        snap.local = local_snap
+        snap._branches = {}
+        for key, branch in c._branches.items():
+            out = CompressorBranch.__new__(CompressorBranch)
+            out.buffer_kv = next(copies)
+            out.buffer_gate = next(copies)
+            out.prev_kv = next(copies)
+            out.prev_gate = next(copies)
+            out.pool = next(copies)
+            out.buffer_lengths = deepcopy(branch.buffer_lengths)
+            out.pool_lengths = deepcopy(branch.pool_lengths)
+            out.buffer_count = deepcopy(branch.buffer_count)
+            out._new_pool_lengths = deepcopy(branch._new_pool_lengths)
+            snap._branches[key] = out
+        snap._pending_lengths = deepcopy(c._pending_lengths)
+        snaps.append(snap)
+    return snaps
 
 
 def _copy_v4_cache(c: DeepseekV4Cache) -> DeepseekV4Cache:
-    snap = DeepseekV4Cache.__new__(DeepseekV4Cache)
-
-    local: RotatingKVCache = c.local
-    local_snap = copy_rotating_kv_cache(local)
-    if local_snap is None:
-        local_snap = RotatingKVCache.__new__(RotatingKVCache)
-        local_snap.keys = None
-        local_snap.values = None
-        local_snap.offset = local.offset
-        local_snap._idx = 0
-        local_snap.keep = local.keep
-        local_snap.max_size = local.max_size
-    snap.local = local_snap
-
-    snap._branches = {
-        key: _copy_compressor_branch(branch) for key, branch in c._branches.items()
-    }
-    snap._pending_lengths = deepcopy(c._pending_lengths)
-    return snap
+    return _copy_v4_caches([c])[0]
 
 
 def copy_snapshot_entry(
@@ -192,10 +224,13 @@ def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
             states.append(copy_rotating_kv_cache(c))
         elif isinstance(c, CacheList) and not bool(c.is_trimmable()):  # type: ignore[reportUnknownMemberType]
             states.append(_copy_cache_list(c))
-        elif isinstance(c, DeepseekV4Cache):
-            states.append(_copy_v4_cache(c))
         else:
+            # DeepseekV4Cache entries are copied together below.
             states.append(None)
+    v4_entries = [(i, c) for i, c in enumerate(cache) if isinstance(c, DeepseekV4Cache)]
+    v4_snaps = _copy_v4_caches([c for _, c in v4_entries])
+    for (i, _), snap in zip(v4_entries, v4_snaps, strict=True):
+        states[i] = snap
     token_count = cache_length(cache)
     return CacheSnapshot(states=states, token_count=token_count)
 
