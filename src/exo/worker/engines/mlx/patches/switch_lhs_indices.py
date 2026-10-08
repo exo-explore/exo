@@ -26,8 +26,7 @@ def _cached_lhs_indices(batch_shape: tuple[int, ...]) -> mx.array | None:
         return None
     indices = _lhs_indices.get(batch_shape)
     if indices is None:
-        indices = mx.reshape(mx.arange(size, dtype=mx.uint32), batch_shape)
-        mx.eval(indices)
+        indices = mx.reshape(mx.array(list(range(size)), dtype=mx.uint32), batch_shape)
         _lhs_indices[batch_shape] = indices
     return indices
 

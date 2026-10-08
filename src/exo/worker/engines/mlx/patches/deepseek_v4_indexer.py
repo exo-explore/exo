@@ -8,7 +8,8 @@ gather only produce a permutation of the full pool, and attention does not
 depend on key order. Returning ``None`` sends V4Attention down its
 full-pool path, which attends to exactly the same keys.
 
-Only the single-token decode step with a uniform batch takes the shortcut.
+Only uniform-batch steps of up to a few tokens (decode and speculative
+verification) take the shortcut.
 The Indexer's own compressor still runs every step so its pool is ready once
 the context outgrows ``index_topk``.
 """
@@ -23,6 +24,8 @@ from mlx_lm.models.deepseek_v4 import (
 )
 
 _original_call = Indexer.__call__
+# Decode and short speculative-verification steps.
+_MAX_SHORTCUT_SEQUENCE = 4
 
 
 def _patched_call(
@@ -32,7 +35,7 @@ def _patched_call(
     cache: DeepseekV4Cache,
     offset: int | mx.array,
 ) -> mx.array | None:
-    if x.shape[1] != 1 or cache.pooled_lengths(_K_IDX) is not None:
+    if x.shape[1] > _MAX_SHORTCUT_SEQUENCE or cache.pooled_lengths(_K_IDX) is not None:
         return _original_call(self, x, qr, cache, offset)
 
     idx_kv = self.compressor(x, cache, offset, key=_K_IDX)

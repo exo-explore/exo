@@ -23,6 +23,7 @@ import mlx.nn as nn
 from mlx_lm.models import deepseek_v4
 from mlx_lm.models.deepseek_v4 import (
     _K_COMP,  # pyright: ignore[reportPrivateUsage]
+    _K_IDX,  # pyright: ignore[reportPrivateUsage]
     DeepseekV4Cache,
     HyperConnection,
     V4Attention,
@@ -30,6 +31,8 @@ from mlx_lm.models.deepseek_v4 import (
 
 _THREADGROUP = 256
 _ATTENTION_THREADS = 256
+# Longest step (speculative verification) that takes the fused decode path.
+MAX_DECODE_SEQUENCE = 4
 
 _HC_MIX_SOURCE = """
     uint group = threadgroup_position_in_grid.x;
@@ -118,7 +121,7 @@ _NORM_ROPE_SOURCE = """
 
     constexpr uint FIRST_ROTATED_PAIR = (D - ROPE_DIMS) / 2;
     if (pair >= FIRST_ROTATED_PAIR) {
-        float theta = position[0] / freqs[pair - FIRST_ROTATED_PAIR];
+        float theta = position[(row / ROWS_PER_POSITION) % SEQUENCE] / freqs[pair - FIRST_ROTATED_PAIR];
         float c = metal::cos(theta);
         float s = metal::sin(theta);
         float rotated_a = a * c - b * s;
@@ -136,13 +139,28 @@ _NORM_ROPE_SOURCE = """
 # The simdgroups' partial results are merged at the end.
 _ATTENTION_SOURCE = """
     uint batch_head = threadgroup_position_in_grid.x;
-    uint batch = batch_head / H;
     uint head = batch_head % H;
+    int position = int((batch_head / H) % SEQUENCE);
+    uint batch = batch_head / (H * SEQUENCE);
     uint lane = thread_index_in_simdgroup;
     uint simdgroup = simdgroup_index_in_threadgroup;
     constexpr uint PER_LANE = D / 32;
     constexpr uint SIMDGROUPS = THREADS / 32;
     int keys = kv_shape[1];
+
+    // kv rows: window_len sliding-window keys, then compressed rows.
+    int offset = params[0];
+    int window_len = params[1];
+    int window = params[2];
+    int ratio = params[3];
+    int window_end = metal::min(window_len, position + window_len - SEQUENCE + 1);
+    int window_start = metal::max(0, position + window_len - SEQUENCE - window + 1);
+    int window_count = metal::max(0, window_end - window_start);
+    int compressed = keys - window_len;
+    int compressed_count = ratio > 0
+        ? metal::min(compressed, (offset + position + 1) / ratio)
+        : compressed;
+    int visible = window_count + compressed_count;
 
     threadgroup float partial_max[SIMDGROUPS];
     threadgroup float partial_sum[SIMDGROUPS];
@@ -158,7 +176,8 @@ _ATTENTION_SOURCE = """
     for (uint i = 0; i < PER_LANE; ++i) {
         acc[i] = 0.0f;
     }
-    for (int k = simdgroup; k < keys; k += SIMDGROUPS) {
+    for (int t = simdgroup; t < visible; t += SIMDGROUPS) {
+        int k = t < window_count ? window_start + t : window_len + (t - window_count);
         float value[PER_LANE];
         float dot = 0.0f;
         for (uint i = 0; i < PER_LANE; ++i) {
@@ -223,7 +242,7 @@ _norm_rope_kernel = mx.fast.metal_kernel(
 )
 _attention_kernel = mx.fast.metal_kernel(
     name="dsv4_decode_attention",
-    input_names=["q", "kv", "sinks", "scale"],
+    input_names=["q", "kv", "sinks", "scale", "params"],
     output_names=["out"],
     source=_ATTENTION_SOURCE,
 )
@@ -236,7 +255,6 @@ def _scalar(value: float) -> mx.array:
     array = _scalars.get(value)
     if array is None:
         array = mx.array([value], dtype=mx.float32)
-        mx.eval(array)
         _scalars[value] = array
     return array
 
@@ -274,13 +292,16 @@ def norm_rope(
     x: mx.array,
     weight: mx.array | None,
     eps: float | None,
-    position: float,
+    positions: list[float],
     freqs: mx.array,
     rope_dims: int,
+    rows_per_position: int = 1,
 ) -> mx.array:
     """Optional RMSNorm (optionally weighted) then RoPE on the last ``rope_dims``
     of each row, matching ``mx.fast.rms_norm`` followed by ``mx.fast.rope``
-    with ``traditional=True`` at ``position`` (already multiplied by the scale)."""
+    with ``traditional=True``. Row ``r`` uses
+    ``positions[(r // rows_per_position) % len(positions)]`` (already
+    multiplied by the RoPE scale)."""
     d = x.shape[-1]
     rows = x.size // d
     return _norm_rope_kernel(
@@ -288,7 +309,7 @@ def norm_rope(
             x,
             weight if weight is not None else _scalar(0.0),
             _scalar(eps if eps is not None else 0.0),
-            mx.array([position], dtype=mx.float32),
+            mx.array(positions, dtype=mx.float32),
             freqs,
         ],
         template=[
@@ -296,6 +317,8 @@ def norm_rope(
             ("ROPE_DIMS", rope_dims),
             ("NORM", eps is not None),
             ("HAS_WEIGHT", weight is not None),
+            ("ROWS_PER_POSITION", rows_per_position),
+            ("SEQUENCE", len(positions)),
             ("OUT_T", x.dtype),
         ],
         grid=(rows * (d // 2), 1, 1),
@@ -306,19 +329,37 @@ def norm_rope(
 
 
 def decode_attention(
-    q: mx.array, kv: mx.array, sinks: mx.array, scale: float
+    q: mx.array,
+    kv: mx.array,
+    sinks: mx.array,
+    scale: float,
+    offset: int,
+    window_len: int,
+    window: int,
+    ratio: int,
 ) -> mx.array:
-    """Single-query attention with sinks. q ``[B, H, 1, D]``, kv ``[B, L, D]``."""
-    batch, heads, _, d = q.shape
+    """Attention with sinks for a few queries. q ``[B, S, H, D]`` (queries at
+    positions ``offset .. offset + S - 1``), kv ``[B, L, D]``: ``window_len``
+    sliding-window keys ending at the last query, then compressed rows, which
+    are visible once their ``ratio``-token window is complete (``ratio`` 0:
+    all visible). Returns ``[B, S, H, D]``."""
+    batch, sequence, heads, d = q.shape
     return _attention_kernel(
-        inputs=[q, kv, sinks, _scalar(scale)],
+        inputs=[
+            q,
+            kv,
+            sinks,
+            _scalar(scale),
+            mx.array([offset, window_len, window, ratio], dtype=mx.int32),
+        ],
         template=[
             ("H", heads),
             ("D", d),
+            ("SEQUENCE", sequence),
             ("THREADS", _ATTENTION_THREADS),
             ("OUT_T", q.dtype),
         ],
-        grid=(batch * heads * _ATTENTION_THREADS, 1, 1),
+        grid=(batch * sequence * heads * _ATTENTION_THREADS, 1, 1),
         threadgroup=(_ATTENTION_THREADS, 1, 1),
         output_shapes=[q.shape],
         output_dtypes=[q.dtype],
@@ -334,7 +375,11 @@ def _patched_hc_pre(
     self: HyperConnection, x: mx.array
 ) -> tuple[mx.array, mx.array, mx.array]:
     batch, sequence, hc, d = x.shape
-    if sequence != 1 or x.dtype != mx.bfloat16 or (hc * d) % _THREADGROUP != 0:
+    if (
+        sequence > MAX_DECODE_SEQUENCE
+        or x.dtype != mx.bfloat16
+        or (hc * d) % _THREADGROUP != 0
+    ):
         return _original_hc_pre(self, x)
     mixes = hc_mix(x.reshape(batch, sequence, hc * d), self.fn, self.norm_eps)
     return deepseek_v4.hc_sinkhorn_collapse(
@@ -351,13 +396,14 @@ def _patched_hc_pre(
 def _patched_hc_expand_ops(
     f_out: mx.array, residual: mx.array, post: mx.array, comb: mx.array
 ) -> mx.array:
-    if f_out.shape[1] != 1 or f_out.dtype != mx.bfloat16:
+    if f_out.shape[1] > MAX_DECODE_SEQUENCE or f_out.dtype != mx.bfloat16:
         return _original_hc_expand_ops(f_out, residual, post, comb)
     return hc_post(f_out, residual, post, comb)
 
 
 def _decode_supported(attention: V4Attention, x: mx.array, cache: object) -> bool:
-    if x.shape[1] != 1 or x.dtype != mx.bfloat16:
+    sequence = x.shape[1]
+    if sequence > MAX_DECODE_SEQUENCE or x.dtype != mx.bfloat16:
         return False
     if not isinstance(cache, DeepseekV4Cache):
         return False
@@ -370,7 +416,16 @@ def _decode_supported(attention: V4Attention, x: mx.array, cache: object) -> boo
     if isinstance(wq_b, nn.QuantizedLinear) and wq_b.mode == "mxfp4":
         return False
     head_dim = attention.head_dim
-    return head_dim % 64 == 0 and head_dim // 2 <= 1024
+    if head_dim % 64 != 0 or head_dim // 2 > 1024:
+        return False
+    if sequence > 1 and attention.compress_ratio == 4:
+        # Several queries can only share the full compressed pool when the
+        # Indexer would select every row (see deepseek_v4_indexer).
+        pool = cache.get_branch(_K_IDX).pool
+        pool_len = 0 if pool is None else pool.shape[1]
+        if pool_len + sequence > attention.indexer.index_topk:
+            return False
+    return True
 
 
 def _patched_attention(
@@ -379,32 +434,34 @@ def _patched_attention(
     if not _decode_supported(self, x, cache):
         return _original_attention(self, x, cache=cache)
     v4_cache = cast(DeepseekV4Cache, cache)
-    batch = x.shape[0]
+    batch, sequence = x.shape[0], x.shape[1]
     rope_dims = self.rope_head_dim
     head_dim = self.head_dim
     freqs = self.rope.freqs
     win_cache = v4_cache.local
     offset = win_cache.offset
+    positions = [float(offset + i) for i in range(sequence)]
 
     qkv_a = self.wqkv_a(x)
     qr = mx.fast.rms_norm(qkv_a[..., : self.q_lora_rank], self.q_norm.weight, self.eps)
     q_flat = self.wq_b(qr)
     q = norm_rope(
-        q_flat.reshape(batch * self.n_heads, head_dim),
+        q_flat.reshape(batch * sequence * self.n_heads, head_dim),
         None,
         self.eps,
-        float(offset),
+        positions,
         freqs,
         rope_dims,
-    ).reshape(batch, self.n_heads, 1, head_dim)
+        rows_per_position=self.n_heads,
+    ).reshape(batch, sequence, self.n_heads, head_dim)
     kv = norm_rope(
-        qkv_a[..., self.q_lora_rank :].reshape(batch, head_dim),
+        qkv_a[..., self.q_lora_rank :].reshape(batch * sequence, head_dim),
         self.kv_norm.weight,
         self.eps,
-        float(offset),
+        positions,
         freqs,
         rope_dims,
-    ).reshape(batch, 1, head_dim)
+    ).reshape(batch, sequence, head_dim)
 
     k4 = kv[:, None, :, :]
     window_keys, _ = cast(
@@ -412,6 +469,7 @@ def _patched_attention(
         win_cache.update_and_fetch(k4, k4),  # pyright: ignore[reportUnknownMemberType]
     )
     window_kv = window_keys.squeeze(1)
+    window_len = window_kv.shape[1]
     indexer_topk: mx.array | None = None
     compressed: mx.array | None = None
     if self.compress_ratio:
@@ -420,8 +478,10 @@ def _patched_attention(
             indexer_topk = self.indexer(x, qr, v4_cache, offset)
         compressed = v4_cache.get_branch(_K_COMP).pool
 
+    ratio = self.compress_ratio
     if compressed is not None and compressed.shape[1] > 0:
         if indexer_topk is not None:
+            assert sequence == 1
             d = compressed.shape[-1]
             pool_len = compressed.shape[1]
             expanded = mx.broadcast_to(
@@ -433,21 +493,25 @@ def _patched_attention(
             )
             gathered = mx.take_along_axis(expanded, index, axis=3).reshape(batch, -1, d)
             kv_all = mx.concatenate([window_kv, gathered], axis=1)
+            ratio = 0
         else:
             kv_all = mx.concatenate([window_kv, compressed], axis=1)
     else:
         kv_all = window_kv
 
     sinks = self._sink_for(q.dtype)
-    o = decode_attention(q, kv_all, sinks, self.scale)
+    o = decode_attention(
+        q, kv_all, sinks, self.scale, offset, window_len, self.window, ratio
+    )
     o = norm_rope(
-        o.reshape(batch * self.n_heads, head_dim),
+        o.reshape(batch * sequence * self.n_heads, head_dim),
         None,
         None,
-        -float(offset),
+        [-p for p in positions],
         freqs,
         rope_dims,
-    ).reshape(batch, 1, self.n_heads * head_dim)
+        rows_per_position=self.n_heads,
+    ).reshape(batch, sequence, self.n_heads * head_dim)
     o = self._grouped_output_projection(o)
     return self.wo_b(o)
 

@@ -17,7 +17,7 @@ from mlx_lm.models.base import (
 from mlx_lm.models.cache import ArraysCache, KVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
 from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
-from mlx_lm.models.deepseek_v4 import DeepseekV4MoE, V4Attention
+from mlx_lm.models.deepseek_v4 import DeepseekV4Block, DeepseekV4MoE, V4Attention
 from mlx_lm.models.deepseek_v4 import Model as DeepseekV4Model
 from mlx_lm.models.deepseek_v32 import DeepseekV32MLP
 from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
@@ -962,37 +962,48 @@ class DeepseekV4ShardingStrategy(TensorParallelShardingStrategy):
 
         for i, layer in enumerate(model.layers):
             mx.eval(layer.parameters())
-
-            if layer.attn.n_groups % self.N == 0:
-                _shard_v4_attention_groups(
-                    layer.attn,
-                    self.group,
-                    self.all_to_sharded_linear_in_place,
-                    self.sharded_to_all_linear_in_place,
-                )
-            else:
-                # Head-parallel attention with interleaved-per-group sharding.
-                _shard_v4_attention_heads(layer.attn, self.N, self.group.rank())
-                self.sharded_to_all_linear_in_place(layer.attn.wo_a)
-                layer.attn.wo_b = _AllSumLinear(layer.attn.wo_b, self.group)  # type: ignore
-
-            ffn = layer.ffn
-            if getattr(ffn, "shared_experts", None) is not None:
-                self.all_to_sharded_linear_in_place(ffn.shared_experts.gate_proj)
-                self.sharded_to_all_linear_in_place(ffn.shared_experts.down_proj)
-                self.all_to_sharded_linear_in_place(ffn.shared_experts.up_proj)
-            self.all_to_sharded_linear_in_place(ffn.switch_mlp.gate_proj)
-            self.sharded_to_all_linear_in_place(ffn.switch_mlp.down_proj)
-            self.all_to_sharded_linear_in_place(ffn.switch_mlp.up_proj)
-            wrapped = ShardedMoEV4(ffn)
-            wrapped.sharding_group = self.group
-            layer.ffn = wrapped  # type: ignore
-
+            shard_deepseek_v4_block(
+                layer,
+                self.group,
+                self.all_to_sharded_linear_in_place,
+                self.sharded_to_all_linear_in_place,
+            )
             mx.eval(layer)
             mx.clear_cache()
             yield ModelLoadingResponse(layers_loaded=i, total=total)
 
         return model
+
+
+def shard_deepseek_v4_block(
+    layer: DeepseekV4Block,
+    group: mx.distributed.Group,
+    all_to_sharded_in_place: Callable[[nn.Module], None],
+    sharded_to_all_in_place: Callable[[nn.Module], None],
+) -> None:
+    """Tensor-parallel sharding of one DeepSeek V4 block (also used for MTP)."""
+    world_size = group.size()
+    if layer.attn.n_groups % world_size == 0:
+        _shard_v4_attention_groups(
+            layer.attn, group, all_to_sharded_in_place, sharded_to_all_in_place
+        )
+    else:
+        # Head-parallel attention with interleaved-per-group sharding.
+        _shard_v4_attention_heads(layer.attn, world_size, group.rank())
+        sharded_to_all_in_place(layer.attn.wo_a)
+        layer.attn.wo_b = _AllSumLinear(layer.attn.wo_b, group)  # type: ignore
+
+    ffn = layer.ffn
+    if getattr(ffn, "shared_experts", None) is not None:
+        all_to_sharded_in_place(ffn.shared_experts.gate_proj)
+        sharded_to_all_in_place(ffn.shared_experts.down_proj)
+        all_to_sharded_in_place(ffn.shared_experts.up_proj)
+    all_to_sharded_in_place(ffn.switch_mlp.gate_proj)
+    sharded_to_all_in_place(ffn.switch_mlp.down_proj)
+    all_to_sharded_in_place(ffn.switch_mlp.up_proj)
+    wrapped = ShardedMoEV4(ffn)
+    wrapped.sharding_group = group
+    layer.ffn = wrapped  # type: ignore
 
 
 class GLM4MoeLiteShardingStrategy(TensorParallelShardingStrategy):

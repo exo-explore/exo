@@ -12,11 +12,9 @@ from functools import partial
 from typing import cast
 
 import mlx.core as mx
-import mlx.nn as nn
 import numpy as np
 import pytest
 from mlx.nn.layers.distributed import shard_inplace
-from mlx.utils import tree_flatten, tree_unflatten
 from mlx_lm.models import deepseek_v4 as dv4
 from mlx_lm.models.switch_layers import QuantizedSwitchLinear
 
@@ -27,46 +25,13 @@ from exo.worker.engines.mlx.patches import deepseek_v4_decode_kernels as kernels
 from exo.worker.engines.mlx.patches import deepseek_v4_indexer as indexer_patch
 from exo.worker.engines.mlx.patches import deepseek_v4_moe_gate as gate_patch
 from exo.worker.engines.mlx.patches import switch_lhs_indices
+from exo.worker.engines.mlx.tests.tiny_deepseek_v4 import (
+    CONFIG,
+    SLIDING_WINDOW,
+    VOCAB_SIZE,
+    tiny_model,
+)
 
-_VOCAB_SIZE = 512
-_SLIDING_WINDOW = 16
-_CONFIG: dict[str, object] = {
-    "model_type": "deepseek_v4",
-    "vocab_size": _VOCAB_SIZE,
-    "hidden_size": 256,
-    "num_hidden_layers": 4,
-    "num_attention_heads": 8,
-    "num_key_value_heads": 1,
-    "q_lora_rank": 128,
-    "o_lora_rank": 64,
-    "o_groups": 4,
-    "head_dim": 128,
-    "qk_rope_head_dim": 64,
-    "sliding_window": _SLIDING_WINDOW,
-    "compress_ratios": [0, 4, 128, 4],
-    "index_n_heads": 4,
-    "index_head_dim": 64,
-    "index_topk": 64,
-    "compress_rope_theta": 160000.0,
-    "moe_intermediate_size": 64,
-    "n_routed_experts": 32,
-    "n_shared_experts": 1,
-    "num_experts_per_tok": 2,
-    "num_hash_layers": 1,
-    "scoring_func": "sqrtsoftplus",
-    "topk_method": "noaux_tc",
-    "norm_topk_prob": True,
-    "routed_scaling_factor": 1.5,
-    "swiglu_limit": 10.0,
-    "hc_mult": 4,
-    "hc_sinkhorn_iters": 20,
-    "hc_eps": 1e-6,
-    "num_nextn_predict_layers": 0,
-    "max_position_embeddings": 4096,
-    "rope_theta": 10000.0,
-    "rope_scaling": None,
-    "rms_norm_eps": 1e-6,
-}
 _PROMPT_LENGTH = 41
 _DECODE_STEPS = 10
 
@@ -83,52 +48,9 @@ class _FakeGroup:
         return self._size
 
 
-def _tiny_model(index_topk: int = 64) -> dv4.Model:
-    mx.random.seed(0)
-    args = dv4.ModelArgs.from_dict({**_CONFIG, "index_topk": index_topk})
-    model = dv4.Model(args)
-    nn.quantize(
-        model,
-        group_size=64,
-        bits=8,
-        class_predicate=lambda _, module: type(module) is nn.Linear,
-    )
-    keep_fp32 = model.cast_predicate
-    params = []
-    for path, leaf in tree_flatten(model.parameters()):
-        value = cast(mx.array, leaf)
-        if path.endswith("tid2eid"):
-            value = mx.random.randint(0, args.n_routed_experts, value.shape)
-        elif mx.issubdtype(value.dtype, mx.floating):
-            value = mx.random.normal(value.shape) * 0.05
-            if path.endswith("norm.weight"):
-                value = value + 1.0
-            if keep_fp32(path):
-                value = value.astype(mx.float32)
-            else:
-                value = value.astype(mx.bfloat16)
-        params.append((path, value))
-    model.update(tree_unflatten(params))
-    for _, module in model.named_modules():
-        if isinstance(module, nn.QuantizedLinear) and module.mode == "affine":
-            out_dims = module.weight.shape[0]
-            in_dims = module.scales.shape[1] * module.group_size
-            weight = mx.random.normal((out_dims, in_dims)) * 0.05
-            quantized = mx.quantize(weight.astype(mx.bfloat16), group_size=64, bits=8)
-            module.weight, module.scales, module.biases = quantized
-        elif isinstance(module, QuantizedSwitchLinear):
-            experts, out_dims, _ = module.weight.shape
-            in_dims = module.scales.shape[-1] * module.group_size
-            weight = mx.random.normal((experts, out_dims, in_dims)) * 0.05
-            quantized = mx.quantize(weight, group_size=32, bits=4, mode="mxfp4")
-            module.weight, module.scales = quantized[0], quantized[1]
-    mx.eval(model.parameters())
-    return model
-
-
 def _tokens(length: int, seed: int) -> mx.array:
     rng = np.random.default_rng(seed)
-    return mx.array(rng.integers(0, _VOCAB_SIZE, (1, length)))
+    return mx.array(rng.integers(0, VOCAB_SIZE, (1, length)))
 
 
 def _decode_logits(model: dv4.Model) -> mx.array:
@@ -195,7 +117,7 @@ def test_norm_rope_is_bit_exact(with_weight: bool) -> None:
         freqs=freqs,
     ).reshape(8, 64)
     reference = mx.concatenate([normed[..., :-64], rotated], axis=-1)
-    fused = kernels.norm_rope(x, weight, 1e-6, 300.0, freqs, 64)
+    fused = kernels.norm_rope(x, weight, 1e-6, [300.0], freqs, 64)
     assert mx.array_equal(fused, reference)
 
 
@@ -213,28 +135,71 @@ def test_inverse_rope_is_bit_exact() -> None:
         freqs=freqs,
     ).reshape(8, 64)
     reference = mx.concatenate([x[..., :-64], rotated], axis=-1)
-    assert mx.array_equal(kernels.norm_rope(x, None, None, -77.0, freqs, 64), reference)
+    assert mx.array_equal(
+        kernels.norm_rope(x, None, None, [-77.0], freqs, 64), reference
+    )
 
 
 @pytest.mark.parametrize("keys", [1, 130, 640])
 def test_decode_attention_matches_float32_sdpa(keys: int) -> None:
     mx.random.seed(5)
-    q = mx.random.normal((1, 16, 1, 512)).astype(mx.bfloat16)
+    q = mx.random.normal((1, 1, 16, 512)).astype(mx.bfloat16)
     kv = mx.random.normal((1, keys, 512)).astype(mx.bfloat16)
     sinks = mx.random.normal((16,)).astype(mx.bfloat16)
     reference = mx.fast.scaled_dot_product_attention(
-        q.astype(mx.float32),
+        q.transpose(0, 2, 1, 3).astype(mx.float32),
         kv[:, None].astype(mx.float32),
         kv[:, None].astype(mx.float32),
         scale=512**-0.5,
         sinks=sinks.astype(mx.float32),
+    ).transpose(0, 2, 1, 3)
+    fused = kernels.decode_attention(
+        q, kv, sinks, 512**-0.5, offset=keys - 1, window_len=keys, window=keys, ratio=0
     )
-    fused = kernels.decode_attention(q, kv, sinks, 512**-0.5)
+    assert _relative_error(reference, fused) < 4e-3
+
+
+@pytest.mark.parametrize("sequence", [2, 3, 4])
+@pytest.mark.parametrize("offset", [14, 17, 130])
+def test_multi_query_decode_attention_masks_per_query(
+    sequence: int, offset: int
+) -> None:
+    # Queries at offset .. offset + sequence - 1 over a 16-token sliding window
+    # and ratio-4 compressed rows, each of which becomes visible once its
+    # window of tokens is complete.
+    window, ratio, heads, d = 16, 4, 8, 128
+    window_len = min(window + sequence - 1, offset + sequence)
+    compressed = (offset + sequence) // ratio
+    mx.random.seed(9)
+    q = mx.random.normal((1, sequence, heads, d)).astype(mx.bfloat16)
+    kv = mx.random.normal((1, window_len + compressed, d)).astype(mx.bfloat16)
+    sinks = mx.random.normal((heads,)).astype(mx.bfloat16)
+
+    mask = np.full((sequence, window_len + compressed), -np.inf, dtype=np.float32)
+    for query in range(sequence):
+        # Window key j holds position offset + sequence - window_len + j.
+        position = offset + query
+        for j in range(window_len):
+            key_position = offset + sequence - window_len + j
+            if position - window < key_position <= position:
+                mask[query, j] = 0.0
+        mask[query, window_len : window_len + (position + 1) // ratio] = 0.0
+    reference = mx.fast.scaled_dot_product_attention(
+        q.transpose(0, 2, 1, 3).astype(mx.float32),
+        kv[:, None].astype(mx.float32),
+        kv[:, None].astype(mx.float32),
+        scale=d**-0.5,
+        mask=mx.array(mask),
+        sinks=sinks.astype(mx.float32),
+    ).transpose(0, 2, 1, 3)
+    fused = kernels.decode_attention(
+        q, kv, sinks, d**-0.5, offset, window_len, window, ratio
+    )
     assert _relative_error(reference, fused) < 4e-3
 
 
 def test_patched_decode_matches_mlx_lm(monkeypatch: pytest.MonkeyPatch) -> None:
-    model = _tiny_model()
+    model = tiny_model()
     reference = _decode_logits(model)
 
     monkeypatch.setattr(dv4.HyperConnection, "hc_pre", kernels._patched_hc_pre)
@@ -251,11 +216,38 @@ def test_patched_decode_matches_mlx_lm(monkeypatch: pytest.MonkeyPatch) -> None:
     assert agreement >= 0.9
 
 
+def _verify_logits(model: dv4.Model, prompt_length: int, sequence: int) -> mx.array:
+    """A multi-token (speculative verification) step and the decode step after it."""
+    cache = model.make_cache()
+    tokens = _tokens(prompt_length + sequence + 1, prompt_length)
+    mx.eval(model(tokens[:, :prompt_length], cache=cache))
+    verify = model(tokens[:, prompt_length : prompt_length + sequence], cache=cache)
+    after = model(tokens[:, prompt_length + sequence :], cache=cache)
+    return mx.concatenate([verify, after], axis=1).astype(mx.float32)
+
+
+@pytest.mark.parametrize("sequence", [2, 3])
+@pytest.mark.parametrize("prompt_length", [14, 15, 16, 17, 31, 33])
+def test_patched_verification_matches_mlx_lm(
+    monkeypatch: pytest.MonkeyPatch, prompt_length: int, sequence: int
+) -> None:
+    model = tiny_model()
+    reference = _verify_logits(model, prompt_length, sequence)
+
+    monkeypatch.setattr(dv4.HyperConnection, "hc_pre", kernels._patched_hc_pre)
+    monkeypatch.setattr(dv4, "_hc_expand_ops", kernels._patched_hc_expand_ops)
+    monkeypatch.setattr(dv4.V4Attention, "__call__", kernels._patched_attention)
+    monkeypatch.setattr(dv4.Indexer, "__call__", indexer_patch._patched_call)
+    patched = _verify_logits(model, prompt_length, sequence)
+
+    assert _relative_error(reference, patched) < 2e-2
+
+
 @pytest.mark.parametrize("n_routed", [64, 256])
 def test_parallel_gate_matches_mlx_lm(n_routed: int) -> None:
     mx.random.seed(6)
     args = dv4.ModelArgs.from_dict(
-        {**_CONFIG, "n_routed_experts": n_routed, "num_experts_per_tok": 6}
+        {**CONFIG, "n_routed_experts": n_routed, "num_experts_per_tok": 6}
     )
     gate = dv4.MoEGate(args, layer_id=2)
     gate.weight = (mx.random.normal(gate.weight.shape) * 0.05).astype(mx.bfloat16)
@@ -282,7 +274,7 @@ def test_indexer_shortcut_attends_to_the_same_keys(
 ) -> None:
     # index_topk 64 > pool rows: shortcut taken. index_topk 4 < pool rows: the
     # patched Indexer must score exactly like mlx_lm.
-    model = _tiny_model(index_topk=index_topk)
+    model = tiny_model(index_topk=index_topk)
     attention = model.model.layers[1].attn
     assert attention.compress_ratio == 4
     mx.random.seed(7)
@@ -293,7 +285,7 @@ def test_indexer_shortcut_attends_to_the_same_keys(
     ]
 
     def run() -> mx.array:
-        cache = dv4.DeepseekV4Cache(_SLIDING_WINDOW)
+        cache = dv4.DeepseekV4Cache(SLIDING_WINDOW)
         attention(prompt, cache=cache)
         return mx.concatenate([attention(step, cache=cache) for step in steps], 1)
 
@@ -328,7 +320,7 @@ def test_group_sharded_attention_sums_to_unsharded(
     monkeypatch: pytest.MonkeyPatch, sequence: int
 ) -> None:
     monkeypatch.setattr(mx.distributed, "all_sum", lambda x, group=None, stream=None: x)
-    model = _tiny_model()
+    model = tiny_model()
     reference_attention = model.model.layers[0].attn
     mx.random.seed(9)
     x = (mx.random.normal((1, sequence, 256)) * 0.5).astype(mx.bfloat16)
