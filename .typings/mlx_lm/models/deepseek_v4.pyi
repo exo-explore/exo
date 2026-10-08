@@ -34,6 +34,24 @@ def hc_sinkhorn_collapse(
 def _hc_expand_ops(
     f_out: mx.array, residual: mx.array, post: mx.array, comb: mx.array
 ) -> mx.array: ...
+def _build_window_mask(
+    B: int, S: int, offset: int | mx.array, window: int, window_len: int
+) -> mx.array: ...
+def _compressed_visibility(
+    B: int, S: int, offset: int | mx.array, compressed_len: int, ratio: int
+) -> mx.array: ...
+def _attn_qkv_split_norm(
+    qkv_a: mx.array, q_w: mx.array, kv_w: mx.array, q_lora: int, eps: float
+) -> tuple[mx.array, mx.array]: ...
+def _attn_q_proj_norm(
+    q_flat: mx.array, n_heads: int, head_dim: int, eps: float
+) -> mx.array: ...
+def _attn_qkv_partial_rope(
+    q: mx.array, kv: mx.array, offset: int | mx.array, rd: int, freqs: mx.array
+) -> tuple[mx.array, mx.array]: ...
+def _attn_inv_rope_flatten(
+    o: mx.array, offset: int | mx.array, rd: int, freqs: mx.array, flat_dim: int
+) -> mx.array: ...
 
 _moe_gate_kernel: object
 

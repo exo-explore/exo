@@ -13,7 +13,10 @@ little work it does. These kernels collapse the chains that dominate a layer:
   softmax + matmul for this head size, becomes one kernel.
 
 Only the uniform single-token decode path is replaced; prefill, per-row
-offsets and unsupported shapes fall back to the original mlx_lm code.
+offsets and unsupported shapes fall back to the original mlx_lm code, except
+for the two hc kernels, which run at every length: at prefill sizes they are
+also faster than mlx_lm's float32 matmuls, and closer to a float32 CPU
+reference.
 """
 
 from typing import cast
@@ -33,6 +36,10 @@ _THREADGROUP = 256
 _ATTENTION_THREADS = 256
 # Longest step (speculative verification) that takes the fused decode path.
 MAX_DECODE_SEQUENCE = 4
+# Rows per threadgroup of the hc mix kernel for many rows (prefill), and the
+# row count from which it beats one threadgroup per (row, mix).
+_HC_MIX_ROWS = 2
+_HC_MIX_MIN_ROWS = 64
 
 _HC_MIX_SOURCE = """
     uint group = threadgroup_position_in_grid.x;
@@ -67,6 +74,64 @@ _HC_MIX_SOURCE = """
             total_square += partial_squares[i];
         }
         mixes[row * MIX + mix] = total_dot * metal::rsqrt(total_square / float(K) + eps[0]);
+    }
+"""
+
+# Many-row variant for prefill: one threadgroup per ROWS rows computes every
+# mix, so x is read once and each fn element is reused for ROWS rows.
+_HC_MIX_ROWS_SOURCE = """
+    uint first_row = threadgroup_position_in_grid.x * ROWS;
+    uint t = thread_position_in_threadgroup.x;
+    uint lane = thread_index_in_simdgroup;
+    uint simdgroup = simdgroup_index_in_threadgroup;
+    constexpr uint SIMDGROUPS = 256 / 32;
+
+    threadgroup float partial[SIMDGROUPS][ROWS][MIX + 1];
+
+    float dots[ROWS][MIX];
+    float squares[ROWS];
+    for (uint r = 0; r < ROWS; ++r) {
+        squares[r] = 0.0f;
+        for (uint m = 0; m < MIX; ++m) {
+            dots[r][m] = 0.0f;
+        }
+    }
+    for (uint k = t; k < K; k += 256) {
+        float v[ROWS];
+        for (uint r = 0; r < ROWS; ++r) {
+            v[r] = static_cast<float>(x[(first_row + r) * K + k]);
+            squares[r] += v[r] * v[r];
+        }
+        for (uint m = 0; m < MIX; ++m) {
+            float f = fn[m * K + k];
+            for (uint r = 0; r < ROWS; ++r) {
+                dots[r][m] += v[r] * f;
+            }
+        }
+    }
+    for (uint r = 0; r < ROWS; ++r) {
+        float square = simd_sum(squares[r]);
+        if (lane == 0) {
+            partial[simdgroup][r][MIX] = square;
+        }
+        for (uint m = 0; m < MIX; ++m) {
+            float dot = simd_sum(dots[r][m]);
+            if (lane == 0) {
+                partial[simdgroup][r][m] = dot;
+            }
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (t < ROWS * MIX) {
+        uint r = t / MIX;
+        uint m = t % MIX;
+        float total_dot = 0.0f;
+        float total_square = 0.0f;
+        for (uint g = 0; g < SIMDGROUPS; ++g) {
+            total_dot += partial[g][r][m];
+            total_square += partial[g][r][MIX];
+        }
+        mixes[(first_row + r) * MIX + m] = total_dot * metal::rsqrt(total_square / float(K) + eps[0]);
     }
 """
 
@@ -228,6 +293,12 @@ _hc_mix_kernel = mx.fast.metal_kernel(
     output_names=["mixes"],
     source=_HC_MIX_SOURCE,
 )
+_hc_mix_rows_kernel = mx.fast.metal_kernel(
+    name="dsv4_hc_mix_rows",
+    input_names=["x", "fn", "eps"],
+    output_names=["mixes"],
+    source=_HC_MIX_ROWS_SOURCE,
+)
 _hc_post_kernel = mx.fast.metal_kernel(
     name="dsv4_hc_post",
     input_names=["f_out", "residual", "post", "comb"],
@@ -263,6 +334,16 @@ def hc_mix(x: mx.array, fn: mx.array, eps: float) -> mx.array:
     """``rms_norm(x.astype(float32)) @ fn.T`` for x ``[..., K]`` and fn ``[MIX, K]``."""
     rows = x.size // x.shape[-1]
     mix, k = fn.shape
+    if rows >= _HC_MIX_MIN_ROWS:
+        rows_per_threadgroup = _HC_MIX_ROWS if rows % _HC_MIX_ROWS == 0 else 1
+        return _hc_mix_rows_kernel(
+            inputs=[x, fn, _scalar(eps)],
+            template=[("MIX", mix), ("K", k), ("ROWS", rows_per_threadgroup)],
+            grid=(rows // rows_per_threadgroup * _THREADGROUP, 1, 1),
+            threadgroup=(_THREADGROUP, 1, 1),
+            output_shapes=[(*x.shape[:-1], mix)],
+            output_dtypes=[mx.float32],
+        )[0]
     return _hc_mix_kernel(
         inputs=[x, fn, _scalar(eps)],
         template=[("MIX", mix), ("K", k)],
@@ -375,11 +456,7 @@ def _patched_hc_pre(
     self: HyperConnection, x: mx.array
 ) -> tuple[mx.array, mx.array, mx.array]:
     batch, sequence, hc, d = x.shape
-    if (
-        sequence > MAX_DECODE_SEQUENCE
-        or x.dtype != mx.bfloat16
-        or (hc * d) % _THREADGROUP != 0
-    ):
+    if x.dtype != mx.bfloat16 or (hc * d) % _THREADGROUP != 0:
         return _original_hc_pre(self, x)
     mixes = hc_mix(x.reshape(batch, sequence, hc * d), self.fn, self.norm_eps)
     return deepseek_v4.hc_sinkhorn_collapse(
@@ -396,7 +473,9 @@ def _patched_hc_pre(
 def _patched_hc_expand_ops(
     f_out: mx.array, residual: mx.array, post: mx.array, comb: mx.array
 ) -> mx.array:
-    if f_out.shape[1] > MAX_DECODE_SEQUENCE or f_out.dtype != mx.bfloat16:
+    # Any length: the kernel is also faster than mlx_lm's float32 matmul at
+    # prefill sizes and matches a float32 CPU reference more closely.
+    if f_out.dtype != mx.bfloat16:
         return _original_hc_expand_ops(f_out, residual, post, comb)
     return hc_post(f_out, residual, post, comb)
 
