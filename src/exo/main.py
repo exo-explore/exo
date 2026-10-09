@@ -85,6 +85,7 @@ class Node:
                 event_sender=event_router.sender(),
                 download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
                 offline=args.offline,
+                event_receiver=event_router.receiver(),
             )
         else:
             download_coordinator = None
@@ -251,6 +252,7 @@ class Node:
                                 topics.DOWNLOAD_COMMANDS
                             ),
                             offline=self.offline,
+                            event_receiver=self.event_router.receiver(),
                         )
                         self._tg.start_soon(self.download_coordinator.run)
                     if self.worker:
