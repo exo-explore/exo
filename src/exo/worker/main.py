@@ -3,7 +3,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 
 import anyio
-from anyio import fail_after, to_thread
+from anyio import current_time, fail_after, to_thread
 from loguru import logger
 
 from exo.api.types import ImageEditsTaskParams
@@ -30,6 +30,7 @@ from exo.shared.types.events import (
     InstanceDeleted,
     NodeDownloadProgress,
     NodeGatheredInfo,
+    NodeTimedOut,
     TaskCreated,
     TaskStatusUpdated,
     TopologyEdgeCreated,
@@ -54,12 +55,43 @@ from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import InstanceId
 from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import Receiver, Sender, channel
-from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
+from exo.utils.info_gatherer.info_gatherer import (
+    GatheredInfo,
+    InfoGatherer,
+    MacThunderboltIdentifiers,
+    MiscData,
+    NodeBackends,
+    NodeConfig,
+    NodeDiskUsage,
+    NodeNetworkInterfaces,
+    RdmaCtlStatus,
+    StaticNodeInformation,
+    ThunderboltBridgeInfo,
+)
 from exo.utils.info_gatherer.net_profile import check_reachable
 from exo.utils.keyed_backoff import KeyedBackoff
 from exo.utils.task_group import TaskGroup
 from exo.worker.plan import plan
 from exo.worker.runner.supervisor import RunnerSupervisor
+
+# Info whose effect on the state depends only on this node's own report, so
+# re-sending an unchanged value is a no-op. MacThunderboltConnections is left
+# out: it resolves against the other nodes' identifiers, so its repeats rebuild
+# RDMA edges after a peer rejoins.
+_SELF_CONTAINED_INFO = (
+    NodeNetworkInterfaces,
+    MacThunderboltIdentifiers,
+    RdmaCtlStatus,
+    ThunderboltBridgeInfo,
+    NodeConfig,
+    MiscData,
+    StaticNodeInformation,
+    NodeDiskUsage,
+    NodeBackends,
+)
+# Gathered info doubles as the liveness heartbeat (the master times nodes out
+# after 30 s), so unchanged info is still sent if nothing else was this recently.
+_HEARTBEAT_SECONDS = 10.0
 
 
 class Worker:
@@ -99,6 +131,9 @@ class Worker:
         )
         self._stopped: anyio.Event = anyio.Event()
 
+        self._last_sent_info: dict[str, GatheredInfo] = {}
+        self._last_info_time: float = 0.0
+
     async def run(self):
         logger.info("Starting Worker")
 
@@ -129,6 +164,16 @@ class Worker:
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
         with recv as info_stream:
             async for info in info_stream:
+                kind = type(info).__name__
+                now = current_time()
+                if (
+                    isinstance(info, _SELF_CONTAINED_INFO)
+                    and self._last_sent_info.get(kind) == info
+                    and now - self._last_info_time < _HEARTBEAT_SECONDS
+                ):
+                    continue
+                self._last_sent_info[kind] = info
+                self._last_info_time = now
                 await self.event_sender.send(
                     NodeGatheredInfo(
                         node_id=self.node_id,
@@ -146,6 +191,10 @@ class Worker:
 
                 if isinstance(event, InstanceDeleted):
                     self._instance_backoff.reset(event.instance_id)
+
+                # The timeout dropped this node's info from the state.
+                if isinstance(event, NodeTimedOut) and event.node_id == self.node_id:
+                    self._last_sent_info.clear()
 
                 # Buffer input image chunks for image editing
                 if isinstance(event, InputChunkReceived):
