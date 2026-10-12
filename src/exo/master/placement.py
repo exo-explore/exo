@@ -103,6 +103,25 @@ def _cycle_download_score(
     )
 
 
+def _not_enough_memory(
+    command: PlaceInstance,
+    cycles: Sequence[Cycle],
+    node_memory: Mapping[NodeId, MemoryUsage],
+) -> str:
+    reported = [cycle for cycle in cycles if all(node in node_memory for node in cycle)]
+    if not reported:
+        return "Waiting for the nodes to report their memory"
+    most_free = max(
+        sum((node_memory[node].ram_available for node in cycle), start=Memory())
+        for cycle in reported
+    )
+    return (
+        f"Not enough memory: {command.model_card.model_id} needs "
+        f"{command.model_card.storage_size.in_gb:.1f} GB, but connected nodes have at most "
+        f"{most_free.in_gb:.1f} GB free between them"
+    )
+
+
 def place_instance(
     command: PlaceInstance,
     topology: Topology,
@@ -115,7 +134,14 @@ def place_instance(
     node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus] | None = None,
 ) -> dict[InstanceId, Instance]:
     cycles = topology.get_cycles()
+    if not cycles:
+        raise ValueError("No nodes are available")
     candidate_cycles = list(filter(lambda it: len(it) >= command.min_nodes, cycles))
+    if not candidate_cycles:
+        largest = max(len(cycle) for cycle in cycles)
+        raise ValueError(
+            f"Needs {command.min_nodes} connected nodes, but at most {largest} are connected to each other"
+        )
 
     # Filter to cycles containing all required nodes (subset matching)
     if required_nodes:
@@ -124,11 +150,13 @@ def place_instance(
             for cycle in candidate_cycles
             if required_nodes.issubset(cycle.node_ids)
         ]
+        if not candidate_cycles:
+            raise ValueError("The chosen nodes aren't all connected to each other")
     cycles_with_sufficient_memory = filter_cycles_by_memory(
         candidate_cycles, node_memory, command.model_card.storage_size
     )
     if len(cycles_with_sufficient_memory) == 0:
-        raise ValueError("No cycles found with sufficient memory")
+        raise ValueError(_not_enough_memory(command, candidate_cycles, node_memory))
 
     if command.sharding == Sharding.Tensor:
         if not command.model_card.supports_tensor:
