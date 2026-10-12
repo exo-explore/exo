@@ -588,6 +588,17 @@ struct SettingsView: View {
     // MARK: - Actions
 
     private func showUninstallConfirmationAlert() {
+        let (alert, keepModels) = Self.makeUninstallAlert()
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            performUninstall(keepModels: keepModels.state == .on)
+        }
+    }
+
+    /// The Uninstall confirmation. "Keep downloaded models" starts ticked:
+    /// models can take hundreds of gigabytes to download again, so deleting
+    /// them has to be chosen.
+    static func makeUninstallAlert() -> (alert: NSAlert, keepModels: NSButton) {
         let alert = NSAlert()
         alert.messageText = "Uninstall EXO"
         alert.informativeText = """
@@ -605,7 +616,7 @@ struct SettingsView: View {
         let checkbox = NSButton(
             checkboxWithTitle: "Keep downloaded models (~/.exo/models)",
             target: nil, action: nil)
-        checkbox.state = .off
+        checkbox.state = .on
         checkbox.sizeToFit()
         alert.accessoryView = checkbox
 
@@ -615,11 +626,7 @@ struct SettingsView: View {
         if let uninstallButton = alert.buttons.first {
             uninstallButton.hasDestructiveAction = true
         }
-
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            performUninstall(keepModels: checkbox.state == .on)
-        }
+        return (alert, checkbox)
     }
 
     private func performUninstall(keepModels: Bool) {
