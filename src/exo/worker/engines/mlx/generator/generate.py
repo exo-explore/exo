@@ -325,6 +325,9 @@ def prefill(
 
     set_pipeline_prefill(model, is_prefill=True)
 
+    # The batch's next decode step may still be running: let it finish before this prefill's
+    # collectives, as for the batch's own prompts (see opt_batch_gen._prompt_after_decode_step)
+    mx.synchronize(generation_stream)
     mx_barrier(group)
     logger.info("Starting prefill")
 
