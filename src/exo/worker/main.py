@@ -59,7 +59,7 @@ from exo.shared.types.text_generation import Base64Image, Base64ImageHash
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import InstanceId
-from exo.shared.types.worker.runners import RunnerId
+from exo.shared.types.worker.runners import RunnerId, RunnerReady
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
 from exo.utils.info_gatherer.net_profile import check_reachable
@@ -182,6 +182,16 @@ class Worker:
 
                 if isinstance(event, InstanceDeleted):
                     self._instance_backoff.reset(event.instance_id)
+
+                # Our runner for an instance has started: the attempts before it no longer
+                # count towards giving up on the instance, which is for one that can't start
+                if isinstance(event, RunnerStatusUpdated) and isinstance(
+                    event.runner_status, RunnerReady
+                ):
+                    for instance in self.state.instances.values():
+                        node_to_runner = instance.shard_assignments.node_to_runner
+                        if node_to_runner.get(self.node_id) == event.runner_id:
+                            self._instance_backoff.reset(instance.instance_id)
 
                 # Buffer input image chunks for image editing
                 if isinstance(event, InputChunkReceived):
