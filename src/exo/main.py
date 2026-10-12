@@ -4,6 +4,7 @@ import os
 import resource
 import signal
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Self
 
@@ -341,10 +342,10 @@ def main_inner(args: "Args"):
 
     logger.info(f"pid = {os.getpid()}")
     if os.getenv("EXO_LIBP2P_NAMESPACE"):
-        raise ValueError(
-            "EXO_LIBP2P_NAMESPACE has been removed - use EXO_ZENOH_NAMESPACE instead"
+        logger.warning(
+            "EXO_LIBP2P_NAMESPACE is deprecated - use EXO_ZENOH_NAMESPACE instead"
         )
-    logger.info(f"EXO_ZENOH_NAMESPACE: {os.getenv('EXO_ZENOH_NAMESPACE')}")
+    logger.info(f"Discovery namespace: {args.namespace}")
 
     if args.offline:
         logger.info("Running in OFFLINE mode — no internet checks, local models only")
@@ -375,6 +376,19 @@ def main_inner(args: "Args"):
     finally:
         logger.info("EXO Shutdown complete")
         logger_cleanup()
+
+
+def default_namespace(environ: Mapping[str, str]) -> str:
+    """Namespace used when --namespace isn't given.
+
+    EXO_LIBP2P_NAMESPACE is still honoured (with a deprecation warning at
+    startup) so clusters isolated before the zenoh migration stay isolated.
+    """
+    return (
+        environ.get("EXO_ZENOH_NAMESPACE")
+        or environ.get("EXO_LIBP2P_NAMESPACE")
+        or __version__
+    )
 
 
 class Args(FrozenModel):
@@ -467,9 +481,10 @@ class Args(FrozenModel):
         parser.add_argument(
             "--namespace",
             type=str,
-            default=__version__,
+            default=default_namespace(os.environ),
             dest="namespace",
-            help="Discovery namespace, nodes with different namespaces will not connect.",
+            help="Discovery namespace, nodes with different namespaces will not connect "
+            "(env: EXO_ZENOH_NAMESPACE, defaults to the exo version).",
         )
         parser.add_argument(
             "--zenoh-port",
