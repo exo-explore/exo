@@ -12,6 +12,7 @@
     cancelDownload,
     deleteDownload,
   } from "$lib/stores/app.svelte";
+  import { addToast } from "$lib/stores/toast.svelte";
   import {
     getDownloadTag,
     extractModelIdFromDownload,
@@ -20,7 +21,12 @@
   import HeaderNav from "$lib/components/HeaderNav.svelte";
 
   type CellStatus =
-    | { kind: "completed"; totalBytes: number; modelDirectory?: string }
+    | {
+        kind: "completed";
+        totalBytes: number;
+        readOnly: boolean;
+        modelDirectory?: string;
+      }
     | {
         kind: "downloading";
         percentage: number;
@@ -36,7 +42,7 @@
         total: number;
         modelDirectory?: string;
       }
-    | { kind: "failed"; modelDirectory?: string }
+    | { kind: "failed"; errorMessage?: string; modelDirectory?: string }
     | { kind: "not_present" };
 
   type ModelCardInfo = {
@@ -244,7 +250,9 @@
           let cell: CellStatus;
           if (tag === "DownloadCompleted") {
             const totalBytes = getBytes(payload.total);
-            cell = { kind: "completed", totalBytes, modelDirectory };
+            // Copies in a read-only models directory can't be deleted by exo
+            const readOnly = Boolean(payload.read_only ?? payload.readOnly);
+            cell = { kind: "completed", totalBytes, readOnly, modelDirectory };
           } else if (tag === "DownloadOngoing") {
             const rawProgress =
               payload.download_progress ?? payload.downloadProgress ?? {};
@@ -266,7 +274,10 @@
               modelDirectory,
             };
           } else if (tag === "DownloadFailed") {
-            cell = { kind: "failed", modelDirectory };
+            const errorMessage =
+              ((payload.error_message ?? payload.errorMessage) as string) ||
+              undefined;
+            cell = { kind: "failed", errorMessage, modelDirectory };
           } else {
             const downloaded = getBytes(
               payload.downloaded ??
@@ -349,6 +360,42 @@
   });
 
   const hasDownloads = $derived(modelRows.length > 0);
+
+  async function confirmAndDelete(row: ModelRow, col: NodeColumn) {
+    const name = row.prettyName ?? row.modelId;
+    const cell = row.cells[col.nodeId];
+    const size =
+      cell?.kind === "completed"
+        ? formatBytes(cell.totalBytes)
+        : cell?.kind === "downloading" && cell.downloadedBytes > 0
+          ? `${formatBytes(cell.downloadedBytes)} downloaded`
+          : cell?.kind === "pending" && cell.downloaded > 0
+            ? `${formatBytes(cell.downloaded)} downloaded`
+            : null;
+    if (
+      !confirm(
+        `Delete ${name}${size ? ` (${size})` : ""} from ${col.label}?\n\n` +
+          "You'll need to download it again to run it on this device.",
+      )
+    )
+      return;
+    try {
+      await deleteDownload(col.nodeId, row.modelId);
+    } catch (error) {
+      // fetch() rejects with a TypeError when the API can't be reached
+      const reason =
+        error instanceof TypeError
+          ? "can't reach exo"
+          : error instanceof Error
+            ? error.message
+            : String(error);
+      addToast({
+        type: "error",
+        message: `Couldn't delete ${name} from ${col.label}: ${reason}`,
+      });
+    }
+  }
+
   const lastUpdateTs = $derived(lastUpdateStore());
   const downloadKeys = $derived(Object.keys(downloadsData || {}));
 
@@ -399,11 +446,11 @@
   </svg>
 {/snippet}
 
-{#snippet deleteButton(nodeId: string, modelId: string)}
+{#snippet deleteButton(row: ModelRow, col: NodeColumn)}
   <button
     type="button"
     class="text-white/50 hover:text-red-400 transition-colors cursor-pointer"
-    onclick={() => deleteDownload(nodeId, modelId)}
+    onclick={() => confirmAndDelete(row, col)}
     title="Delete from this node"
   >
     {@render trashIcon()}
@@ -531,7 +578,9 @@
                     {#if cell.kind === "completed"}
                       <div
                         class="flex flex-col items-center gap-1"
-                        title="Completed ({formatBytes(cell.totalBytes)})"
+                        title={cell.readOnly
+                          ? `Completed (${formatBytes(cell.totalBytes)}) · read-only, can't be deleted here`
+                          : `Completed (${formatBytes(cell.totalBytes)})`}
                       >
                         <svg
                           class="w-7 h-7 text-green-400"
@@ -547,7 +596,9 @@
                         <span class="text-xs text-white/70"
                           >{formatBytes(cell.totalBytes)}</span
                         >
-                        {@render deleteButton(col.nodeId, row.modelId)}
+                        {#if !cell.readOnly}
+                          {@render deleteButton(row, col)}
+                        {/if}
                       </div>
                     {:else if cell.kind === "downloading"}
                       <div
@@ -584,7 +635,7 @@
                           >
                             {@render pauseIcon()}
                           </button>
-                          {@render deleteButton(col.nodeId, row.modelId)}
+                          {@render deleteButton(row, col)}
                         </div>
                       </div>
                     {:else if cell.kind === "pending"}
@@ -627,7 +678,7 @@
                                 >paused</span
                               >
                             {/if}
-                            {@render deleteButton(col.nodeId, row.modelId)}
+                            {@render deleteButton(row, col)}
                           </div>
                         {:else if row.shardMetadata}
                           <button
@@ -646,7 +697,9 @@
                     {:else if cell.kind === "failed"}
                       <div
                         class="flex flex-col items-center gap-1"
-                        title="Download failed"
+                        title={cell.errorMessage
+                          ? `Download failed: ${cell.errorMessage}`
+                          : "Download failed"}
                       >
                         <svg
                           class="w-7 h-7 text-red-400"
@@ -659,6 +712,13 @@
                             clip-rule="evenodd"
                           ></path>
                         </svg>
+                        {#if cell.errorMessage}
+                          <span
+                            class="text-[10px] text-red-400/80 max-w-[200px] whitespace-normal break-words line-clamp-3"
+                          >
+                            {cell.errorMessage}
+                          </span>
+                        {/if}
                         <div class="flex gap-1">
                           {#if row.shardMetadata}
                             <button
@@ -671,7 +731,7 @@
                               {@render downloadIcon()}
                             </button>
                           {/if}
-                          {@render deleteButton(col.nodeId, row.modelId)}
+                          {@render deleteButton(row, col)}
                         </div>
                       </div>
                     {:else}
