@@ -494,7 +494,7 @@
     }
   });
 
-  // ── Step 4: "A device disconnects... exo self-heals" — full disconnect+heal sequence ──
+  // ── Step 4: "A device disconnects... relaunch on the remaining devices" ──
   $effect(() => {
     if (onboardingStep === 4) {
       showContinueButton = false;
@@ -520,15 +520,16 @@
         connectionOpacity.set(0);
         disconnectXOpacity.set(0);
         combinedLabelOpacity.set(0);
+        modelBlockOpacity.set(0.25); // The model stops with the device
       }, 1600);
 
-      // Phase 2: Self-heal — crossfade title + subtitle
+      // Phase 2: Relaunch on what is left — crossfade title + subtitle
       const t4 = setTimeout(() => {
         titleOpacity.set(0, { duration: 250 });
         subtitleOpacity.set(0, { duration: 250 });
       }, 2550);
       const t4b = setTimeout(() => {
-        stepTitle = "exo self-heals";
+        stepTitle = "Relaunch on the remaining devices";
         titleOpacity.set(1, { duration: 400 });
         subtitleOpacity.set(1, { duration: 400 });
       }, 2800);
@@ -539,6 +540,7 @@
       const t6 = setTimeout(() => {
         modelSplitProgress.set(0);
         modelBlockY.set(20); // Lift up while merging
+        modelBlockOpacity.set(1); // Relaunched on the remaining device
         connectionIsRed.set(0);
       }, 3700);
       const t7 = setTimeout(() => {
@@ -2030,43 +2032,57 @@
     const deletedInstanceModelId = getInstanceModelId(instanceData[instanceId]);
     const wasSelected = selectedChatModel() === deletedInstanceModelId;
 
+    if (!(await requestInstanceDeletion(instanceId))) {
+      addToast({ type: "error", message: "Failed to delete instance" });
+    } else if (wasSelected) {
+      // If we deleted the currently selected model, switch to another available model
+      // Find another instance that isn't the one we just deleted
+      const remainingInstances = Object.entries(instanceData).filter(
+        ([id]) => id !== instanceId,
+      );
+      if (remainingInstances.length > 0) {
+        // Select the last instance (most recently added, since objects preserve insertion order)
+        const [, lastInstance] =
+          remainingInstances[remainingInstances.length - 1];
+        const newModelId = getInstanceModelId(lastInstance);
+        if (
+          newModelId &&
+          newModelId !== "Unknown" &&
+          newModelId !== "Unknown Model"
+        ) {
+          setSelectedChatModel(newModelId);
+        } else {
+          // Clear selection if no valid model found
+          setSelectedChatModel("");
+        }
+      } else {
+        // No more instances, clear the selection
+        setSelectedChatModel("");
+      }
+    }
+  }
+
+  // Instances this dashboard asked to delete, so their disappearance isn't
+  // reported as unexpected. Every instance deletion must go through
+  // requestInstanceDeletion.
+  const userDeletedInstanceIds = new Set<string>();
+
+  async function requestInstanceDeletion(instanceId: string): Promise<boolean> {
+    userDeletedInstanceIds.add(instanceId);
     try {
       const response = await fetch(`/instance/${instanceId}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
       });
-
       if (!response.ok) {
+        userDeletedInstanceIds.delete(instanceId);
         console.error("Failed to delete instance:", response.status);
-        addToast({ type: "error", message: "Failed to delete instance" });
-      } else if (wasSelected) {
-        // If we deleted the currently selected model, switch to another available model
-        // Find another instance that isn't the one we just deleted
-        const remainingInstances = Object.entries(instanceData).filter(
-          ([id]) => id !== instanceId,
-        );
-        if (remainingInstances.length > 0) {
-          // Select the last instance (most recently added, since objects preserve insertion order)
-          const [, lastInstance] =
-            remainingInstances[remainingInstances.length - 1];
-          const newModelId = getInstanceModelId(lastInstance);
-          if (
-            newModelId &&
-            newModelId !== "Unknown" &&
-            newModelId !== "Unknown Model"
-          ) {
-            setSelectedChatModel(newModelId);
-          } else {
-            // Clear selection if no valid model found
-            setSelectedChatModel("");
-          }
-        } else {
-          // No more instances, clear the selection
-          setSelectedChatModel("");
-        }
       }
+      return response.ok;
     } catch (error) {
+      userDeletedInstanceIds.delete(instanceId);
       console.error("Error deleting instance:", error);
+      return false;
     }
   }
 
@@ -2592,6 +2608,136 @@
     }
     previousInstanceStatuses = currentStatuses;
   });
+
+  // ── Instances that disappear without being deleted from this dashboard ──
+  // The master removes an instance when one of its devices leaves the cluster,
+  // and a worker removes it after its runner keeps failing (after retries).
+  // Nothing relaunches it, so say which happened.
+  let previousInstanceSnapshot: Record<
+    string,
+    {
+      modelId: string;
+      nodeIds: string[];
+      failed: boolean;
+      failureReason: string | null;
+    }
+  > = {};
+
+  $effect(() => {
+    const current: typeof previousInstanceSnapshot = {};
+    for (const [id, inst] of Object.entries(instanceData)) {
+      const status = getInstanceDownloadStatus(id, inst);
+      current[id] = {
+        modelId: getInstanceModelId(inst),
+        nodeIds: [...unwrapInstanceNodes(inst)],
+        failed: status.isFailed,
+        failureReason: status.errorMessage
+          ? summarizeFailureReason(status.errorMessage)
+          : null,
+      };
+    }
+    // A model that is back (relaunched from anywhere) no longer needs its
+    // "stopped" toasts, whose Relaunch would start a duplicate
+    for (const [id, instance] of Object.entries(current)) {
+      if (previousInstanceSnapshot[id]) continue;
+      const shortName = instance.modelId.split("/").pop() ?? instance.modelId;
+      dismissByMessage(lostInstanceMessage(shortName, true));
+      dismissByMessage(lostInstanceMessage(shortName, false));
+    }
+    const connectedNodeIds = new Set(Object.keys(data?.nodes ?? {}));
+    for (const [id, lost] of Object.entries(previousInstanceSnapshot)) {
+      if (current[id] || userDeletedInstanceIds.delete(id)) continue;
+      if (lost.modelId === "Unknown" || lost.modelId === "Unknown Model")
+        continue;
+      const shortName = lost.modelId.split("/").pop() ?? lost.modelId;
+      const deviceLeft =
+        connectedNodeIds.size > 0 &&
+        lost.nodeIds.some((nodeId) => !connectedNodeIds.has(nodeId));
+      if (!deviceLeft && lost.failed) {
+        // The worker gave up after retrying; relaunching would fail the same way
+        addToast({
+          type: "error",
+          message: lost.failureReason
+            ? `${shortName} failed and was removed — ${lost.failureReason}`
+            : `${shortName} failed and was removed`,
+        });
+        continue;
+      }
+      addToast({
+        type: "warning",
+        message: lostInstanceMessage(shortName, deviceLeft),
+        persistent: deviceLeft,
+        action: {
+          label: "Relaunch",
+          onClick: () => relaunchLostModel(lost.modelId),
+        },
+      });
+    }
+    previousInstanceSnapshot = current;
+  });
+
+  function lostInstanceMessage(shortName: string, deviceLeft: boolean) {
+    return deviceLeft
+      ? `${shortName} stopped — a device left the cluster`
+      : `${shortName} stopped`;
+  }
+
+  // Relaunch a lost model on the devices that are left. Only takes over the
+  // chat view when it's the model being chatted with.
+  async function relaunchLostModel(modelId: string) {
+    if (selectedChatModel() === modelId) {
+      launchModelForChat(modelId, "picker", true);
+      return;
+    }
+    const shortName = modelId.split("/").pop() ?? modelId;
+    // Already relaunched (from the picker, another tab or another toast)
+    if (hasExistingInstance(modelId)) {
+      addToast({ type: "info", message: `${shortName} is already launched` });
+      return;
+    }
+    try {
+      const res = await fetch(
+        `/instance/previews?model_id=${encodeURIComponent(modelId)}`,
+      );
+      if (!res.ok) {
+        addToast({
+          type: "error",
+          message: `Couldn't relaunch ${shortName} (HTTP ${res.status})`,
+        });
+        return;
+      }
+      const { previews } = (await res.json()) as {
+        previews: PlacementPreview[];
+      };
+      const placement = pickOptimalPlacement(previews);
+      if (!placement) {
+        addToast({
+          type: "error",
+          message: `Couldn't relaunch ${shortName}: it doesn't fit on the devices that are left`,
+        });
+        return;
+      }
+      const launchRes = await fetch("/instance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instance: placement.instance }),
+      });
+      if (!launchRes.ok) {
+        addToast({
+          type: "error",
+          message: `Couldn't relaunch ${shortName} (HTTP ${launchRes.status})`,
+        });
+        return;
+      }
+      recordRecentLaunch(modelId);
+      addToast({ type: "info", message: `Relaunching ${shortName}…` });
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: `Couldn't relaunch ${shortName}: ${error}`,
+      });
+    }
+  }
 
   // ── Connection status toasts ──
   let previousConnectionStatus: boolean | null = null;
@@ -3977,8 +4123,8 @@
                 The model is automatically distributed. Each device handles a
                 piece.
               {:else if onboardingStep === 4}
-                {stepTitle === "exo self-heals"
-                  ? "exo automatically redistributes the model so inference continues without interruption."
+                {stepTitle === "Relaunch on the remaining devices"
+                  ? "Models using that device stop. You can relaunch them on the devices that are left."
                   : "Devices can leave anytime. Laptops close, machines restart."}
               {:else}
                 &nbsp;

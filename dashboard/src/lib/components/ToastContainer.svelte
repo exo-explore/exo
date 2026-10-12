@@ -69,6 +69,19 @@
             {toast.message}
           </p>
 
+          {#if toast.action}
+            {@const action = toast.action}
+            <button
+              onclick={() => {
+                dismissToast(toast.id);
+                action.onClick();
+              }}
+              class="flex-shrink-0 text-xs font-mono uppercase tracking-wider text-exo-yellow hover:text-exo-yellow/70 transition-colors cursor-pointer mt-0.5"
+            >
+              {action.label}
+            </button>
+          {/if}
+
           <!-- Dismiss button -->
           <button
             onclick={() => dismissToast(toast.id)}
