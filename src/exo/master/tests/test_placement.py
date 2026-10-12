@@ -4,6 +4,7 @@ import pytest
 
 from exo.master.placement import (
     get_transition_events,
+    memory_once_loaded,
     place_instance,
 )
 from exo.master.tests.conftest import (
@@ -25,6 +26,7 @@ from exo.shared.types.events import (
 from exo.shared.types.memory import Memory
 from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import (
+    MemoryUsage,
     NetworkInterfaceInfo,
     NodeNetworkInfo,
     NodeRdmaCtlStatus,
@@ -49,7 +51,20 @@ from exo.shared.types.worker.instances import (
     MlxJacclInstance,
     MlxRingInstance,
 )
-from exo.shared.types.worker.runners import ShardAssignments
+from exo.shared.types.worker.runners import (
+    RunnerConnecting,
+    RunnerFailed,
+    RunnerId,
+    RunnerIdle,
+    RunnerLoaded,
+    RunnerLoading,
+    RunnerReady,
+    RunnerRunning,
+    RunnerShuttingDown,
+    RunnerStatus,
+    RunnerWarmingUp,
+    ShardAssignments,
+)
 from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
 
 
@@ -1189,3 +1204,220 @@ def test_mlx_jaccl_rejects_cuda_only_cycle(model_card: ModelCard):
             node_backends,
             node_rdma_ctl=node_rdma_ctl,
         )
+
+
+# Memory taken by instances that are still loading
+
+
+GB = 1024**3
+
+
+def _two_connected_nodes(
+    memory_bytes: int,
+) -> tuple[
+    Topology,
+    dict[NodeId, MemoryUsage],
+    dict[NodeId, NodeNetworkInfo],
+    list[NodeId],
+]:
+    a, b = NodeId(), NodeId()
+    topology = Topology()
+    topology.add_node(a)
+    topology.add_node(b)
+    topology.add_connection(
+        Connection(source=a, sink=b, edge=create_socket_connection(1))
+    )
+    topology.add_connection(
+        Connection(source=b, sink=a, edge=create_socket_connection(2))
+    )
+    node_memory = {n: create_node_memory(memory_bytes) for n in (a, b)}
+    node_network = {n: create_node_network() for n in (a, b)}
+    return topology, node_memory, node_network, [a, b]
+
+
+def _model_of(name: str, size_bytes: int) -> ModelCard:
+    return ModelCard(
+        model_id=ModelId(name),
+        storage_size=Memory.from_bytes(size_bytes),
+        n_layers=10,
+        hidden_size=1000,
+        supports_tensor=True,
+        tasks=[ModelTask.TextGeneration],
+        backends=[Backend.MlxMetal],
+    )
+
+
+def _place(
+    model: ModelCard,
+    topology: Topology,
+    instances: Mapping[InstanceId, Instance],
+    node_memory: Mapping[NodeId, MemoryUsage],
+    node_network: Mapping[NodeId, NodeNetworkInfo],
+    runners: Mapping[RunnerId, RunnerStatus],
+    sharding: Sharding = Sharding.Pipeline,
+    min_nodes: int = 1,
+) -> tuple[dict[InstanceId, Instance], Instance]:
+    placement = place_instance(
+        place_instance_command(model).model_copy(
+            update={"sharding": sharding, "min_nodes": min_nodes}
+        ),
+        topology,
+        instances,
+        node_memory,
+        node_network,
+        _metal_only(node_memory),
+        runners=runners,
+    )
+    (new,) = [i for i in placement.values() if i.instance_id not in instances]
+    return placement, new
+
+
+def _nodes_of(instance: Instance) -> set[NodeId]:
+    return set(instance.shard_assignments.node_to_runner)
+
+
+def test_a_second_model_goes_to_the_other_node_while_the_first_loads() -> None:
+    topology, node_memory, node_network, _ = _two_connected_nodes(10 * GB)
+
+    instances, first = _place(
+        _model_of("model-a", 6 * GB), topology, {}, node_memory, node_network, {}
+    )
+    # The first one's runner hasn't loaded, so its node still reports 10 GB free
+    _, second = _place(
+        _model_of("model-b", 6 * GB), topology, instances, node_memory, node_network, {}
+    )
+
+    assert _nodes_of(first).isdisjoint(_nodes_of(second))
+
+
+def test_a_model_that_only_fits_in_memory_still_loading_is_refused() -> None:
+    topology = Topology()
+    node = NodeId()
+    topology.add_node(node)
+    node_memory = {node: create_node_memory(10 * GB)}
+    node_network = {node: create_node_network()}
+    instances, _ = _place(
+        _model_of("model-a", 6 * GB), topology, {}, node_memory, node_network, {}
+    )
+
+    with pytest.raises(ValueError, match="Not enough memory|sufficient memory"):
+        _place(
+            _model_of("model-b", 6 * GB),
+            topology,
+            instances,
+            node_memory,
+            node_network,
+            {},
+        )
+
+
+def test_a_loaded_runner_is_not_counted_twice() -> None:
+    topology = Topology()
+    node = NodeId()
+    topology.add_node(node)
+    node_network = {node: create_node_network()}
+    instances, first = _place(
+        _model_of("model-a", 6 * GB),
+        topology,
+        {},
+        {node: create_node_memory(10 * GB)},
+        node_network,
+        {},
+    )
+    (runner_id,) = first.shard_assignments.node_to_runner.values()
+    # Loaded: the node's report already shows the 6 GB as used
+    loaded_memory = {node: create_node_memory(4 * GB)}
+
+    _, second = _place(
+        _model_of("model-b", 3 * GB),
+        topology,
+        instances,
+        loaded_memory,
+        node_network,
+        {runner_id: RunnerReady()},
+    )
+
+    assert _nodes_of(second) == {node}
+
+
+def test_each_runner_holds_its_share_of_the_model_until_loaded() -> None:
+    topology, node_memory, node_network, nodes = _two_connected_nodes(100 * GB)
+    _, tensor = _place(
+        _model_of("model-a", 8 * GB),
+        topology,
+        {},
+        node_memory,
+        node_network,
+        {},
+        sharding=Sharding.Tensor,
+        min_nodes=2,
+    )
+    _, pipeline = _place(
+        _model_of("model-b", 10 * GB),
+        topology,
+        {},
+        node_memory,
+        node_network,
+        {},
+        min_nodes=2,
+    )
+
+    def free_gb(
+        instance: Instance, runners: Mapping[RunnerId, RunnerStatus]
+    ) -> list[float]:
+        free = memory_once_loaded(
+            node_memory, {instance.instance_id: instance}, runners
+        )
+        return [round(free[n].ram_available.in_bytes / GB, 2) for n in nodes]
+
+    # Tensor: each node holds half of the 8 GB
+    assert free_gb(tensor, {}) == [96.0, 96.0]
+    # Pipeline: each node holds its layers' share of the 10 GB
+    layers = {
+        node: (shard.end_layer - shard.start_layer)
+        for node, runner in pipeline.shard_assignments.node_to_runner.items()
+        for shard in [pipeline.shard_assignments.runner_to_shard[runner]]
+    }
+    assert free_gb(pipeline, {}) == [100 - layers[n] for n in nodes]
+
+
+def test_which_runners_hold_memory_they_have_not_taken_yet() -> None:
+    topology = Topology()
+    node = NodeId()
+    topology.add_node(node)
+    node_memory = {node: create_node_memory(10 * GB)}
+    _, instance = _place(
+        _model_of("model-a", 6 * GB),
+        topology,
+        {},
+        node_memory,
+        {node: create_node_network()},
+        {},
+    )
+    (runner_id,) = instance.shard_assignments.node_to_runner.values()
+
+    def free_gb(status: RunnerStatus | None) -> float:
+        runners = {} if status is None else {runner_id: status}
+        free = memory_once_loaded(
+            node_memory, {instance.instance_id: instance}, runners
+        )
+        return free[node].ram_available.in_bytes / GB
+
+    # Not started, starting, loading, or failed and about to load again: still to take
+    for status in (
+        None,
+        RunnerIdle(),
+        RunnerConnecting(),
+        RunnerLoading(),
+        RunnerFailed(error_message="oom", diagnostics=[]),
+    ):
+        assert free_gb(status) == 4.0, status
+    # Loaded (in the node's report already), or going away
+    for status in (
+        RunnerLoaded(),
+        RunnerWarmingUp(),
+        RunnerReady(),
+        RunnerRunning(),
+        RunnerShuttingDown(),
+    ):
+        assert free_gb(status) == 10.0, status
