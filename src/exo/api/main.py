@@ -55,6 +55,7 @@ from exo.api.adapters.responses import (
     responses_request_to_text_generation,
 )
 from exo.api.collected_response import CollectedResponse
+from exo.api.finished_commands import RESEND_INTERVAL_SECONDS, finishes_to_resend
 from exo.api.keepalive import with_sse_keepalive
 from exo.api.recent_events import RecentEvents
 from exo.api.request_logger import RequestLogger
@@ -841,7 +842,7 @@ class API:
             )
             raise
         finally:
-            await self._send_from_cleanup(TaskFinished(finished_command_id=command_id))
+            await self._finish(command_id)
             if command_id in self._text_generation_queues:
                 del self._text_generation_queues[command_id]
             self._cancelled_command_ids.discard(command_id)
@@ -1247,7 +1248,7 @@ class API:
             )
             raise
         finally:
-            await self._send_from_cleanup(TaskFinished(finished_command_id=command_id))
+            await self._finish(command_id)
             if command_id in self._image_generation_queues:
                 del self._image_generation_queues[command_id]
             self._cancelled_command_ids.discard(command_id)
@@ -1340,7 +1341,7 @@ class API:
             )
             raise
         finally:
-            await self._send_from_cleanup(TaskFinished(finished_command_id=command_id))
+            await self._finish(command_id)
             if command_id in self._image_generation_queues:
                 del self._image_generation_queues[command_id]
             self._cancelled_command_ids.discard(command_id)
@@ -1970,6 +1971,7 @@ class API:
                 tg.start_soon(self._apply_state)
                 tg.start_soon(self._pause_on_new_election)
                 tg.start_soon(self._cleanup_expired_images)
+                tg.start_soon(self._resend_lost_finishes)
                 print_startup_banner(self.port)
                 tg.start_soon(self.run_api, shutdown_ev)
                 try:
@@ -2130,6 +2132,30 @@ class API:
     def _request_inputs(self) -> dict[CommandId, list[SendInputChunk]]:
         """The image chunks sent ahead of chat requests not yet seen as a task."""
         return {}
+
+    @functools.cached_property
+    def _finished_at(self) -> dict[CommandId, float]:
+        """When this API finished each request whose task may still need a TaskFinished. Kept
+        across resets: a change of master is when finishes get lost."""
+        return {}
+
+    async def _finish(self, command_id: CommandId) -> None:
+        self._finished_at[command_id] = time.monotonic()
+        await self._send_from_cleanup(TaskFinished(finished_command_id=command_id))
+
+    async def _resend_lost_finishes(self) -> None:
+        while True:
+            await anyio.sleep(RESEND_INTERVAL_SECONDS)
+            resend, forget = finishes_to_resend(
+                self._finished_at, self.state, time.monotonic()
+            )
+            for command_id in forget:
+                del self._finished_at[command_id]
+            for command_id in resend:
+                logger.info(
+                    f"Resending the finish of {command_id}: its task is still in state"
+                )
+                await self._send(TaskFinished(finished_command_id=command_id))
 
     async def _send(self, command: Command):
         await self._forward(command)
