@@ -103,6 +103,23 @@ def _cycle_download_score(
     )
 
 
+def _cycle_accelerator_score(
+    cycle: Cycle,
+    node_backends: Mapping[NodeId, list[Backend]],
+    required_backends: set[Backend],
+) -> int:
+    """Count nodes that can run on an accelerator instead of CPU fallback."""
+    accelerator_backends = {Backend.MlxMetal, Backend.MlxCuda}
+    return sum(
+        bool(
+            set(node_backends.get(node_id, []))
+            & required_backends
+            & accelerator_backends
+        )
+        for node_id in cycle
+    )
+
+
 def place_instance(
     command: PlaceInstance,
     topology: Topology,
@@ -232,6 +249,7 @@ def place_instance(
     selected_cycle = max(
         candidate_cycles,
         key=lambda cycle: (
+            _cycle_accelerator_score(cycle, node_backends, required_backends),
             _cycle_download_score(
                 cycle, command.model_card.model_id, resolved_download_status
             ),
