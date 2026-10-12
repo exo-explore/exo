@@ -174,6 +174,10 @@ def _without_requests(state: State) -> State:
     )
 
 
+# How many processed command ids the master remembers, to act on a repeated command only once
+PROCESSED_COMMANDS_KEPT = 100_000
+
+
 class Master:
     def __init__(
         self,
@@ -217,6 +221,8 @@ class Master:
         # Since when the master has been able to hear nodes, and when it last checked on them
         self._listening_since = time.monotonic()
         self._last_check: float | None = None
+        self._processed_commands: set[CommandId] = set()
+        self._processed_order: deque[CommandId] = deque()
         self._expected_ranks: dict[TaskId, set[int]] = {}
 
     async def run(self):
@@ -240,9 +246,33 @@ class Master:
         logger.info("Stopping Master")
         self._tg.cancel_tasks()
 
+    def _first_time(self, command_id: CommandId) -> bool:
+        """Whether this command hasn't been processed yet. The API sends a chat request again
+        if it doesn't see it accepted, so the same command can arrive more than once. A new
+        master doesn't know what the old one processed, but a request it accepted is a task."""
+        if command_id in self._processed_commands or self._has_task_for(command_id):
+            return False
+        self._processed_commands.add(command_id)
+        self._processed_order.append(command_id)
+        if len(self._processed_order) > PROCESSED_COMMANDS_KEPT:
+            self._processed_commands.discard(self._processed_order.popleft())
+        return True
+
+    def _has_task_for(self, command_id: CommandId) -> bool:
+        return any(
+            isinstance(task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask))
+            and task.command_id == command_id
+            for task in self.state.tasks.values()
+        )
+
     async def _command_processor(self) -> None:
         with self.command_receiver as commands:
             async for forwarder_command in commands:
+                if not self._first_time(forwarder_command.command.command_id):
+                    logger.debug(
+                        f"Ignoring command {forwarder_command.command.command_id}: already processed"
+                    )
+                    continue
                 try:
                     logger.info(f"Executing command: {forwarder_command.command}")
 
