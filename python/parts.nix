@@ -84,8 +84,8 @@ let
                 nanobind = pkgs.fetchFromGitHub {
                   owner = "wjakob";
                   repo = "nanobind";
-                  rev = "v2.10.2";
-                  hash = "sha256-io44YhN+VpfHFWyvvLWSanRgbzA0whK8WlDNRi3hahU=";
+                  rev = "v3.1.0";
+                  hash = "sha256-k7TIsx+BcOaZKC01cMs4ZqCWG2uWbx1TkilbMq1qkdI=";
                   fetchSubmodules = true;
                 };
               in
