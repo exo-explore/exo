@@ -94,6 +94,8 @@
     models: ChatModelInfo[];
     clusterLabel: string;
     totalMemoryGB: number;
+    /** Models that are running or on disk; the rest need a download */
+    modelStatus?: Record<string, "running" | "downloaded">;
     onSelect: (modelId: string, category: string) => void;
     onAddModel: () => void;
     class?: string;
@@ -103,6 +105,7 @@
     models,
     clusterLabel,
     totalMemoryGB,
+    modelStatus = {},
     onSelect,
     onAddModel,
     class: className = "",
@@ -330,6 +333,17 @@
                 >
               {/if}
             </p>
+            {#if modelStatus[rec.model.id] === "running"}
+              <p class="text-xs text-green-400/80 font-mono mt-1">Running</p>
+            {:else if modelStatus[rec.model.id] === "downloaded"}
+              <p class="text-xs text-exo-light-gray/70 font-mono mt-1">
+                Downloaded
+              </p>
+            {:else}
+              <p class="text-xs text-exo-yellow/60 font-mono mt-1">
+                {formatSize(rec.model.storage_size_megabytes)} download
+              </p>
+            {/if}
           </div>
         </button>
       {:else}
