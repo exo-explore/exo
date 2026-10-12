@@ -157,6 +157,23 @@ def _prefill_endpoint_for(state: State, decode_instance_id: InstanceId) -> str |
     return None
 
 
+def _without_requests(state: State) -> State:
+    """The state without its requests' tasks. Requests don't outlast their master: every
+    node's API ends the ones in flight when the master changes, since the old master was
+    routing their output, so their tasks would only linger."""
+    return state.model_copy(
+        update={
+            "tasks": {
+                task_id: task
+                for task_id, task in state.tasks.items()
+                if not isinstance(
+                    task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask)
+                )
+            }
+        }
+    )
+
+
 class Master:
     def __init__(
         self,
@@ -169,10 +186,16 @@ class Master:
         global_event_sender: Sender[GlobalForwarderEvent],
         snapshot_sender: Sender[StateSnapshot],
         download_command_sender: Sender[ForwarderDownloadCommand],
+        initial_state: State | None = None,
     ):
         self.node_id = node_id
         self.session_id = session_id
-        self.state = State()
+        # A master elected in a running cluster carries on from the state its node already
+        # has, so model instances survive the change of master. Its events are numbered on
+        # from that state, and other nodes catch up from a snapshot of it.
+        self.state = (
+            _without_requests(initial_state) if initial_state is not None else State()
+        )
         self._tg: TaskGroup = TaskGroup()
         self.command_task_mapping: dict[CommandId, TaskId] = {}
         self.command_receiver = command_receiver
@@ -502,7 +525,9 @@ class Master:
                             )
                         case RequestEventLog():
                             await self._serve_event_log_request(
-                                command.since_idx, forwarder_command.origin
+                                command.since_idx,
+                                forwarder_command.origin,
+                                snapshot=command.snapshot,
                             )
                     for event in generated_events:
                         await self.event_sender.send(event)
@@ -613,10 +638,12 @@ class Master:
         ):
             self._recent_image_bytes -= _image_bytes(self._recent_events.popleft())
 
-    async def _serve_event_log_request(self, since_idx: int, requester: SystemId):
+    async def _serve_event_log_request(
+        self, since_idx: int, requester: SystemId, snapshot: bool = False
+    ):
         next_idx = self.state.last_event_applied_idx + 1
         oldest_idx = next_idx - len(self._recent_events)
-        if since_idx < oldest_idx:
+        if snapshot or since_idx < oldest_idx:
             logger.info(
                 f"Sending a state snapshot at event {next_idx - 1} to a node "
                 f"that asked for events from {since_idx}"
@@ -637,7 +664,7 @@ class Master:
             await self._send_indexed_event(IndexedEvent(idx=idx, event=event))
 
     # This function is re-entrant, take care!
-    async def _send_indexed_event(self, event: IndexedEvent):
+    async def _send_indexed_event(self, event: IndexedEvent) -> None:
         # Convenience method since this line is ugly
         await self.global_event_sender.send(
             GlobalForwarderEvent(

@@ -65,6 +65,10 @@ class EventRouter:
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
 
     _nack_cancel_scope: CancelScope | None = field(init=False, default=None)
+    # Set by switch_session: the inbound buffer starts again for the new session
+    _session_changed: bool = field(init=False, default=False)
+    # After switch_session, until the new master's snapshot has been delivered
+    _awaiting_snapshot: bool = field(init=False, default=False)
     _nack_attempts: int = field(init=False, default=0)
     _nack_base_seconds: float = field(init=False, default=0.5)
     _nack_cap_seconds: float = field(init=False, default=10.0)
@@ -113,10 +117,36 @@ class EventRouter:
     def shutdown(self) -> None:
         self._tg.cancel_tasks()
 
+    def switch_session(self, session_id: SessionId) -> None:
+        """Follow a new master without tearing down this router or its channels.
+
+        The new master numbers its events on from its own state, so this node catches up
+        from a snapshot of that state; events from the old session are ignored from now
+        on, and events not yet acknowledged by the old master are dropped (a new master's
+        state is repaired by what nodes report next, not by replaying them).
+        """
+        self.session_id = session_id
+        self.out_for_delivery.clear()
+        self._session_changed = True
+        # Consumers hold the old session's state, so they must get the new master's state
+        # before any of its events: nothing is delivered until its snapshot arrives
+        self._awaiting_snapshot = True
+        self._caught_up()
+        if self._tg.is_running():
+            self._tg.start_soon(self._request_snapshot, session_id)
+
     async def _ingest(self, system_id: SystemId, recv: Receiver[Event]):
         idx = 0
+        session = self.session_id
         with recv as events:
             async for event in events:
+                if self.session_id != session:
+                    # A master orders each origin's events from 0. The events get a new
+                    # origin too: a master this node followed before (and may follow
+                    # again) still expects the old one's next index.
+                    session = self.session_id
+                    system_id = SystemId()
+                    idx = 0
                 f_ev = LocalForwarderEvent(
                     origin_idx=idx,
                     origin=system_id,
@@ -133,6 +163,9 @@ class EventRouter:
         buf = OrderedBuffer[Event]()
         with inbound as messages:
             async for message in messages:
+                if self._session_changed:
+                    self._session_changed = False
+                    buf = OrderedBuffer[Event]()
                 if message.session != self.session_id:
                     continue
                 match message:
@@ -140,9 +173,13 @@ class EventRouter:
                         if message.requester != self._system_id:
                             continue
                         snapshot_idx = message.state.last_event_applied_idx
-                        if snapshot_idx < buf.next_idx_to_release:
+                        if (
+                            snapshot_idx < buf.next_idx_to_release
+                            and not self._awaiting_snapshot
+                        ):
                             # We already have everything it covers
                             continue
+                        self._awaiting_snapshot = False
                         logger.info(
                             f"Catching up from a state snapshot at event {snapshot_idx}"
                         )
@@ -158,6 +195,9 @@ class EventRouter:
                         event_id = message.event.event_id
                         if event_id in self.out_for_delivery:
                             self.out_for_delivery.pop(event_id)
+                        if self._awaiting_snapshot:
+                            # Held until the new master's snapshot, which may cover it
+                            continue
 
                         drained = buf.drain_indexed()
                         if drained:
@@ -190,6 +230,21 @@ class EventRouter:
                 to_clear.add(i)
         for i in sorted(to_clear, reverse=True):
             self.internal_outbound.pop(i)
+
+    async def _request_snapshot(self, session_id: SessionId) -> None:
+        """Ask the new master for its state until it arrives (or the master changes again)."""
+        delay = self._nack_base_seconds
+        while self._awaiting_snapshot and self.session_id == session_id:
+            logger.info("Asking the new master for a snapshot of its state")
+            await self.command_sender.send(
+                ForwarderCommand(
+                    origin=self._system_id,
+                    command=RequestEventLog(since_idx=0, snapshot=True),
+                )
+            )
+            await anyio.sleep(delay)
+            # The new master is often still starting: ask again soon
+            delay = min(2.0, delay * 2)
 
     async def _nack_request(self, since_idx: int) -> None:
         # We request all events after (and including) the missing index.

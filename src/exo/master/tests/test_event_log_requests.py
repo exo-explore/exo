@@ -165,3 +165,22 @@ async def test_image_data_beyond_its_budget_is_not_kept_for_replay() -> None:
         await harness.request(since_idx=0, requester=SystemId())
         assert harness.global_events.collect() == []
         assert len(harness.snapshots.collect()) == 1
+
+
+async def test_a_snapshot_is_sent_when_asked_for_even_if_the_events_could_be_replayed() -> (
+    None
+):
+    async with running_master() as harness:
+        requester = SystemId()
+        await harness.commands.send(
+            ForwarderCommand(
+                origin=requester,
+                command=RequestEventLog(since_idx=0, snapshot=True),
+            )
+        )
+        with anyio.fail_after(5):
+            snapshot = await harness.snapshots.receive()
+
+        assert snapshot.requester == requester
+        assert snapshot.state.last_event_applied_idx == N_EVENTS - 1
+        assert harness.global_events.collect() == []
