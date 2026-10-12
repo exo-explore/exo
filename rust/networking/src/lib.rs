@@ -94,9 +94,15 @@ pub async fn open(
                 continue;
             };
 
-            runtime
-                .connect_peer(&discovered.zid.into(), &[locator])
-                .await;
+            // Don't wait for the connection here: a slow dial would stall discovery
+            // (and look like this node stalling). zenoh ignores dials to a peer it is
+            // already connecting to.
+            let runtime = runtime.clone();
+            tokio::task::spawn(async move {
+                runtime
+                    .connect_peer(&discovered.zid.into(), &[locator])
+                    .await;
+            });
         }
     })));
     Ok(Session { z, _jh })
