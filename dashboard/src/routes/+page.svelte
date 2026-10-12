@@ -2022,6 +2022,34 @@
     };
   }
 
+  // The few instance states people act on, for display only. Logic keeps
+  // using the raw statusText (READY, WARMING UP, ...); debug mode shows it
+  // next to the label.
+  type InstanceStatusLabel =
+    | "Downloading"
+    | "Starting"
+    | "Ready"
+    | "Error"
+    | "Stopping";
+
+  function getInstanceStatusLabel(statusText: string): InstanceStatusLabel {
+    switch (statusText) {
+      case "DOWNLOADING":
+        return "Downloading";
+      case "READY":
+      case "LOADED":
+      case "RUNNING":
+        return "Ready";
+      case "FAILED":
+        return "Error";
+      case "SHUTDOWN":
+        return "Stopping";
+      default:
+        // PREPARING, INITIALIZING, WAITING, LOADING, WARMING UP
+        return "Starting";
+    }
+  }
+
   // Derive instance status from runners
   // Get color class for a status
   function getStatusColor(statusText: string): string {
@@ -5939,6 +5967,7 @@
                     instance,
                   )}
                   {@const statusText = downloadInfo.statusText}
+                  {@const statusLabel = getInstanceStatusLabel(statusText)}
                   {@const isDownloading = downloadInfo.isDownloading}
                   {@const isFailed = statusText === "FAILED"}
                   {@const isLoading = statusText === "LOADING"}
@@ -6089,7 +6118,7 @@
                                     ? 'bg-green-500/15 text-green-400'
                                     : 'bg-teal-500/15 text-teal-400'}"
                           >
-                            {statusText}
+                            {statusLabel}
                           </span>
                         </div>
                         {#if instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model"}
@@ -6361,9 +6390,13 @@
                             <div
                               class="text-xs {getStatusColor(
                                 downloadInfo.statusText,
-                              )} font-mono tracking-wider"
+                              )} font-mono tracking-wider uppercase"
                             >
-                              {downloadInfo.statusText}
+                              {statusLabel}
+                              {#if debugEnabled && statusText !== statusLabel.toUpperCase()}
+                                <span class="text-white/40">({statusText})</span
+                                >
+                              {/if}
                             </div>
                             {#if isLoading}
                               {@const loadStatus =
@@ -7164,6 +7197,7 @@
                       instance,
                     )}
                     {@const statusText = downloadInfo.statusText}
+                    {@const statusLabel = getInstanceStatusLabel(statusText)}
                     {@const isDownloading = downloadInfo.isDownloading}
                     {@const isFailed = statusText === "FAILED"}
                     {@const isLoading = statusText === "LOADING"}
@@ -7313,7 +7347,7 @@
                                       ? 'bg-green-500/15 text-green-400'
                                       : 'bg-teal-500/15 text-teal-400'}"
                             >
-                              {statusText}
+                              {statusLabel}
                             </span>
                           </div>
                           {#if instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model"}
@@ -7593,9 +7627,14 @@
                               <div
                                 class="text-xs {getStatusColor(
                                   downloadInfo.statusText,
-                                )} font-mono tracking-wider"
+                                )} font-mono tracking-wider uppercase"
                               >
-                                {downloadInfo.statusText}
+                                {statusLabel}
+                                {#if debugEnabled && statusText !== statusLabel.toUpperCase()}
+                                  <span class="text-white/40"
+                                    >({statusText})</span
+                                  >
+                                {/if}
                               </div>
                               {#if isLoading}
                                 {@const loadStatus =
