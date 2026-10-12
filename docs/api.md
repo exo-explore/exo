@@ -41,7 +41,7 @@ JSON object describing topology, nodes, and instances.
 
 **GET** `/events`
 
-Returns the list of internal events recorded by the master (mainly for debugging and observability).
+Returns the internal events this node has applied in the current session (mainly for debugging and observability). A node that joined late, or fell far behind, catches up from a state snapshot, so it only has the events after that point.
 
 **Response:**
 Array of event objects.
