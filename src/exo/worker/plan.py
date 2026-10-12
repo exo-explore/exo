@@ -340,3 +340,17 @@ def _cancel_tasks(
                 cancelled_task_id=task.task_id,
                 runner_id=runner_id,
             )
+    # A generation task deleted from the state while it runs (its client went away) must be
+    # cancelled too. The master cancels and deletes such a task within milliseconds, so this
+    # loop rarely sees it as Cancelled, and the runner would generate a response nobody reads.
+    for runner_id, runner in runners.items():
+        for task_id, task in runner.in_progress.items():
+            if not isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
+                continue
+            if task_id in tasks or task_id in runner.cancelled:
+                continue
+            return CancelTask(
+                instance_id=task.instance_id,
+                cancelled_task_id=task_id,
+                runner_id=runner_id,
+            )
