@@ -144,6 +144,28 @@
     }));
   });
 
+  // Dismissed RDMA warnings stay dismissed across reloads (in this browser)
+  const RDMA_NOT_ENABLED_DISMISSED_KEY = "exo-rdma-not-enabled-dismissed";
+  const RDMA_INCOMPATIBLE_PORT_DISMISSED_KEY =
+    "exo-rdma-incompatible-port-dismissed";
+
+  function loadWarningDismissed(key: string): boolean {
+    try {
+      return localStorage.getItem(key) === "true";
+    } catch {
+      // Storage unavailable: show the warning
+      return false;
+    }
+  }
+
+  function saveWarningDismissed(key: string): void {
+    try {
+      localStorage.setItem(key, "true");
+    } catch {
+      // Storage unavailable: the dismissal lasts until the page reloads
+    }
+  }
+
   // Detect TB5 nodes where RDMA is not enabled
   const tb5WithoutRdma = $derived.by(() => {
     const rdmaCtl = rdmaCtlData;
@@ -158,7 +180,13 @@
     // At least one TB5 node has RDMA disabled
     return tb5NodeIds.some((id) => rdmaCtl[id]?.enabled !== true);
   });
-  let tb5InfoDismissed = $state(false);
+  let tb5InfoDismissed = $state(
+    loadWarningDismissed(RDMA_NOT_ENABLED_DISMISSED_KEY),
+  );
+  function dismissTb5Info() {
+    tb5InfoDismissed = true;
+    saveWarningDismissed(RDMA_NOT_ENABLED_DISMISSED_KEY);
+  }
 
   // Detect Mac Studio nodes using RDMA on en2 (the port next to ethernet — RDMA doesn't work there)
   const macStudioEn2RdmaWarning = $derived.by(() => {
@@ -226,7 +254,13 @@
 
     return unique.length > 0 ? unique : null;
   });
-  let macStudioEn2Dismissed = $state(false);
+  let macStudioEn2Dismissed = $state(
+    loadWarningDismissed(RDMA_INCOMPATIBLE_PORT_DISMISSED_KEY),
+  );
+  function dismissMacStudioEn2() {
+    macStudioEn2Dismissed = true;
+    saveWarningDismissed(RDMA_INCOMPATIBLE_PORT_DISMISSED_KEY);
+  }
 
   // Helper to get friendly node name from node ID
   function getNodeName(nodeId: string): string {
@@ -4199,7 +4233,7 @@
             </span>
             <button
               type="button"
-              onclick={() => (tb5InfoDismissed = true)}
+              onclick={dismissTb5Info}
               class="ml-1 text-yellow-300/60 hover:text-yellow-200 transition-colors cursor-pointer"
               title="Dismiss"
             >
@@ -4273,7 +4307,7 @@
             </span>
             <button
               type="button"
-              onclick={() => (macStudioEn2Dismissed = true)}
+              onclick={dismissMacStudioEn2}
               class="ml-1 text-red-300/60 hover:text-red-200 transition-colors cursor-pointer"
               title="Dismiss"
             >
