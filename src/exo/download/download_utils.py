@@ -242,15 +242,27 @@ async def ensure_cache_dir(model_id: ModelId) -> Path:
 async def delete_model(model_id: ModelId) -> bool:
     """Delete a model from writable directories. Skips read-only dirs."""
     normalized = model_id.normalize()
+    model_paths = [
+        (models_dir, models_dir / normalized) for models_dir in EXO_MODELS_DIRS
+    ]
+    cache_dir = EXO_DEFAULT_MODELS_DIR / "caches" / normalized
+    # Validate every destructive target before deleting any of them. Include
+    # cache paths: a symlink/junction on their parent can escape the model root.
+    for models_dir, target in (*model_paths, (EXO_DEFAULT_MODELS_DIR, cache_dir)):
+        resolved_root = models_dir.resolve()
+        resolved_target = target.resolve()
+        if resolved_target == resolved_root or not resolved_target.is_relative_to(
+            resolved_root
+        ):
+            raise ValueError(f"Refusing to delete outside models dir: {target}")
+
     deleted = False
-    for models_dir in EXO_MODELS_DIRS:
-        model_dir = models_dir / normalized
+    for _, model_dir in model_paths:
         if await aios.path.exists(model_dir):
             await asyncio.to_thread(shutil.rmtree, model_dir, ignore_errors=False)
             deleted = True
 
     # Clear cache from default dir
-    cache_dir = EXO_DEFAULT_MODELS_DIR / "caches" / normalized
     if await aios.path.exists(cache_dir):
         await asyncio.to_thread(shutil.rmtree, cache_dir, ignore_errors=False)
 

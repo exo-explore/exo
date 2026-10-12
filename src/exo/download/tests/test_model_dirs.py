@@ -2,6 +2,8 @@
 
 import json
 import shutil
+import subprocess
+import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import patch
@@ -230,6 +232,54 @@ class TestSelectDownloadDir:
 
 
 class TestDeleteModel:
+    async def test_rejects_cache_root_pointing_outside_models_dir(
+        self, tmp_path: Path
+    ) -> None:
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        model_dir = models_dir / NORMALIZED
+        model_dir.mkdir()
+        weights = model_dir / "keep.safetensors"
+        weights.write_text("weights")
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        cache_dir = outside / NORMALIZED
+        cache_dir.mkdir()
+        sentinel = cache_dir / "keep.json"
+        sentinel.write_text("keep")
+        if sys.platform == "win32":
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(models_dir / "caches"), str(outside)],
+                check=True,
+                capture_output=True,
+            )
+        else:
+            (models_dir / "caches").symlink_to(outside, target_is_directory=True)
+
+        with (
+            patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
+            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+            pytest.raises(ValueError),
+        ):
+            await delete_model(MODEL_ID)
+        assert sentinel.read_text() == "keep"
+        assert weights.read_text() == "weights"
+
+    async def test_rejects_target_equal_to_models_root(self, tmp_path: Path) -> None:
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        sentinel = models_dir / "keep.json"
+        sentinel.write_text("keep")
+        # Deliberately bypass construction to exercise deletion's own boundary.
+        invalid_id = str.__new__(ModelId, ".")
+        with (
+            patch("exo.download.download_utils.EXO_MODELS_DIRS", (models_dir,)),
+            patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models_dir),
+            pytest.raises(ValueError),
+        ):
+            await delete_model(invalid_id)
+        assert sentinel.read_text() == "keep"
+
     @pytest.fixture
     async def dirs(self, tmp_path: Path) -> AsyncIterator[tuple[Path, Path, Path]]:
         writable1 = tmp_path / "w1"
