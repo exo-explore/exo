@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timedelta, timezone
 
 import anyio
@@ -78,6 +79,21 @@ from exo.utils.disk_event_log import DiskEventLog
 from exo.utils.event_buffer import MultiSourceBuffer
 from exo.utils.task_group import TaskGroup
 
+# Every node reports its info about once a second. A node the master hasn't heard from for
+# this long is treated as gone (crashed, frozen, asleep or cut off), and its instances are
+# deleted so that requests on them end with an error instead of waiting. On four busy nodes
+# (800 events/s) a healthy node's reports were never more than 6.3 s apart.
+NODE_SILENCE_TIMEOUT = timedelta(seconds=15)
+# How often the master looks for silent nodes and for instances that lost a node
+PLAN_INTERVAL = 1.0
+# How long to wait for a removal to be applied before sending it again
+REMOVAL_RESEND_INTERVAL = 5.0
+# A check this late means the master itself was stalled (frozen, asleep or overloaded) and
+# couldn't hear anyone. Nodes then get time to reconnect (discovery holds off for a while
+# after a stall) and a full NODE_SILENCE_TIMEOUT to report again before any is removed.
+MASTER_STALL = 5.0
+RECONNECT_ALLOWANCE = timedelta(seconds=15)
+
 
 def _prefill_endpoint_for(state: State, decode_instance_id: InstanceId) -> str | None:
     decode = state.instances.get(decode_instance_id)
@@ -145,6 +161,12 @@ class Master:
         self._multi_buffer = MultiSourceBuffer[SystemId, Event]()
         self._event_log = DiskEventLog(EXO_EVENT_LOG_DIR / "master")
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
+        # When a removal was last sent, for nodes and instances not yet removed from the state
+        self._removing_nodes: dict[NodeId, float] = {}
+        self._deleting_instances: dict[InstanceId, float] = {}
+        # Since when the master has been able to hear nodes, and when it last checked on them
+        self._listening_since = time.monotonic()
+        self._last_check: float | None = None
         self._expected_ranks: dict[TaskId, set[int]] = {}
 
     async def run(self):
@@ -470,24 +492,63 @@ class Master:
     # These plan loops are the cracks showing in our event sourcing architecture - more things could be commands
     async def _plan(self) -> None:
         while True:
-            # kill broken instances
-            connected_node_ids = set(self.state.topology.list_nodes())
-            for instance_id, instance in self.state.instances.items():
-                for node_id in instance.shard_assignments.node_to_runner:
-                    if node_id not in connected_node_ids:
-                        await self.event_sender.send(
-                            InstanceDeleted(instance_id=instance_id)
-                        )
-                        break
+            await self._remove_silent_nodes_and_broken_instances()
+            await anyio.sleep(PLAN_INTERVAL)
 
-            # time out dead nodes
-            for node_id, time in self.state.last_seen.items():
-                now = datetime.now(tz=timezone.utc)
-                if now - time > timedelta(seconds=30):
-                    logger.info(f"Manually removing node {node_id} due to inactivity")
-                    await self.event_sender.send(NodeTimedOut(node_id=node_id))
+    async def _remove_silent_nodes_and_broken_instances(self) -> None:
+        check = time.monotonic()
+        if self._last_check is not None and check - self._last_check > MASTER_STALL:
+            logger.warning(
+                f"Master was unresponsive for {check - self._last_check:.0f}s; "
+                "giving nodes time to report before removing any"
+            )
+            self._listening_since = check + RECONNECT_ALLOWANCE.total_seconds()
+        self._last_check = check
+        # A node is silent only if the master was listening and didn't hear from it
+        listened = timedelta(seconds=check - self._listening_since)
+        now = datetime.now(tz=timezone.utc)
+        silent = {
+            node_id: now - seen
+            for node_id, seen in self.state.last_seen.items()
+            if min(now - seen, listened) > NODE_SILENCE_TIMEOUT
+        }
+        for node_id, silence in silent.items():
+            if self._resend_due(self._removing_nodes, node_id):
+                logger.info(
+                    f"Manually removing node {node_id} due to inactivity "
+                    f"({silence.total_seconds():.0f}s without hearing from it)"
+                )
+                await self.event_sender.send(NodeTimedOut(node_id=node_id))
 
-            await anyio.sleep(10)
+        # An instance that lost a node can't serve anything, so delete it straight away,
+        # without waiting for the node's removal to be applied
+        connected = set(self.state.topology.list_nodes()) - silent.keys()
+        for instance_id, instance in self.state.instances.items():
+            if any(
+                node_id not in connected
+                for node_id in instance.shard_assignments.node_to_runner
+            ) and self._resend_due(self._deleting_instances, instance_id):
+                await self.event_sender.send(InstanceDeleted(instance_id=instance_id))
+
+        # Forget what has been applied
+        self._removing_nodes = {
+            k: v for k, v in self._removing_nodes.items() if k in self.state.last_seen
+        }
+        self._deleting_instances = {
+            k: v
+            for k, v in self._deleting_instances.items()
+            if k in self.state.instances
+        }
+
+    @staticmethod
+    def _resend_due[K](sent: dict[K, float], key: K) -> bool:
+        """Whether to send a removal for key: not sent yet, or sent a while ago and still
+        not applied."""
+        now = time.monotonic()
+        if key in sent and now - sent[key] < REMOVAL_RESEND_INTERVAL:
+            return False
+        sent[key] = now
+        return True
 
     async def _event_processor(self) -> None:
         with self.local_event_receiver as local_events:
