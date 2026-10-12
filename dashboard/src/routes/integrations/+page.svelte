@@ -90,11 +90,13 @@
   let codexMcpPath = $state("/Users/username");
   let openClawModel = $state("");
   let piModel = $state("");
+  let atomicAgentModel = $state("");
   $effect(() => {
     const def = modelsBySize.length > 0 ? modelsBySize[0] : "your-model-id";
     codexModel = def;
     openClawModel = def;
     piModel = def;
+    atomicAgentModel = def;
   });
 
   const claudeShellCommand = $derived(
@@ -292,6 +294,38 @@
 
   const piShellCommand = $derived(`pi --provider exo --model ${piModel}`);
 
+  const atomicAgentConfigJson = $derived.by(() => {
+    const caps = modelCapabilities[atomicAgentModel] || [];
+    const ctxLen = modelContextLengths[atomicAgentModel] || 0;
+    const userModels =
+      ctxLen > 0
+        ? [{ id: atomicAgentModel, kind: "chat", contextWindow: ctxLen }]
+        : [];
+    return JSON.stringify(
+      {
+        llm: {
+          activeTextProvider: "exo",
+          providers: [
+            {
+              id: "exo",
+              kind: "openai-compatible",
+              baseUrl: `${apiUrl}/v1`,
+              // Atomic Agent always sends an Authorization header on this
+              // provider kind; exo ignores the value.
+              apiKey: "exo",
+              defaultChatModel: atomicAgentModel,
+              supportsTools: true,
+              supportsVision: caps.includes("vision"),
+              ...(userModels.length > 0 ? { userModels } : {}),
+            },
+          ],
+        },
+      },
+      null,
+      2,
+    );
+  });
+
   const ollamaCommand = $derived(
     `OLLAMA_HOST=${apiUrl}/ollama ollama run ${modelsBySize.length > 0 ? modelsBySize[0] : "your-model-id"}`,
   );
@@ -352,6 +386,7 @@
     "Codex",
     "OpenClaw",
     "Pi",
+    "Atomic Agent",
     "Open WebUI",
     "n8n",
     "Firefox",
@@ -625,6 +660,26 @@
           description="Launch pi directly with the exo provider and model selected."
           config={piShellCommand}
           language="bash"
+        />
+      {:else if activeTab === "Atomic Agent"}
+        {#if runningModels.length > 1}
+          <div class="text-xs">
+            <span
+              class="text-exo-light-gray/50 text-[10px] uppercase tracking-wider block mb-1"
+              >Model</span
+            >
+            <select bind:value={atomicAgentModel} class={selectClass}>
+              {#each runningModels as model}
+                <option value={model}>{model.split("/").pop()}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
+        <IntegrationCard
+          title="Config File"
+          subtitle="~/.atomic-agent/config.json"
+          description="Register exo as the active model provider for Atomic Agent, a local-first coding agent. Merge this into your config, then restart the agent. Install with: curl -fsSL https://atomicagent.io/install | sh"
+          config={atomicAgentConfigJson}
         />
       {:else if activeTab === "Open WebUI"}
         <IntegrationCard
