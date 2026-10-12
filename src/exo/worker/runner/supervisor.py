@@ -473,7 +473,11 @@ class RunnerSupervisor:
             for d in self._runner_stdio_handler.diagnostics.diagnostics()
             if not isinstance(d, RunnerUnknown)
         ]
-        for task in self.in_progress.values():
+        # Each send yields to the event loop, where the runner's last results can still finish
+        # requests (and take them out of in_progress), so walk a copy and skip those.
+        for task in list(self.in_progress.values()):
+            if task.task_id not in self.in_progress:
+                continue
             if isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
                 with anyio.CancelScope(shield=True):
                     await self._event_sender.send(
