@@ -608,6 +608,7 @@ struct ContentView: View {
                 DispatchQueue.main.async {
                     // Unregister from launch at login
                     LaunchAtLoginHelper.disable()
+                    StartupPreferences().resetForUninstall()
 
                     // Move app to trash
                     self.moveAppToTrash()
