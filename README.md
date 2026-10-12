@@ -70,7 +70,56 @@ exo includes a built-in dashboard for managing your cluster and chatting with mo
 
 Devices running exo automatically discover each other, without needing any manual configuration. Each device provides an API and a dashboard for interacting with your cluster (runs at `http://localhost:52415`).
 
-There are two ways to run exo:
+You can run exo with the macOS app, the easiest way on a Mac, or from source on macOS or Linux.
+
+### macOS App
+
+exo ships a macOS app that runs in the background on your Mac.
+
+<img src="docs/imgs/macos-app-one-macbook.png" alt="exo macOS App - running on a MacBook" width="35%" />
+
+The macOS app requires macOS Tahoe 26.2 or later.
+
+Download the latest build here: [EXO-latest.dmg](https://assets.exolabs.net/EXO-latest.dmg).
+
+You can also install the latest build with Homebrew:
+
+```bash
+brew install --cask exo
+```
+
+The app will ask for permission to modify system settings and install a new Network profile. Improvements to this are being worked on.
+
+**Custom Namespace for Cluster Isolation:**
+
+The macOS app includes a custom namespace feature that allows you to isolate your exo cluster from others on the same network. This is configured through the `EXO_ZENOH_NAMESPACE` setting:
+
+- **Use cases**:
+  - Running multiple separate exo clusters on the same network
+  - Isolating development/testing clusters from production clusters
+  - Preventing accidental cluster joining
+
+- **Configuration**: Access this setting in the app's Advanced settings (or set the `EXO_ZENOH_NAMESPACE` environment variable when running from source)
+
+The namespace is logged on startup for debugging purposes.
+
+#### Uninstalling the macOS App
+
+The recommended way to uninstall is through the app itself: click the menu bar icon → Advanced → Uninstall. This cleanly removes all system components.
+
+If you've already deleted the app, you can run the standalone uninstaller script:
+
+```bash
+sudo ./app/EXO/uninstall-exo.sh
+```
+
+This removes:
+- Network setup LaunchDaemon
+- Network configuration script
+- Log files
+- The "exo" network location
+
+**Note:** You'll need to manually remove EXO from Login Items in System Settings → General → Login Items.
 
 ### Run from Source (macOS)
 
@@ -80,9 +129,9 @@ If you have [Nix](https://nixos.org/) installed, you can skip most of the steps 
 nix run .#exo
 ```
 
-**Note:** To accept the Cachix binary cache (and avoid the Xcode Metal ToolChain), add to `/etc/nix/nix.conf`:
+**Note:** To accept the Cachix binary cache (and avoid the Xcode Metal ToolChain), add these lines to `/etc/nix/nix.conf`, replacing `your-username` with your macOS username (`whoami` prints it):
 ```
-trusted-users = root    (or your username)
+trusted-users = root your-username
 experimental-features = nix-command flakes
 ```
 Then restart the Nix daemon: `sudo launchctl kickstart -k system/org.nixos.nix-daemon`
@@ -100,13 +149,12 @@ Then restart the Nix daemon: `sudo launchctl kickstart -k system/org.nixos.nix-d
   ```bash
   brew install uv node
   ```
-- [rust](https://github.com/rust-lang/rustup) (to build Rust bindings, nightly for now)
+- [rust](https://github.com/rust-lang/rustup) (stable, to build the Rust bindings)
 
   ```bash
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-  rustup toolchain install nightly
   ```
-- [macmon](https://github.com/vladkens/macmon) (for hardware monitoring on Apple Silicon)
+- [macmon](https://github.com/vladkens/macmon) (optional, for GPU usage, power and temperature monitoring on Apple Silicon; without it exo falls back to psutil and monitors memory only)
 
   Install the pinned fork revision used by this repo instead of Homebrew `macmon`.
   Homebrew `macmon 0.6.1` still crashes on Apple M5.
@@ -146,7 +194,7 @@ This starts the exo dashboard and API at http://localhost:52415/
 
 - [uv](https://github.com/astral-sh/uv) (for Python dependency management)
 - [node](https://github.com/nodejs/node) (for building the dashboard) - version 18 or higher
-- [rust](https://github.com/rust-lang/rustup) (to build Rust bindings, nightly for now)
+- [rust](https://github.com/rust-lang/rustup) (stable, to build the Rust bindings)
 
 **Installation methods:**
 
@@ -161,7 +209,6 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Install Rust (using rustup)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-rustup toolchain install nightly
 ```
 
 **Option 2: Using Homebrew on Linux (if preferred):**
@@ -174,7 +221,6 @@ brew install uv node
 
 # Install Rust (using rustup)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-rustup toolchain install nightly
 ```
 
 **Note:** The `macmon` package is macOS-only and not required for Linux.
@@ -225,55 +271,6 @@ exo follows the [XDG Base Directory Specification](https://specifications.freede
 - **Custom model cards**: `~/.local/share/exo/custom_model_cards/`
 
 You can override these locations by setting the corresponding XDG environment variables.
-
-### macOS App
-
-exo ships a macOS app that runs in the background on your Mac.
-
-<img src="docs/imgs/macos-app-one-macbook.png" alt="exo macOS App - running on a MacBook" width="35%" />
-
-The macOS app requires macOS Tahoe 26.2 or later.
-
-Download the latest build here: [EXO-latest.dmg](https://assets.exolabs.net/EXO-latest.dmg).
-
-You can also install the latest build with Homebrew:
-
-```bash
-brew install --cask exo
-```
-
-The app will ask for permission to modify system settings and install a new Network profile. Improvements to this are being worked on.
-
-**Custom Namespace for Cluster Isolation:**
-
-The macOS app includes a custom namespace feature that allows you to isolate your exo cluster from others on the same network. This is configured through the `EXO_ZENOH_NAMESPACE` setting:
-
-- **Use cases**:
-  - Running multiple separate exo clusters on the same network
-  - Isolating development/testing clusters from production clusters
-  - Preventing accidental cluster joining
-
-- **Configuration**: Access this setting in the app's Advanced settings (or set the `EXO_ZENOH_NAMESPACE` environment variable when running from source)
-
-The namespace is logged on startup for debugging purposes.
-
-#### Uninstalling the macOS App
-
-The recommended way to uninstall is through the app itself: click the menu bar icon → Advanced → Uninstall. This cleanly removes all system components.
-
-If you've already deleted the app, you can run the standalone uninstaller script:
-
-```bash
-sudo ./app/EXO/uninstall-exo.sh
-```
-
-This removes:
-- Network setup LaunchDaemon
-- Network configuration script
-- Log files
-- The "exo" network location
-
-**Note:** You'll need to manually remove EXO from Login Items in System Settings → General → Login Items.
 
 ---
 
@@ -362,7 +359,7 @@ If you prefer to interact with exo via the API, here is an example creating an i
 The `/instance/previews` endpoint will preview all valid placements for your model.
 
 ```bash
-curl "http://localhost:52415/instance/previews?model_id=llama-3.2-1b"
+curl "http://localhost:52415/instance/previews?model_id=mlx-community/Llama-3.2-1B-Instruct-4bit"
 ```
 
 Sample response:
@@ -387,7 +384,7 @@ This will return all valid placements for this model. Pick a placement that you 
 To pick the first one, pipe into `jq`:
 
 ```bash
-curl "http://localhost:52415/instance/previews?model_id=llama-3.2-1b" | jq -c '.previews[] | select(.error == null) | .instance' | head -n1
+curl "http://localhost:52415/instance/previews?model_id=mlx-community/Llama-3.2-1B-Instruct-4bit" | jq -c '.previews[] | select(.error == null) | .instance' | head -n1
 ```
 
 ---
@@ -480,9 +477,7 @@ curl -N -X POST http://localhost:52415/v1/responses \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "mlx-community/Llama-3.2-1B-Instruct-4bit",
-    "messages": [
-      {"role": "user", "content": "Hello"}
-    ],
+    "input": "Hello",
     "stream": true
   }'
 ```
@@ -533,7 +528,7 @@ Custom models requiring `trust_remote_code` in their configuration must be expli
 For further details, see:
 
 - API documentation in [docs/api.md](docs/api.md).
-- API types and endpoints in [src/exo/master/api.py](src/exo/master/api.py).
+- API endpoints in [src/exo/api/main.py](src/exo/api/main.py), and their request and response types in [src/exo/api/types/](src/exo/api/types/).
 
 ---
 
