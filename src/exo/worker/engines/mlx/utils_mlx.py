@@ -38,6 +38,7 @@ import contextlib
 
 import mlx.core as mx
 import mlx.nn as nn
+from mlx_lm.generate import generation_stream
 from mlx_lm.utils import load_model
 from pydantic import RootModel
 
@@ -838,6 +839,20 @@ def mx_any(bool_: bool, group: mx.distributed.Group | None) -> bool:
     )
     mx.eval(num_true)
     return num_true.item() > 0
+
+
+def use_generation_stream_by_default() -> None:
+    """Make mlx-lm's generation stream this thread's default GPU stream, so every GPU op the runner
+    makes, mlx-lm's and exo's, runs on that one stream.
+
+    With MLX_METAL_FAST_SYNCH, a GPU op that needs the result of one on another GPU stream spins on
+    the GPU until it is there. In a tensor-parallel eval, whose GPU work also spins waiting on the
+    communication stream, two GPU streams waiting on each other like this deadlock. exo's own ops
+    (prefix cache copies, snapshots, trims) ran on the default stream while mlx-lm runs the model on
+    its generation stream, so both streams met in the model's evals."""
+    with mx.stream(generation_stream):
+        stream = mx.default_stream(mx.default_device())
+    mx.set_default_stream(stream)
 
 
 def mx_barrier(group: mx.distributed.Group | None):

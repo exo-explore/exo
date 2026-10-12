@@ -7,6 +7,7 @@ from typing import Callable, Generator, cast, get_args
 
 import mlx.core as mx
 from mlx_lm.generate import (
+    generation_stream,
     maybe_quantize_kv_cache,
     stream_generate,
 )
@@ -73,8 +74,6 @@ from exo.worker.engines.mlx.vision import (
 from exo.worker.runner.bootstrap import logger
 
 REMOTE_PREFILL_MIN_TOKENS = 1000
-
-generation_stream = mx.new_stream(mx.default_device())
 
 _MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
 
