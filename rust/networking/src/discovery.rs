@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     io,
     net::{Ipv6Addr, SocketAddr, SocketAddrV6},
     sync::Arc,
@@ -11,12 +12,16 @@ use netwatcher::WatchHandle;
 use parking_lot::Mutex;
 use tokio::{
     net::UdpSocket,
-    time::{Interval, interval},
+    time::{Interval, MissedTickBehavior, interval},
 };
 use zenoh::config::ZenohId;
 
 const GROUP: Ipv6Addr = Ipv6Addr::new(0xff12, 0, 0, 0, 0, 0, 0xe0a1, 0xde89);
 const MAGIC: [u8; 3] = *b"EXO";
+/// Replies to any of our last few Hellos are accepted. A reply can arrive after the next
+/// Hello has gone out (the peer, or this loop, was busy), and insisting on the latest nonce
+/// meant a slow peer was never discovered.
+const RECENT_NONCES: usize = 8;
 /// How often to repeat the warning while no Hello can be sent at all.
 const BLOCKED_WARNING_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -24,7 +29,7 @@ pub struct Discovery {
     sock: Arc<UdpSocket>,
     ifaces: Arc<Mutex<Vec<SocketAddrV6>>>,
     namespace: [u8; 8],
-    last_nonce: Mutex<[u8; 8]>,
+    recent_nonces: Mutex<RecentNonces>,
     /// the port of the service we are doing discovery for - transmitted to peers
     listen_port: u16,
     zid: ZenohId,
@@ -113,10 +118,15 @@ impl Discovery {
             sock,
             namespace,
             ifaces,
-            last_nonce: Mutex::new(rand::random()),
+            recent_nonces: Mutex::new(RecentNonces::default()),
             listen_port,
             zid,
-            tick: interval(Duration::from_secs(1)),
+            tick: {
+                // After a stall, announce once rather than in a burst of missed ticks
+                let mut tick = interval(Duration::from_secs(1));
+                tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+                tick
+            },
             blocked_since_warning: Mutex::new(None),
             _sync,
         })
@@ -170,7 +180,7 @@ impl Discovery {
                     return Ok(None);
                 }
                 let hello: &Hello = bytemuck::from_bytes(&buf[size_of::<Header>()..total]);
-                if hello.nonce == *self.last_nonce.lock() {
+                if self.recent_nonces.lock().contains(hello.nonce) {
                     trace!("dropped: local hello nonce");
                     return Ok(None);
                 }
@@ -188,22 +198,12 @@ impl Discovery {
                 }
                 .alloc();
 
-                for i in 1..6 {
-                    if self
-                        .sock
-                        .send_to(&reply, addr)
-                        .await
-                        .inspect_err(|e| debug!("send to {addr} failed: {e}"))
-                        .is_ok_and(|sent| sent == WhatsUp::buf_size())
-                    {
-                        trace!(
-                            "sent {} bytes to {addr} after {} attempt(s)",
-                            WhatsUp::buf_size(),
-                            i
-                        );
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(300)).await;
+                // One attempt only: retrying here would stall this loop (and with it our own
+                // announcements and every other reply), and the peer says Hello again every
+                // second anyway.
+                match self.sock.send_to(&reply, addr).await {
+                    Ok(sent) => trace!("sent {sent} bytes to {addr}"),
+                    Err(e) => debug!("send to {addr} failed: {e}"),
                 }
                 Ok(None)
             }
@@ -214,7 +214,7 @@ impl Discovery {
                     return Ok(None);
                 }
                 let whats_up: &WhatsUp = bytemuck::from_bytes(&buf[size_of::<Header>()..total]);
-                if whats_up.nonce != *self.last_nonce.lock() {
+                if !self.recent_nonces.lock().contains(whats_up.nonce) {
                     trace!("dropped: stale nonce");
                     return Ok(None);
                 }
@@ -245,7 +245,7 @@ impl Discovery {
 
     async fn announce(&self) -> io::Result<()> {
         let nonce = rand::random();
-        *self.last_nonce.lock() = nonce;
+        self.recent_nonces.lock().push(nonce);
         let buf = Hello {
             nonce,
             namespace: self.namespace,
@@ -309,6 +309,23 @@ async fn send_to_all(sock: &UdpSocket, buf: &[u8], addrs: &[SocketAddrV6]) -> io
     match last_err {
         Some(e) if !sent_any => Err(e),
         _ => Ok(()),
+    }
+}
+
+/// The nonces of our last few Hellos.
+#[derive(Default)]
+struct RecentNonces(VecDeque<[u8; 8]>);
+
+impl RecentNonces {
+    fn push(&mut self, nonce: [u8; 8]) {
+        if self.0.len() == RECENT_NONCES {
+            self.0.pop_front();
+        }
+        self.0.push_back(nonce);
+    }
+
+    fn contains(&self, nonce: [u8; 8]) -> bool {
+        self.0.contains(&nonce)
     }
 }
 
@@ -389,6 +406,17 @@ impl_alloc!(WhatsUp);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remembers_only_the_most_recent_nonces() {
+        let mut recent = RecentNonces::default();
+        let nonces: Vec<[u8; 8]> = (0..=RECENT_NONCES as u8).map(|i| [i; 8]).collect();
+        for nonce in &nonces {
+            recent.push(*nonce);
+        }
+        assert!(!recent.contains(nonces[0]));
+        assert!(nonces[1..].iter().all(|nonce| recent.contains(*nonce)));
+    }
 
     /// An address no packet can be sent to: the discovery group on an interface index that
     /// doesn't exist.
