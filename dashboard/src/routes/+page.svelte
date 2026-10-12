@@ -2199,16 +2199,11 @@
     const deletedInstanceModelId = getInstanceModelId(instanceData[instanceId]);
     const shortName =
       deletedInstanceModelId.split("/").pop() ?? deletedInstanceModelId;
-    if (
-      !confirm(
-        `Delete the ${shortName} instance (${instanceId.slice(0, 8).toUpperCase()})?`,
-      )
-    )
-      return;
+    if (!confirm(`Stop ${shortName}? Downloaded files are kept.`)) return;
     const wasSelected = selectedChatModel() === deletedInstanceModelId;
 
     if (!(await requestInstanceDeletion(instanceId))) {
-      addToast({ type: "error", message: "Failed to delete instance" });
+      addToast({ type: "error", message: `Failed to stop ${shortName}` });
     } else if (wasSelected) {
       // If we deleted the currently selected model, switch to another available model
       // Find another instance that isn't the one we just deleted
@@ -6062,15 +6057,16 @@
                           >
                         </div>
                         <button
+                          title="Stop this model. Downloaded files are kept."
                           onclick={(e) => {
-                            // Don't let the card's handlers select the model being deleted
+                            // Don't let the card's handlers select the model being stopped
                             e.stopPropagation();
                             deleteInstance(id);
                           }}
                           onkeydown={(e) => e.stopPropagation()}
                           class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
                         >
-                          DELETE
+                          Stop
                         </button>
                       </div>
                       <div class="pl-2">
@@ -7282,15 +7278,16 @@
                             >
                           </div>
                           <button
+                            title="Stop this model. Downloaded files are kept."
                             onclick={(e) => {
-                              // Don't let the card's handlers select the model being deleted
+                              // Don't let the card's handlers select the model being stopped
                               e.stopPropagation();
                               deleteInstance(id);
                             }}
                             onkeydown={(e) => e.stopPropagation()}
                             class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
                           >
-                            DELETE
+                            Stop
                           </button>
                         </div>
                         <div class="pl-2">
