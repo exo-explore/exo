@@ -1,8 +1,9 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import cast
 
 import mlx.core as mx
-from mlx_lm.generate import GenerationBatch
+from mlx_lm.generate import GenerationBatch, PromptProcessingBatch, generation_stream
 
 _PRECOMPUTE_TOP_K = 20
 
@@ -160,5 +161,24 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
     return token_list, current_lp
 
 
+_original_prompt = cast(
+    Callable[[PromptProcessingBatch, list[list[int]]], None],
+    PromptProcessingBatch.prompt,
+)
+
+
+def _prompt_after_decode_step(
+    self: PromptProcessingBatch, tokens: list[list[int]]
+) -> None:
+    """BatchGenerator._next async-evaluates the batch's next decode step and then processes new
+    prompts. Wait for that step first. With MLX_METAL_FAST_SYNCH, a tensor-parallel prompt eval
+    started while the step's collectives are still running can deadlock: its GPU work spins
+    waiting for the communication stream, which is still waiting for the step's GPU work."""
+    if tokens:
+        mx.synchronize(generation_stream)
+    _original_prompt(self, tokens)
+
+
 def apply_batch_gen_patch() -> None:
     GenerationBatch._step = _patched_step
+    PromptProcessingBatch.prompt = _prompt_after_decode_step
