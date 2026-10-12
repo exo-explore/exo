@@ -62,8 +62,6 @@ def test_plan_starts_warmup_for_accepting_rank_when_all_loaded_or_warming():
         instances=instances,
         all_runners=all_runners,
         tasks={},
-        input_chunk_buffer={},
-        image_cache={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -107,8 +105,6 @@ def test_plan_starts_warmup_for_rank_zero_after_others_warming():
         instances=instances,
         all_runners=all_runners,
         tasks={},
-        input_chunk_buffer={},
-        image_cache={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -151,8 +147,6 @@ def test_plan_does_not_start_warmup_for_non_zero_rank_until_all_loaded_or_warmin
         instances=instances,
         all_runners=all_runners,
         tasks={},
-        input_chunk_buffer={},
-        image_cache={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -199,8 +193,6 @@ def test_plan_does_not_start_warmup_for_rank_zero_until_others_warming():
         instances=instances,
         all_runners=all_runners,
         tasks={},
-        input_chunk_buffer={},
-        image_cache={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -219,8 +211,6 @@ def test_plan_does_not_start_warmup_for_rank_zero_until_others_warming():
         instances=instances,
         all_runners=all_runners,
         tasks={},
-        input_chunk_buffer={},
-        image_cache={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -266,8 +256,6 @@ def test_plan_starts_warmup_for_connecting_rank_after_others_warming():
         instances=instances,
         all_runners=all_runners,
         tasks={},
-        input_chunk_buffer={},
-        image_cache={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -312,8 +300,6 @@ def test_plan_does_not_start_warmup_for_accepting_rank_until_all_loaded_or_warmi
         instances=instances,
         all_runners=all_runners,
         tasks={},
-        input_chunk_buffer={},
-        image_cache={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -357,8 +343,6 @@ def test_plan_does_not_start_warmup_for_connecting_rank_until_others_warming():
         instances=instances,
         all_runners=all_runners,
         tasks={},
-        input_chunk_buffer={},
-        image_cache={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
