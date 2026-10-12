@@ -119,7 +119,7 @@ enum NetworkSetupHelper {
                 alert.alertStyle = .informational
                 alert.addButton(withTitle: "Install")
                 alert.addButton(withTitle: "Not Now")
-                return alert.runModal() == .alertFirstButtonReturn
+                return alert.runModalInFront() == .alertFirstButtonReturn
             }
 
             guard shouldInstall else {

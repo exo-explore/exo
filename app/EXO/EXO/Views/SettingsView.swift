@@ -591,7 +591,7 @@ struct SettingsView: View {
 
     private func showUninstallConfirmationAlert() {
         let (alert, keepModels) = Self.makeUninstallAlert()
-        let response = alert.runModal()
+        let response = alert.runModalInFront()
         if response == .alertFirstButtonReturn {
             performUninstall(keepModels: keepModels.state == .on)
         }
@@ -659,7 +659,7 @@ struct SettingsView: View {
                     errorAlert.informativeText = error.localizedDescription
                     errorAlert.alertStyle = .critical
                     errorAlert.addButton(withTitle: "OK")
-                    errorAlert.runModal()
+                    errorAlert.runModalInFront()
                     self.uninstallInProgress = false
                 }
             }
