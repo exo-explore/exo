@@ -65,6 +65,9 @@ class SendInputChunk(BaseCommand):
 
 class RequestEventLog(BaseCommand):
     since_idx: int
+    # Send a snapshot of the current state rather than the events: a node that has just
+    # started following this master can't apply them on top of the state it has
+    snapshot: bool = False
 
 
 class StartDownload(BaseCommand):

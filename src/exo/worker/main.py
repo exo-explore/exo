@@ -23,7 +23,7 @@ from exo.shared.types.commands import (
     ForwarderDownloadCommand,
     StartDownload,
 )
-from exo.shared.types.common import CommandId, NodeId, SystemId
+from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -31,6 +31,7 @@ from exo.shared.types.events import (
     InstanceDeleted,
     NodeDownloadProgress,
     NodeGatheredInfo,
+    RunnerStatusUpdated,
     StateSnapshot,
     TaskCreated,
     TaskDeleted,
@@ -106,6 +107,15 @@ class Worker:
         )
         self._stopped: anyio.Event = anyio.Event()
 
+        # The latest information of each kind gathered about this node, so that a new
+        # master can be told all of it: some of it is only gathered once
+        self._gathered: dict[type[GatheredInfo], GatheredInfo] = {}
+        # After a change of master, the session whose state this worker waits for before
+        # acting on the cluster state again
+        self._awaiting_state_of: SessionId | None = None
+        # The session of the last state snapshot applied
+        self._snapshot_session: SessionId | None = None
+
     async def run(self):
         logger.info("Starting Worker")
 
@@ -136,19 +146,28 @@ class Worker:
     async def _forward_info(self, recv: Receiver[GatheredInfo]):
         with recv as info_stream:
             async for info in info_stream:
-                await self.event_sender.send(
-                    NodeGatheredInfo(
-                        node_id=self.node_id,
-                        when=str(datetime.now(tz=timezone.utc)),
-                        info=info,
-                    )
-                )
+                self._gathered[type(info)] = info
+                await self._send_info(info)
+
+    async def _send_info(self, info: GatheredInfo) -> None:
+        await self.event_sender.send(
+            NodeGatheredInfo(
+                node_id=self.node_id,
+                when=str(datetime.now(tz=timezone.utc)),
+                info=info,
+            )
+        )
 
     async def _event_applier(self):
         with self.event_receiver as events:
             async for update in events:
                 if isinstance(update, StateSnapshot):
                     self.state = update.state
+                    self._snapshot_session = update.session
+                    if update.session == self._awaiting_state_of:
+                        self._awaiting_state_of = None
+                        # Every request from before the change of master has ended
+                        self._drop_all_inputs()
                     continue
                 # 2. for each event, apply it to the state
                 self.state = apply(self.state, event=update)
@@ -210,6 +229,13 @@ class Worker:
         elif task.command_id in self.input_chunk_buffer:
             self._tasks_with_inputs[task.task_id] = task.command_id
 
+    def _drop_all_inputs(self) -> None:
+        self.input_chunk_buffer.clear()
+        self.input_chunk_counts.clear()
+        self.input_images.clear()
+        self._tasks_with_inputs.clear()
+        self._inputs_lost.clear()
+
     def _drop_inputs(self, command_id: CommandId) -> None:
         self.input_chunk_buffer.pop(command_id, None)
         self.input_chunk_counts.pop(command_id, None)
@@ -259,6 +285,8 @@ class Worker:
     async def plan_step(self):
         while True:
             await anyio.sleep(0.1)
+            if self._awaiting_state_of is not None:
+                continue
             task: Task | None = plan(
                 self.node_id,
                 self.runners,
@@ -434,6 +462,31 @@ class Worker:
                     await self._start_runner_task(task)
                 case task:
                     await self._start_runner_task(task)
+
+    def follow_new_master(self, session_id: SessionId) -> None:
+        """Carry on under a new master, keeping this node's runners.
+
+        Until the new master's state arrives, the worker doesn't act on the state it has:
+        that is the old master's, and still holds the requests that ended with the change.
+        Call this as the node switches to the new master's session, before its state can
+        arrive.
+        """
+        if self._snapshot_session != session_id:
+            self._awaiting_state_of = session_id
+
+    async def announce_to_master(self) -> None:
+        """Tell a new master everything this worker knows about its node. The master's state
+        may lack it: the node may have just joined the master's cluster, and the last
+        updates it sent the old master may never have arrived."""
+        for info in list(self._gathered.values()):
+            await self._send_info(info)
+        for runner in list(self.runners.values()):
+            await self.event_sender.send(
+                RunnerStatusUpdated(
+                    runner_id=runner.bound_instance.bound_runner_id,
+                    runner_status=runner.status,
+                )
+            )
 
     async def shutdown(self):
         self._tg.cancel_tasks()
