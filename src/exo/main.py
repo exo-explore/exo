@@ -425,7 +425,10 @@ class Args(FrozenModel):
 
     @classmethod
     def parse(cls) -> Self:
-        parser = argparse.ArgumentParser(prog="EXO")
+        parser = argparse.ArgumentParser(
+            prog="exo",
+            description="Run an exo node: devices on the same network form a cluster that runs AI models together.",
+        )
         default_verbosity = 0
         parser.add_argument(
             "--version",
@@ -439,6 +442,7 @@ class Args(FrozenModel):
             const=-1,
             dest="verbosity",
             default=default_verbosity,
+            help="Only log warnings and errors",
         )
         parser.add_argument(
             "-v",
@@ -446,27 +450,32 @@ class Args(FrozenModel):
             action="count",
             dest="verbosity",
             default=default_verbosity,
+            help="Log debug messages too",
         )
         parser.add_argument(
             "-m",
             "--force-master",
             action="store_true",
             dest="force_master",
+            help="Prefer this node as the master that coordinates the cluster",
         )
         parser.add_argument(
             "--no-api",
             action="store_false",
             dest="spawn_api",
+            help="Don't serve the dashboard and API on this node",
         )
         parser.add_argument(
             "--api-port",
             type=int,
             dest="api_port",
             default=52415,
+            help="Port for the dashboard and API (default: %(default)s)",
         )
         parser.add_argument(
             "--no-worker",
             action="store_true",
+            help="Don't run models on this node, only coordinate the cluster",
         )
         parser.add_argument(
             "--no-downloads",
@@ -482,7 +491,8 @@ class Args(FrozenModel):
         parser.add_argument(
             "--no-batch",
             action="store_true",
-            help="Disable continuous batching, use sequential generation",
+            # Developer option: disable continuous batching, use sequential generation
+            help=argparse.SUPPRESS,
         )
         parser.add_argument(
             "--legacy-daemon",
@@ -496,7 +506,8 @@ class Args(FrozenModel):
             if os.getenv("EXO_BOOTSTRAP_PEERS")
             else [],
             dest="bootstrap_peers",
-            help="Comma-separated libp2p multiaddrs to dial on startup (env: EXO_BOOTSTRAP_PEERS)",
+            # Temporarily removed: exo refuses to start when bootstrap peers are given
+            help=argparse.SUPPRESS,
         )
         parser.add_argument(
             "--namespace",
@@ -511,14 +522,14 @@ class Args(FrozenModel):
             type=int,
             default=52414,
             dest="zenoh_port",
-            help="Fixed TCP port for zenoh to listen.",
+            help="TCP port that nodes connect to each other on (default: %(default)s)",
         )
         parser.add_argument(
             "--discovery-port",
             type=int,
             default=52413,
             dest="discovery_port",
-            help="Fixed UDP port for the discovery service.",
+            help="UDP port used to find other nodes on the network (default: %(default)s)",
         )
         fast_synch_group = parser.add_mutually_exclusive_group()
         fast_synch_group.add_argument(
@@ -526,13 +537,15 @@ class Args(FrozenModel):
             action="store_true",
             dest="fast_synch",
             default=None,
-            help="Force MLX FAST_SYNCH on (by default only RDMA/JACCL instances use it)",
+            # Developer option: force MLX FAST_SYNCH on (by default only RDMA/JACCL instances use it)
+            help=argparse.SUPPRESS,
         )
         fast_synch_group.add_argument(
             "--no-fast-synch",
             action="store_false",
             dest="fast_synch",
-            help="Force MLX FAST_SYNCH off",
+            # Developer option: force MLX FAST_SYNCH off
+            help=argparse.SUPPRESS,
         )
 
         args = parser.parse_args()
