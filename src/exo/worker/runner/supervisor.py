@@ -59,6 +59,9 @@ PREFILL_TIMEOUT_SECONDS = 60
 DECODE_TIMEOUT_SECONDS = 5
 # How often the supervisor checks that its runner is alive and can still reach the others
 RUNNER_WATCH_INTERVAL = 5.0
+# A generating runner reports a token every step and progress every prefill chunk, so this
+# long without a word means it is stuck (its instance's runners can wait on each other forever)
+RUNNER_STALL_TIMEOUT = 90.0
 
 
 @dataclass(eq=False)
@@ -198,6 +201,8 @@ class RunnerSupervisor:
     in_progress: dict[TaskId, Task] = field(default_factory=dict, init=False)
     completed: set[TaskId] = field(default_factory=set, init=False)
     cancelled: set[TaskId] = field(default_factory=set, init=False)
+    # When the runner last sent anything, for noticing a runner that is stuck mid-generation
+    _last_heard: float = field(default_factory=lambda: anyio.current_time(), init=False)
     _cancel_watch_runner: anyio.CancelScope = field(
         default_factory=anyio.CancelScope, init=False
     )
@@ -348,6 +353,7 @@ class RunnerSupervisor:
         try:
             with self._ev_recv as events:
                 async for event in events:
+                    self._last_heard = anyio.current_time()
                     if isinstance(event, RunnerTerminationError):
                         # try to get exception if possible
                         await self._check_runner(event)
@@ -398,6 +404,24 @@ class RunnerSupervisor:
                             "Lost the connection to the instance's other runners"
                         )
                     )
+                elif self._stuck():
+                    # Stopping it fails its requests with an error; the runner and the
+                    # instance's other runners are then recreated.
+                    await self._check_runner(
+                        RuntimeError(
+                            f"Runner made no progress for {RUNNER_STALL_TIMEOUT:.0f}s while generating"
+                        )
+                    )
+
+    def _stuck(self) -> bool:
+        """Whether the runner is generating but has gone silent. Only the first rank of an
+        instance reports tokens and prefill progress, so only its supervisor can tell."""
+        return (
+            self.bound_instance.bound_shard.device_rank == 0
+            and isinstance(self.status, RunnerRunning)
+            and any(isinstance(t, TextGeneration) for t in self.in_progress.values())
+            and anyio.current_time() - self._last_heard > RUNNER_STALL_TIMEOUT
+        )
 
     def _lost_its_peers(self) -> bool:
         return any(
