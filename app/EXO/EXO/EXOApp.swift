@@ -24,7 +24,7 @@ struct EXOApp: App {
     @StateObject private var settingsWindowController: SettingsWindowController
     @StateObject private var bugReportWindowController: BugReportWindowController
     private let terminationObserver: TerminationObserver
-    private let firstLaunchPopout = FirstLaunchPopout()
+    private let startupDashboardOpener = StartupDashboardOpener()
     private let ciContext = CIContext(options: nil)
 
     init() {
@@ -72,14 +72,11 @@ struct EXOApp: App {
                 .environmentObject(bugReportWindowController)
         } label: {
             menuBarIcon
-                .onReceive(controller.$isFirstLaunchReady) { ready in
-                    if ready && StartupPreferences().openDashboardOnStartup {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                            self.firstLaunchPopout.onComplete = { [weak controller] in
-                                controller?.markOnboardingCompleted()
-                            }
-                            self.firstLaunchPopout.show()
-                        }
+                // exo's API answering /node_id means it is up and the
+                // dashboard can be opened.
+                .onReceive(stateService.$localNodeId) { nodeId in
+                    if nodeId != nil {
+                        startupDashboardOpener.exoIsUp()
                     }
                 }
         }

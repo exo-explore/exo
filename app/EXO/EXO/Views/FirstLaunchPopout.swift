@@ -1,8 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// A popover callout anchored to the menu bar icon on every launch,
-/// pointing the user to the web dashboard with an arrow connecting to the icon.
+/// A popover callout anchored to the menu bar icon, pointing a new user to
+/// the web dashboard with an arrow connecting to the icon. Shown until it has
+/// been seen once; see `StartupDashboardOpener`.
 @MainActor
 final class FirstLaunchPopout {
     private var popover: NSPopover?
@@ -22,7 +23,7 @@ final class FirstLaunchPopout {
     private func showWithRetry(attemptsRemaining: Int) {
         guard attemptsRemaining > 0 else {
             // Exhausted retries — fall back to just opening the dashboard directly.
-            openDashboard()
+            Self.openDashboard()
             onComplete?()
             return
         }
@@ -46,7 +47,7 @@ final class FirstLaunchPopout {
                     self?.dismiss()
                 },
                 onOpen: { [weak self] in
-                    self?.openDashboard()
+                    Self.openDashboard()
                     self?.onComplete?()
                     self?.dismiss()
                 }
@@ -60,7 +61,7 @@ final class FirstLaunchPopout {
         countdownTask = Task {
             try? await Task.sleep(nanoseconds: 10_000_000_000)
             if !Task.isCancelled {
-                openDashboard()
+                Self.openDashboard()
                 onComplete?()
                 dismiss()
             }
@@ -75,8 +76,8 @@ final class FirstLaunchPopout {
         pop.performClose(nil)
     }
 
-    private func openDashboard() {
-        guard let url = URL(string: Self.dashboardURL) else { return }
+    static func openDashboard() {
+        guard let url = URL(string: dashboardURL) else { return }
         NSWorkspace.shared.open(url)
     }
 
@@ -170,7 +171,7 @@ private struct WelcomeCalloutView: View {
                 Spacer()
 
                 if countdown > 0 {
-                    Text("Launching in \(countdown) secs...")
+                    Text("Opening dashboard in \(countdown)s")
                         .font(.system(.caption2, design: .default))
                         .foregroundColor(.secondary.opacity(0.6))
                         .monospacedDigit()
