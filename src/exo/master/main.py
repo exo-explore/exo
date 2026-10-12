@@ -118,6 +118,18 @@ def _image_bytes(event: Event) -> int:
             return 0
 
 
+def task_for_command(state: State, command_id: CommandId) -> TaskId | None:
+    """The generation task created for a command, as state has it. Unlike the master's own map
+    from commands to tasks, state carries over to the next master."""
+    for task_id, task in state.tasks.items():
+        if (
+            isinstance(task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask))
+            and task.command_id == command_id
+        ):
+            return task_id
+    return None
+
+
 def _prefill_endpoint_for(state: State, decode_instance_id: InstanceId) -> str | None:
     decode = state.instances.get(decode_instance_id)
     if decode is None:
@@ -509,7 +521,7 @@ class Master:
                             )
                         case TaskCancelled():
                             if (
-                                task_id := self.command_task_mapping.get(
+                                task_id := self._task_for_command(
                                     command.cancelled_command_id
                                 )
                             ) is not None:
@@ -524,16 +536,17 @@ class Master:
                                     f"Nonexistent command {command.cancelled_command_id} cancelled"
                                 )
                         case TaskFinished():
+                            # The API resends a finish while the task is still in its state,
+                            # so a finish for a task already deleted is expected
                             if (
-                                task_id := self.command_task_mapping.pop(
-                                    command.finished_command_id, None
+                                task_id := self._task_for_command(
+                                    command.finished_command_id
                                 )
                             ) is not None:
-                                generated_events.append(TaskDeleted(task_id=task_id))
-                            else:
-                                logger.warning(
-                                    f"Finished command {command.finished_command_id} finished"
+                                self.command_task_mapping.pop(
+                                    command.finished_command_id, None
                                 )
+                                generated_events.append(TaskDeleted(task_id=task_id))
 
                         case AddCustomModelCard():
                             generated_events.append(
@@ -579,6 +592,24 @@ class Master:
                     )
                 except Exception as e:
                     logger.opt(exception=e).warning("Error in command processor")
+
+    def _task_for_command(self, command_id: CommandId) -> TaskId | None:
+        """The task this cluster created for a request. The mapping holds only what this master
+        created; a request started under a previous master is found in the state, so it can
+        still be finished or cancelled after the master changes."""
+        if (task_id := self.command_task_mapping.get(command_id)) is not None:
+            return task_id
+        return next(
+            (
+                task_id
+                for task_id, task in self.state.tasks.items()
+                if isinstance(
+                    task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask)
+                )
+                and task.command_id == command_id
+            ),
+            None,
+        )
 
     # These plan loops are the cracks showing in our event sourcing architecture - more things could be commands
     async def _plan(self) -> None:
