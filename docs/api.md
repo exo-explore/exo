@@ -2,7 +2,7 @@
 
 This document describes the REST API exposed by the **EXO** service, as implemented in:
 
-`src/exo/master/api.py`
+`src/exo/api/main.py` (request and response types are in `src/exo/api/types/`)
 
 The API is used to manage model instances in the cluster, inspect cluster state, and perform inference using multiple API-compatible interfaces.
 
@@ -58,12 +58,12 @@ Creates a new model instance in the cluster.
 
 ```json
 {
-  "instance": {
-    "model_id": "llama-3.2-1b",
-    "placement": { }
-  }
+  "instance": { ... }
 }
 ```
+
+The `instance` is a placement as returned by `/instance/previews` (each preview's
+`instance` field), for example the first preview without an error.
 
 **Response:**
 Command acknowledgement. Instance creation is asynchronous; clients should wait
@@ -238,7 +238,7 @@ Executes a chat completion request using an OpenAI-compatible schema. Supports s
 
 ```json
 {
-  "model": "llama-3.2-1b",
+  "model": "mlx-community/Llama-3.2-1B-Instruct-4bit",
   "messages": [
     { "role": "system", "content": "You are a helpful assistant." },
     { "role": "user", "content": "Hello" }
@@ -282,7 +282,7 @@ data: [DONE]
   "id": "...",
   "object": "chat.completion",
   "created": 1234567890,
-  "model": "llama-3.2-1b",
+  "model": "mlx-community/Llama-3.2-1B-Instruct-4bit",
   "choices": [{
     "index": 0,
     "message": {
@@ -312,7 +312,7 @@ Executes a chat completion request using the Claude Messages API format. Support
 
 ```json
 {
-  "model": "llama-3.2-1b",
+  "model": "mlx-community/Llama-3.2-1B-Instruct-4bit",
   "messages": [
     { "role": "user", "content": "Hello" }
   ],
@@ -344,13 +344,20 @@ Executes a chat completion request using the OpenAI Responses API format. Suppor
 
 ```json
 {
-  "model": "llama-3.2-1b",
-  "messages": [
+  "model": "mlx-community/Llama-3.2-1B-Instruct-4bit",
+  "input": [
     { "role": "user", "content": "Hello" }
   ],
   "stream": false
 }
 ```
+
+**Request parameters:**
+
+* `model`: string, required - Model ID to use
+* `input`: string or array, required - The prompt, or a list of input items such as messages
+* `instructions`: string (optional) - System instructions
+* `max_output_tokens`: integer (optional) - Maximum tokens to generate
 
 **Streaming response format:**
 When `stream=true`, returns Server-Sent Events with response-specific event types:
@@ -358,8 +365,9 @@ When `stream=true`, returns Server-Sent Events with response-specific event type
 * `response.created` - Response generation started
 * `response.in_progress` - Response is being generated
 * `response.output_item.added` - New output item added
+* `response.output_text.delta` - Incremental text chunk
 * `response.output_item.done` - Output item completed
-* `response.done` - Response generation completed
+* `response.completed` - Response generation completed
 
 **Response:**
 OpenAI Responses API-compatible response.
@@ -419,7 +427,7 @@ Execute a chat request using Ollama API format.
 
 ```json
 {
-  "model": "llama-3.2-1b",
+  "model": "mlx-community/Llama-3.2-1B-Instruct-4bit",
   "messages": [
     { "role": "user", "content": "Hello" }
   ],
@@ -440,7 +448,7 @@ Execute a text generation request using Ollama API format.
 
 ```json
 {
-  "model": "llama-3.2-1b",
+  "model": "mlx-community/Llama-3.2-1B-Instruct-4bit",
   "prompt": "Hello",
   "stream": false
 }
@@ -470,7 +478,7 @@ Returns model information in Ollama show format.
 
 ```json
 {
-  "name": "llama-3.2-1b"
+  "name": "mlx-community/Llama-3.2-1B-Instruct-4bit"
 }
 ```
 
