@@ -121,14 +121,18 @@ impl PyNetworkingHandle {
 
     /// Subscribe to a `GossipSub` topic.
     ///
+    /// With `high_priority`, messages on this topic are sent ahead of normal traffic.
+    ///
     /// Returns `True` if the subscription worked. Returns `False` if we were already subscribed.
-    pub async fn gossipsub_subscribe(&self, topic: String) -> PyResult<bool> {
+    #[pyo3(signature = (topic, high_priority=false))]
+    pub async fn gossipsub_subscribe(&self, topic: String, high_priority: bool) -> PyResult<bool> {
         let (tx, rx) = oneshot::channel();
 
         // send off request to subscribe
         self.to_swarm
             .send_py(ToSwarm::Subscribe {
                 topic,
+                high_priority,
                 result_sender: tx,
             })
             .allow_threads_py() // allow-threads-aware async call
