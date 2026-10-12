@@ -2027,6 +2027,9 @@ class API:
     async def _pause_on_new_election(self):
         with self.election_receiver as ems:
             async for message in ems:
+                # A heartbeat can carry a newer clock without an election result following it
+                if message.heartbeat:
+                    continue
                 if message.clock > self.last_completed_election:
                     self.paused = True
 
