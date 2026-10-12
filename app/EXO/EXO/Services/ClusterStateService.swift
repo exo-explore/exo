@@ -8,8 +8,17 @@ final class ClusterStateService: ObservableObject {
     @Published private(set) var lastActionMessage: String?
     @Published private(set) var modelOptions: [ModelOption] = []
     @Published private(set) var localNodeId: String?
+    /// Whether exo is answering. Once it stops, `latestSnapshot` is cleared
+    /// rather than left showing the last stats it reported.
+    @Published private(set) var apiState: APIResponsiveness.State = .connecting
+
+    /// A poll that gets no answer in this time counts as failed, so a hung exo
+    /// is noticed in seconds rather than after URLSession's 60-second default.
+    static let pollTimeout: TimeInterval = 10
 
     private var timer: Timer?
+    private var responsiveness = APIResponsiveness()
+    private var launchObservation: AnyCancellable?
     private let decoder: JSONDecoder
     private let session: URLSession
     private let baseURL: URL
@@ -66,6 +75,26 @@ final class ClusterStateService: ObservableObject {
         lastError = nil
         lastActionMessage = nil
         localNodeId = nil
+        responsiveness = APIResponsiveness()
+        apiState = responsiveness.state
+    }
+
+    /// Forgets what the previous run reported each time exo is started, so a
+    /// restart (e.g. Save & Restart in Settings) begins at "connecting"
+    /// instead of keeping old stats or calling the new exo unresponsive before
+    /// it has had a chance to answer.
+    func resetWhenExoStarts<StatusPublisher: Publisher>(_ statuses: StatusPublisher)
+    where
+        StatusPublisher.Output == ExoProcessController.Status,
+        StatusPublisher.Failure == Never
+    {
+        launchObservation =
+            statuses
+            .removeDuplicates()
+            .filter { $0 == .starting }
+            .sink { [weak self] _ in
+                self?.resetTransientState()
+            }
     }
 
     private func fetchLocalNodeId() async {
@@ -73,6 +102,7 @@ final class ClusterStateService: ObservableObject {
             let url = baseURL.appendingPathComponent("node_id")
             var request = URLRequest(url: url)
             request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.timeoutInterval = Self.pollTimeout
             let (data, response) = try await session.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse,
                 (200..<300).contains(httpResponse.statusCode)
@@ -87,21 +117,31 @@ final class ClusterStateService: ObservableObject {
         }
     }
 
-    private func fetchSnapshot() async {
+    func fetchSnapshot() async {
         // Retry fetching local node ID if not yet set
         if localNodeId == nil {
             await fetchLocalNodeId()
         }
+        let data: Data
         do {
             var request = URLRequest(url: endpoint)
             request.cachePolicy = .reloadIgnoringLocalCacheData
-            let (data, response) = try await session.data(for: request)
+            request.timeoutInterval = Self.pollTimeout
+            let (body, response) = try await session.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw URLError(.badServerResponse)
             }
             guard (200..<300).contains(httpResponse.statusCode) else {
                 throw URLError(.badServerResponse)
             }
+            data = body
+        } catch {
+            lastError = error.localizedDescription
+            recordPoll(answered: false)
+            return
+        }
+        recordPoll(answered: true)
+        do {
             let snapshot = try decoder.decode(ClusterState.self, from: data)
             latestSnapshot = snapshot
             if modelOptions.isEmpty {
@@ -110,6 +150,20 @@ final class ClusterStateService: ObservableObject {
             lastError = nil
         } catch {
             lastError = error.localizedDescription
+        }
+    }
+
+    private func recordPoll(answered: Bool) {
+        if answered {
+            responsiveness.recordAnswer()
+        } else {
+            responsiveness.recordFailure()
+        }
+        if responsiveness.state == .notResponding, latestSnapshot != nil {
+            latestSnapshot = nil
+        }
+        if apiState != responsiveness.state {
+            apiState = responsiveness.state
         }
     }
 

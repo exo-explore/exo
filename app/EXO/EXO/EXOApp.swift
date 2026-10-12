@@ -38,6 +38,7 @@ struct EXOApp: App {
         }
         _controller = StateObject(wrappedValue: controller)
         let service = ClusterStateService()
+        service.resetWhenExoStarts(controller.$status)
         _stateService = StateObject(wrappedValue: service)
         let networkStatus = NetworkStatusService()
         _networkStatusService = StateObject(wrappedValue: networkStatus)
@@ -86,15 +87,33 @@ struct EXOApp: App {
     }
 
     private var menuBarIcon: some View {
+        let style = MenuBarIconStyle.showing(controller.status, apiState: stateService.apiState)
         let baseImage = resizedMenuBarIcon(named: "menubar-icon", size: 26)
-        let iconImage: NSImage
-        if controller.status == .stopped, let grey = greyscale(image: baseImage) {
+        var iconImage = baseImage ?? NSImage(named: "menubar-icon") ?? NSImage()
+        if style.isGreyscale, let grey = greyscale(image: baseImage) {
             iconImage = grey
-        } else {
-            iconImage = baseImage ?? NSImage(named: "menubar-icon") ?? NSImage()
+        }
+        if let badge = style.badge {
+            iconImage = badged(iconImage, color: badge.color)
         }
         return Image(nsImage: iconImage)
-            .accessibilityLabel("EXO")
+            .accessibilityLabel(style.accessibilityLabel)
+    }
+
+    /// Draws a coloured dot in the bottom-right corner, in the empty space
+    /// below the wordmark.
+    private func badged(_ image: NSImage, color: NSColor) -> NSImage {
+        let size = image.size
+        let diameter = (size.width * 0.32).rounded()
+        let badgedImage = NSImage(size: size)
+        badgedImage.lockFocus()
+        defer { badgedImage.unlockFocus() }
+        image.draw(in: NSRect(origin: .zero, size: size))
+        color.setFill()
+        NSBezierPath(
+            ovalIn: NSRect(x: size.width - diameter, y: 0, width: diameter, height: diameter)
+        ).fill()
+        return badgedImage
     }
 
     private func resizedMenuBarIcon(named: String, size: CGFloat) -> NSImage? {

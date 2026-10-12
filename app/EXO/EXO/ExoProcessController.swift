@@ -298,19 +298,6 @@ final class ExoProcessController: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting([runtimeDirectoryURL])
     }
 
-    func statusTintColor() -> NSColor {
-        switch status {
-        case .running:
-            return .systemGreen
-        case .starting:
-            return .systemYellow
-        case .failed:
-            return .systemRed
-        case .stopped:
-            return .systemGray
-        }
-    }
-
     private func resolveRuntimeDirectory() throws -> URL {
         let fileManager = FileManager.default
 

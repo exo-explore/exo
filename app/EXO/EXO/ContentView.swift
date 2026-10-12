@@ -178,6 +178,10 @@ struct ContentView: View {
                         }
                     }
                 }
+            } else if stateService.apiState == .notResponding {
+                Label("EXO isn't responding", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundColor(.orange)
             } else {
                 Text("Connecting to EXO…")
                     .font(.caption)
@@ -361,12 +365,14 @@ struct ContentView: View {
         return []
     }
 
+    /// Only while exo is starting or running: once it has failed, what the
+    /// cluster last reported is out of date.
     private var shouldShowClusterDetails: Bool {
-        controller.status != .stopped
+        controller.status == .starting || controller.status == .running
     }
 
     private var shouldShowInstances: Bool {
-        controller.status != .stopped
+        shouldShowClusterDetails
     }
 
     private var statusDetailText: String? {
