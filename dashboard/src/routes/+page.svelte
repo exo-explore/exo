@@ -5949,6 +5949,8 @@
                   {@const isRunning = statusText === "RUNNING"}
                   <!-- Instance Card -->
                   {@const instanceModelId = getInstanceModelId(instance)}
+                  {@const instanceModelName =
+                    instanceModelId.split("/").pop() || instanceModelId}
                   {@const instanceInfo = getInstanceInfo(instance)}
                   {@const instanceConnections =
                     getInstanceConnections(instance)}
@@ -6039,9 +6041,9 @@
                               : 'border-teal-500/30 border-l-teal-400 group-hover:border-teal-500/50'} p-3"
                     >
                       <div class="flex justify-between items-start mb-2 pl-2">
-                        <div class="flex items-center gap-2">
+                        <div class="flex items-center gap-2 min-w-0">
                           <div
-                            class="w-1.5 h-1.5 {isDownloading
+                            class="w-1.5 h-1.5 flex-shrink-0 {isDownloading
                               ? 'bg-blue-400 animate-pulse'
                               : isFailed
                                 ? 'bg-red-400'
@@ -6052,8 +6054,8 @@
                                     : 'bg-teal-400'} rounded-full shadow-[0_0_6px_currentColor]"
                           ></div>
                           <span
-                            class="text-exo-light-gray font-mono text-sm tracking-wider"
-                            >{id.slice(0, 8).toUpperCase()}</span
+                            class="text-exo-yellow font-mono text-sm truncate"
+                            title={instanceModelId}>{instanceModelName}</span
                           >
                         </div>
                         <button
@@ -6064,17 +6066,12 @@
                             deleteInstance(id);
                           }}
                           onkeydown={(e) => e.stopPropagation()}
-                          class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
+                          class="flex-shrink-0 text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
                         >
                           Stop
                         </button>
                       </div>
                       <div class="pl-2">
-                        <div
-                          class="text-exo-yellow text-xs font-mono tracking-wide truncate"
-                        >
-                          {getInstanceModelId(instance)}
-                        </div>
                         <div
                           class="flex items-center gap-2 text-white/60 text-xs font-mono"
                         >
@@ -6126,6 +6123,12 @@
                             {instanceInfo.nodeNames.join(", ")}
                           </div>
                         {/if}
+                        <div
+                          class="text-white/40 text-[10px] font-mono tracking-wider"
+                          title="Instance {id}"
+                        >
+                          ID {id.slice(0, 8).toUpperCase()}
+                        </div>
                         {#if debugEnabled && instanceConnections.length > 0}
                           <div class="mt-2 space-y-1">
                             {#each instanceConnections as conn}
@@ -7171,6 +7174,8 @@
                     {@const isRunning = statusText === "RUNNING"}
                     <!-- Instance Card -->
                     {@const instanceModelId = getInstanceModelId(instance)}
+                    {@const instanceModelName =
+                      instanceModelId.split("/").pop() || instanceModelId}
                     {@const instanceInfo = getInstanceInfo(instance)}
                     {@const instanceConnections =
                       getInstanceConnections(instance)}
@@ -7260,9 +7265,9 @@
                                 : 'border-teal-500/30 border-l-teal-400'} p-3"
                       >
                         <div class="flex justify-between items-start mb-2 pl-2">
-                          <div class="flex items-center gap-2">
+                          <div class="flex items-center gap-2 min-w-0">
                             <div
-                              class="w-1.5 h-1.5 {isDownloading
+                              class="w-1.5 h-1.5 flex-shrink-0 {isDownloading
                                 ? 'bg-blue-400 animate-pulse'
                                 : isFailed
                                   ? 'bg-red-400'
@@ -7273,8 +7278,8 @@
                                       : 'bg-teal-400'} rounded-full shadow-[0_0_6px_currentColor]"
                             ></div>
                             <span
-                              class="text-exo-light-gray font-mono text-sm tracking-wider"
-                              >{id.slice(0, 8).toUpperCase()}</span
+                              class="text-exo-yellow font-mono text-sm truncate"
+                              title={instanceModelId}>{instanceModelName}</span
                             >
                           </div>
                           <button
@@ -7285,17 +7290,12 @@
                               deleteInstance(id);
                             }}
                             onkeydown={(e) => e.stopPropagation()}
-                            class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
+                            class="flex-shrink-0 text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
                           >
                             Stop
                           </button>
                         </div>
                         <div class="pl-2">
-                          <div
-                            class="text-exo-yellow text-xs font-mono tracking-wide truncate"
-                          >
-                            {getInstanceModelId(instance)}
-                          </div>
                           <div
                             class="flex items-center gap-2 text-white/60 text-xs font-mono"
                           >
@@ -7347,6 +7347,12 @@
                               {instanceInfo.nodeNames.join(", ")}
                             </div>
                           {/if}
+                          <div
+                            class="text-white/40 text-[10px] font-mono tracking-wider"
+                            title="Instance {id}"
+                          >
+                            ID {id.slice(0, 8).toUpperCase()}
+                          </div>
                           {#if debugEnabled && instanceConnections.length > 0}
                             <div class="mt-2 space-y-1">
                               {#each instanceConnections as conn}
