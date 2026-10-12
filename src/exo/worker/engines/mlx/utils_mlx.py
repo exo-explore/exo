@@ -202,6 +202,14 @@ def load_mlx_items(
             f"Time taken to shard and load model: {(end_time - start_time):.2f}s"
         )
 
+    from exo.worker.engines.mlx.deepseek_v4_mtp import attach_mtp
+
+    if group is None or isinstance(bound_instance.bound_shard, TensorShardMetadata):
+        attach_mtp(
+            model,
+            build_model_path(bound_instance.bound_shard.model_card.model_id),
+            group,
+        )
     mx.clear_cache()
 
     vision_config = bound_instance.bound_shard.model_card.vision

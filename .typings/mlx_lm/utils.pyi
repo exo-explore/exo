@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple, Type, Union
 
+import mlx.core as mx
 import mlx.nn as nn
 from transformers.utils.auto_docstring import ModelArgs
 
@@ -20,6 +21,7 @@ def compute_bits_per_weight(model): ...
 def hf_repo_to_path(hf_repo):  # -> Path:
     ...
 def load_config(model_path: Path) -> dict: ...
+def _load_safetensors_with_e8m0(path: str) -> dict[str, mx.array]: ...
 def load_model(
     model_path: Path,
     lazy: bool = False,
