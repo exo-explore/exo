@@ -74,74 +74,78 @@
   <div
     class="absolute left-4 md:left-6 top-1/2 -translate-y-1/2 flex items-center gap-2"
   >
-    <!-- Mobile sidebar toggle -->
-    <button
-      onclick={handleToggleMobileMenu}
-      class="p-2 rounded border border-exo-light-gray/30 hover:border-exo-yellow/50 hover:bg-exo-medium-gray/30 transition-colors cursor-pointer md:hidden"
-      title={mobileMenuOpen ? "Hide sidebar" : "Show sidebar"}
-      aria-label={mobileMenuOpen
-        ? "Hide conversation sidebar"
-        : "Show conversation sidebar"}
-      aria-pressed={mobileMenuOpen}
-    >
-      <svg
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        stroke-width="2"
-        class="w-5 h-5 {mobileMenuOpen
-          ? 'text-exo-yellow'
-          : 'text-exo-light-gray'}"
+    <!-- Narrow-window sidebar toggle (opens the conversation drawer) -->
+    {#if showMobileMenuToggle}
+      <button
+        onclick={handleToggleMobileMenu}
+        class="p-2 rounded border border-exo-light-gray/30 hover:border-exo-yellow/50 hover:bg-exo-medium-gray/30 transition-colors cursor-pointer lg:hidden"
+        title={mobileMenuOpen ? "Hide sidebar" : "Show sidebar"}
+        aria-label={mobileMenuOpen
+          ? "Hide conversation sidebar"
+          : "Show conversation sidebar"}
+        aria-pressed={mobileMenuOpen}
       >
-        {#if mobileMenuOpen}
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M11 19l-7-7 7-7m8 14l-7-7 7-7"
-          ></path>
-        {:else}
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M13 5l7 7-7 7M5 5l7 7-7 7"
-          ></path>
-        {/if}
-      </svg>
-    </button>
-    <!-- Desktop sidebar toggle -->
-    <button
-      onclick={handleToggleSidebar}
-      class="p-2 rounded border border-exo-light-gray/30 hover:border-exo-yellow/50 hover:bg-exo-medium-gray/30 transition-colors cursor-pointer hidden md:block"
-      title={sidebarVisible ? "Hide sidebar" : "Show sidebar"}
-      aria-label={sidebarVisible
-        ? "Hide conversation sidebar"
-        : "Show conversation sidebar"}
-      aria-pressed={sidebarVisible}
-    >
-      <svg
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        stroke-width="2"
-        class="w-5 h-5 {sidebarVisible
-          ? 'text-exo-yellow'
-          : 'text-exo-light-gray'}"
+        <svg
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          stroke-width="2"
+          class="w-5 h-5 {mobileMenuOpen
+            ? 'text-exo-yellow'
+            : 'text-exo-light-gray'}"
+        >
+          {#if mobileMenuOpen}
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M11 19l-7-7 7-7m8 14l-7-7 7-7"
+            ></path>
+          {:else}
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M13 5l7 7-7 7M5 5l7 7-7 7"
+            ></path>
+          {/if}
+        </svg>
+      </button>
+    {/if}
+    <!-- Wide-window sidebar toggle -->
+    {#if showSidebarToggle}
+      <button
+        onclick={handleToggleSidebar}
+        class="p-2 rounded border border-exo-light-gray/30 hover:border-exo-yellow/50 hover:bg-exo-medium-gray/30 transition-colors cursor-pointer hidden lg:block"
+        title={sidebarVisible ? "Hide sidebar" : "Show sidebar"}
+        aria-label={sidebarVisible
+          ? "Hide conversation sidebar"
+          : "Show conversation sidebar"}
+        aria-pressed={sidebarVisible}
       >
-        {#if sidebarVisible}
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M11 19l-7-7 7-7m8 14l-7-7 7-7"
-          ></path>
-        {:else}
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M13 5l7 7-7 7M5 5l7 7-7 7"
-          ></path>
-        {/if}
-      </svg>
-    </button>
+        <svg
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          stroke-width="2"
+          class="w-5 h-5 {sidebarVisible
+            ? 'text-exo-yellow'
+            : 'text-exo-light-gray'}"
+        >
+          {#if sidebarVisible}
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M11 19l-7-7 7-7m8 14l-7-7 7-7"
+            ></path>
+          {:else}
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M13 5l7 7-7 7M5 5l7 7-7 7"
+            ></path>
+          {/if}
+        </svg>
+      </button>
+    {/if}
   </div>
 
   <!-- Center: Logo (clickable to go home) -->
@@ -156,7 +160,7 @@
     <img
       src="/exo-logo.png"
       alt="EXO"
-      class="h-12 md:h-18 drop-shadow-[0_0_4px_rgba(255,215,0,0.3)]"
+      class="h-9 sm:h-12 md:h-18 drop-shadow-[0_0_4px_rgba(255,215,0,0.3)]"
     />
   </button>
 
@@ -220,7 +224,7 @@
             d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"
           />
         </svg>
-        <span class="hidden sm:inline">Home</span>
+        <span class="hidden lg:inline">Home</span>
       </button>
     {/if}
     <a
@@ -277,7 +281,7 @@
           <path d="M5 21h14" />
         </svg>
       {/if}
-      <span class="hidden sm:inline">Downloads</span>
+      <span class="hidden lg:inline">Downloads</span>
     </a>
     <a
       href="/#/integrations"
@@ -298,7 +302,7 @@
           d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"
         />
       </svg>
-      <span class="hidden sm:inline">Integrations</span>
+      <span class="hidden lg:inline">Integrations</span>
     </a>
     {#if showAdvanced}
       <a
@@ -320,7 +324,7 @@
             d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
           />
         </svg>
-        <span class="hidden sm:inline">Advanced</span>
+        <span class="hidden lg:inline">Advanced</span>
       </a>
     {/if}
   </nav>

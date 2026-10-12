@@ -607,13 +607,13 @@
     <!-- Overlay backdrop -->
     <button
       type="button"
-      class="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
+      class="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden"
       onclick={() => onClose?.()}
       aria-label="Close sidebar"
     ></button>
     <!-- Drawer panel -->
     <aside
-      class="fixed left-0 top-0 bottom-0 w-72 bg-exo-dark-gray border-r border-exo-yellow/10 z-50 flex flex-col md:hidden"
+      class="fixed left-0 top-0 bottom-0 w-72 bg-exo-dark-gray border-r border-exo-yellow/10 z-50 flex flex-col lg:hidden"
     >
       {@render sidebarContent()}
     </aside>
