@@ -2,7 +2,12 @@ import pytest
 from anyio import create_task_group, fail_after, move_on_after
 
 from exo.routing.connection_message import ConnectionMessage
-from exo.shared.election import Election, ElectionMessage, ElectionResult
+from exo.shared.election import (
+    Election,
+    ElectionMessage,
+    ElectionResult,
+    choose_master,
+)
 from exo.shared.types.commands import ForwarderCommand, TestCommand
 from exo.shared.types.common import NodeId, SessionId, SystemId
 from exo.utils.channels import channel
@@ -18,6 +23,7 @@ def em(
     node_id: str,
     commands_seen: int = 0,
     election_clock: int | None = None,
+    following: SessionId | None = None,
 ) -> ElectionMessage:
     """
     Helper to build ElectionMessages for a given proposer node.
@@ -33,7 +39,12 @@ def em(
             election_clock=clock if election_clock is None else election_clock,
         ),
         commands_seen=commands_seen,
+        following=following,
     )
+
+
+def session(node_id: str, election_clock: int) -> SessionId:
+    return SessionId(master_node_id=NodeId(node_id), election_clock=election_clock)
 
 
 # ======================================= #
@@ -398,6 +409,114 @@ async def test_tie_breaker_prefers_node_with_more_commands_seen() -> None:
                 if result.session_id.master_node_id == me:
                     assert result.session_id.election_clock in (0, 1)
                     break
+
+            em_in_tx.close()
+            cm_tx.close()
+            co_tx.close()
+
+
+def test_the_master_most_nodes_follow_stays() -> None:
+    """A master that comes back (from sleep, a freeze or a partition) doesn't take over from
+    the master the others elected while it was gone, however senior it is."""
+    new_master = session("NEW", 5)
+    returning = em(
+        9, seniority=7, node_id="OLD", election_clock=2, following=session("OLD", 2)
+    )
+    candidates = [
+        em(9, seniority=1, node_id="NEW", election_clock=5, following=new_master),
+        em(9, seniority=1, node_id="B", following=new_master),
+        em(9, seniority=1, node_id="C", following=new_master),
+        returning,
+    ]
+
+    assert choose_master(candidates).proposed_session == new_master
+    # Before, the most senior candidate won
+    assert max(candidates) == returning
+
+
+def test_without_a_majority_the_most_senior_candidate_wins() -> None:
+    a, b = session("A", 1), session("B", 1)
+    candidates = [
+        em(2, seniority=3, node_id="A", election_clock=1, following=a),
+        em(2, seniority=1, node_id="B", election_clock=1, following=b),
+        em(2, seniority=0, node_id="C", following=a),
+        em(2, seniority=0, node_id="D", following=b),
+    ]
+
+    assert choose_master(candidates).proposed_session == a
+    assert choose_master(candidates[::-1]).proposed_session == a
+
+
+def test_a_followed_master_that_is_gone_is_replaced() -> None:
+    gone = session("GONE", 1)
+    candidates = [
+        em(2, seniority=0, node_id="A", following=gone),
+        em(2, seniority=2, node_id="B", following=gone),
+        em(2, seniority=0, node_id="C", following=gone),
+    ]
+
+    assert choose_master(candidates).proposed_session.master_node_id == NodeId("B")
+
+
+def test_repeated_messages_from_a_node_count_once() -> None:
+    a = session("A", 1)
+    candidates = [
+        em(2, seniority=0, node_id="A", election_clock=1, following=a),
+        em(2, seniority=0, node_id="A", election_clock=1, following=a),
+        em(2, seniority=5, node_id="B", following=session("B", 0)),
+    ]
+
+    # A is followed by one of two nodes: no majority, so seniority decides
+    assert choose_master(candidates).proposed_session.master_node_id == NodeId("B")
+
+
+@pytest.mark.anyio
+async def test_a_follower_keeps_its_master_when_the_old_master_returns() -> None:
+    em_out_tx, _em_out_rx = channel[ElectionMessage]()
+    em_in_tx, em_in_rx = channel[ElectionMessage]()
+    er_tx, er_rx = channel[ElectionResult]()
+    cm_tx, cm_rx = channel[ConnectionMessage]()
+    co_tx, co_rx = channel[ForwarderCommand]()
+
+    election = Election(
+        node_id=NodeId("ME"),
+        election_message_receiver=em_in_rx,
+        election_message_sender=em_out_tx,
+        election_result_sender=er_tx,
+        connection_message_receiver=cm_rx,
+        command_receiver=co_rx,
+        is_candidate=True,
+    )
+    new_master = session("NEW", 5)
+
+    async with create_task_group() as tg:
+        with fail_after(2):
+            tg.start_soon(election.run)
+            await er_rx.receive()  # the boot election
+            election.current_session = new_master  # we follow NEW
+
+            # The old master is back and a round starts
+            await em_in_tx.send(
+                em(
+                    9,
+                    seniority=7,
+                    node_id="OLD",
+                    election_clock=2,
+                    following=session("OLD", 2),
+                )
+            )
+            await em_in_tx.send(
+                em(
+                    9,
+                    seniority=1,
+                    node_id="NEW",
+                    election_clock=5,
+                    following=new_master,
+                )
+            )
+            result = await er_rx.receive()
+            assert result.session_id == new_master
+            assert result.is_new_master is False
 
             em_in_tx.close()
             cm_tx.close()
