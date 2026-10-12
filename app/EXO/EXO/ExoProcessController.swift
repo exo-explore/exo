@@ -411,8 +411,10 @@ final class ExoProcessController: ObservableObject {
         if !hfToken.isEmpty {
             environment["HF_TOKEN"] = hfToken
         }
-        if !hfEndpoint.isEmpty {
-            environment["HF_ENDPOINT"] = hfEndpoint
+        // Also fixes up a value saved before Settings normalised it.
+        let endpoint = HuggingFaceEndpoint.normalized(hfEndpoint)
+        if !endpoint.isEmpty {
+            environment["HF_ENDPOINT"] = endpoint
         }
         if enableImageModels {
             environment["EXO_ENABLE_IMAGE_MODELS"] = "true"

@@ -106,9 +106,11 @@ struct SettingsView: View {
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 260)
                 }
-                Text("Defaults to huggingface.co. Use a mirror (e.g. hf-mirror.com) for China.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                Text(
+                    "Defaults to huggingface.co. Use a mirror (e.g. https://hf-mirror.com) for China."
+                )
+                .font(.caption)
+                .foregroundColor(.secondary)
             }
 
             Section {
@@ -732,7 +734,10 @@ struct SettingsView: View {
     private func applyGeneralSettings() {
         controller.customNamespace = pendingNamespace
         controller.hfToken = pendingHFToken
-        controller.hfEndpoint = pendingHFEndpoint
+        // "hf-mirror.com" is saved as "https://hf-mirror.com", and the field
+        // shows what is saved.
+        controller.hfEndpoint = HuggingFaceEndpoint.normalized(pendingHFEndpoint)
+        pendingHFEndpoint = controller.hfEndpoint
         controller.offlineMode = pendingOfflineMode
         restartIfRunning()
     }
