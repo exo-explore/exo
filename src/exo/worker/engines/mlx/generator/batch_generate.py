@@ -108,6 +108,8 @@ class ExoBatchGenerator:
             prefill_step_size=4096,
         )
         self._step_count = 0
+        # Cancelled sequences left to finish at their next step
+        self._finishing: set[int] = set()
 
     @property
     def has_work(self) -> bool:
@@ -344,6 +346,10 @@ class ExoBatchGenerator:
         results: list[tuple[int, GenerationResponse]] = []
 
         for response in responses:
+            if response.uid in self._finishing:
+                if response.finish_reason is not None:
+                    self._finishing.discard(response.uid)
+                continue
             if response.uid not in self._active_tasks:
                 logger.warning(
                     f"response uid {response.uid} was not found - should be active"
@@ -482,7 +488,19 @@ class ExoBatchGenerator:
         return results
 
     def cancel(self, uids: list[int]) -> None:
-        self._mlx_gen.remove(uids)
+        # A sequence that is generating is finished by mlx_lm at its next step, as if it had
+        # reached its token limit, instead of being removed from the batch here. Removing it
+        # between steps deadlocked pipeline-parallel instances; finishing is the path every
+        # completed request takes. Its last token is discarded.
+        generation_batch = self._mlx_gen._generation_batch
+        generating = {uid: i for i, uid in enumerate(generation_batch.uids)}
+        for uid in uids:
+            if uid in generating:
+                generation_batch.max_tokens[generating[uid]] = 0
+                self._finishing.add(uid)
+        waiting = [uid for uid in uids if uid not in generating]
+        if waiting:
+            self._mlx_gen.remove(waiting)
         for uid in uids:
             self._active_tasks.pop(uid, None)
 

@@ -490,6 +490,18 @@ class BatchGenerator(Engine):
             if tid != CANCEL_ALL_TASKS and tid not in already_cancelled:
                 results.append((tid, CancelledResponse()))
 
+        # A cancelled task that hasn't started must never start: the runner has already
+        # forgotten it. The cancellation is agreed, so every rank drops the same tasks.
+        self._queue = deque(
+            task
+            for task in self._queue
+            if not cancel_all and task.task_id not in self._cancelled_tasks
+        )
+        self._maybe_queue = [
+            task
+            for task in self._maybe_queue
+            if not cancel_all and task.task_id not in self._cancelled_tasks
+        ]
         self._cancelled_tasks.clear()
         return iter(results)
 
