@@ -17,7 +17,7 @@ from mlx_lm.models.base import (
 from mlx_lm.models.cache import ArraysCache, KVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
 from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
-from mlx_lm.models.deepseek_v4 import DeepseekV4MoE, V4Attention
+from mlx_lm.models.deepseek_v4 import DeepseekV4Block, DeepseekV4MoE, V4Attention
 from mlx_lm.models.deepseek_v4 import Model as DeepseekV4Model
 from mlx_lm.models.deepseek_v32 import DeepseekV32MLP
 from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
@@ -824,6 +824,54 @@ class _AllSumLinear(nn.Module):
         return cast(Callable[[mx.array], mx.array], self.inner)(x)
 
 
+class _AllSumOutputLinear(nn.Module):
+    """Wraps a wo_b sharded on its input dim: all_sum the partial hidden it produces."""
+
+    def __init__(self, inner: nn.Module, group: mx.distributed.Group):
+        super().__init__()
+        self.inner = inner
+        self._group = group
+
+    def __call__(self, x: mx.array) -> mx.array:
+        y = cast(Callable[[mx.array], mx.array], self.inner)(x)
+        return mx.distributed.all_sum(y, group=self._group)
+
+
+def _shard_v4_attention_groups(
+    attn: V4Attention,
+    group: mx.distributed.Group,
+    all_to_sharded_in_place: Callable[[nn.Module], None],
+    sharded_to_all_in_place: Callable[[nn.Module], None],
+) -> None:
+    """Whole-output-group head sharding for V4Attention.
+
+    Each rank owns ``o_groups / world_size`` complete output groups, i.e. a
+    contiguous block of heads. The grouped wo_a then only needs that rank's
+    rows, and its output is exactly the matching column block of wo_b's input,
+    so wo_b is sharded on its input dim and a single all_sum of the hidden
+    state finishes the layer. Unlike interleaved head sharding, this leaves no
+    replicated output projection: at decode every rank reads 1/world_size of
+    wq_b, wo_a and wo_b.
+
+    wq_b and wo_a rows are group-major, so a plain contiguous row split picks
+    the right heads and the right wo_a rows.
+    """
+    world_size = group.size()
+    heads_per_rank = attn.n_heads // world_size
+    start = group.rank() * heads_per_rank
+
+    all_to_sharded_in_place(attn.wq_b)
+    all_to_sharded_in_place(attn.wo_a)
+    sharded_to_all_in_place(attn.wo_b)
+    attn.wo_b = _AllSumOutputLinear(attn.wo_b, group)  # type: ignore
+
+    sink = mx.contiguous(attn.attn_sink[start : start + heads_per_rank])
+    mx.eval(sink)
+    attn.attn_sink = sink
+    attn.n_heads = heads_per_rank
+    attn.n_groups = attn.n_groups // world_size
+
+
 def _shard_v4_attention_heads(
     attn: V4Attention,
     world_size: int,
@@ -914,29 +962,48 @@ class DeepseekV4ShardingStrategy(TensorParallelShardingStrategy):
 
         for i, layer in enumerate(model.layers):
             mx.eval(layer.parameters())
-
-            # Head-parallel attention with interleaved-per-group sharding.
-            _shard_v4_attention_heads(layer.attn, self.N, self.group.rank())
-            self.sharded_to_all_linear_in_place(layer.attn.wo_a)
-            layer.attn.wo_b = _AllSumLinear(layer.attn.wo_b, self.group)  # type: ignore
-
-            ffn = layer.ffn
-            if getattr(ffn, "shared_experts", None) is not None:
-                self.all_to_sharded_linear_in_place(ffn.shared_experts.gate_proj)
-                self.sharded_to_all_linear_in_place(ffn.shared_experts.down_proj)
-                self.all_to_sharded_linear_in_place(ffn.shared_experts.up_proj)
-            self.all_to_sharded_linear_in_place(ffn.switch_mlp.gate_proj)
-            self.sharded_to_all_linear_in_place(ffn.switch_mlp.down_proj)
-            self.all_to_sharded_linear_in_place(ffn.switch_mlp.up_proj)
-            wrapped = ShardedMoEV4(ffn)
-            wrapped.sharding_group = self.group
-            layer.ffn = wrapped  # type: ignore
-
+            shard_deepseek_v4_block(
+                layer,
+                self.group,
+                self.all_to_sharded_linear_in_place,
+                self.sharded_to_all_linear_in_place,
+            )
             mx.eval(layer)
             mx.clear_cache()
             yield ModelLoadingResponse(layers_loaded=i, total=total)
 
         return model
+
+
+def shard_deepseek_v4_block(
+    layer: DeepseekV4Block,
+    group: mx.distributed.Group,
+    all_to_sharded_in_place: Callable[[nn.Module], None],
+    sharded_to_all_in_place: Callable[[nn.Module], None],
+) -> None:
+    """Tensor-parallel sharding of one DeepSeek V4 block (also used for MTP)."""
+    world_size = group.size()
+    if layer.attn.n_groups % world_size == 0:
+        _shard_v4_attention_groups(
+            layer.attn, group, all_to_sharded_in_place, sharded_to_all_in_place
+        )
+    else:
+        # Head-parallel attention with interleaved-per-group sharding.
+        _shard_v4_attention_heads(layer.attn, world_size, group.rank())
+        sharded_to_all_in_place(layer.attn.wo_a)
+        layer.attn.wo_b = _AllSumLinear(layer.attn.wo_b, group)  # type: ignore
+
+    ffn = layer.ffn
+    if getattr(ffn, "shared_experts", None) is not None:
+        all_to_sharded_in_place(ffn.shared_experts.gate_proj)
+        sharded_to_all_in_place(ffn.shared_experts.down_proj)
+        all_to_sharded_in_place(ffn.shared_experts.up_proj)
+    all_to_sharded_in_place(ffn.switch_mlp.gate_proj)
+    sharded_to_all_in_place(ffn.switch_mlp.down_proj)
+    all_to_sharded_in_place(ffn.switch_mlp.up_proj)
+    wrapped = ShardedMoEV4(ffn)
+    wrapped.sharding_group = group
+    layer.ffn = wrapped  # type: ignore
 
 
 class GLM4MoeLiteShardingStrategy(TensorParallelShardingStrategy):

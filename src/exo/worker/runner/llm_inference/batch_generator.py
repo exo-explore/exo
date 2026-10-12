@@ -86,6 +86,9 @@ def _check_for_debug_prompts(task_params: TextGenerationTaskParams) -> None:
         time.sleep(100)
 
 
+_TASK_AGREEMENT_INTERVAL_STEPS = 16
+
+
 @dataclass(eq=False)
 class SequentialGenerator(Engine):
     model: Model
@@ -337,6 +340,7 @@ class BatchGenerator(Engine):
     _all_tasks: dict[TaskId, TextGeneration] = field(default_factory=dict, init=False)
     _queue: deque[TextGeneration] = field(default_factory=deque, init=False)
     _gen: ExoBatchGenerator = field(init=False)
+    _steps_since_task_agreement: int = field(default=0, init=False)
     _active_tasks: dict[
         int,
         tuple[
@@ -403,7 +407,17 @@ class BatchGenerator(Engine):
         tuple[TaskId, GenerationChunk | CancelledResponse | FinishedResponse]
     ]:
         if not self._queue:
-            self.agree_on_tasks()
+            # Agreeing is a blocking collective that waits for the decode step
+            # already queued on the GPU, which serializes graph building with
+            # GPU work. While generating, agree every few steps instead; the
+            # step count is identical on every rank, so they stay in lockstep.
+            self._steps_since_task_agreement += 1
+            if (
+                not self._gen.has_work
+                or self._steps_since_task_agreement >= _TASK_AGREEMENT_INTERVAL_STEPS
+            ):
+                self._steps_since_task_agreement = 0
+                self.agree_on_tasks()
 
         # Submit any queued tasks to the engine
         while self._queue and len(self._active_tasks) < EXO_MAX_CONCURRENT_REQUESTS:
