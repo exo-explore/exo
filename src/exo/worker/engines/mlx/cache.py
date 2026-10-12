@@ -1,10 +1,11 @@
 import gc
 import os
 from copy import deepcopy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import mlx.core as mx
 import numpy as np
+import numpy.typing as npt
 import psutil
 from mlx_lm.models.cache import (
     ArraysCache,
@@ -45,6 +46,17 @@ def _default_memory_threshold() -> float:
 
 _MEMORY_THRESHOLD = float(
     os.environ.get("EXO_MEMORY_THRESHOLD", _default_memory_threshold())
+)
+
+# Limits on the prefix cache besides memory pressure. Every request adds an entry (its whole
+# KV and state cache: about 150 MB for a 27B hybrid model), and memory pressure only starts
+# evicting at 70-85% of RAM: a node that had cached ~300 entries in half an hour generated at
+# a third of its starting speed.
+_MAX_ENTRIES = int(os.environ.get("EXO_PREFIX_CACHE_MAX_ENTRIES", "64"))
+_MAX_BYTES = int(
+    os.environ.get(
+        "EXO_PREFIX_CACHE_MAX_BYTES", str(psutil.virtual_memory().total // 10)
+    )
 )
 
 
@@ -236,6 +248,7 @@ class KVPrefixCache:
         self._snapshots: list[list[CacheSnapshot] | None] = []
         self._media_regions: list[list["MediaRegion"]] = []
         self._last_used: list[int] = []  # monotonic counter of last access per entry
+        self._entry_bytes: list[int] = []
         self.prefill_tps: list[float] = []
         self._access_counter: int = 0
         self._group = group
@@ -247,6 +260,7 @@ class KVPrefixCache:
         self._snapshots.clear()
         self._media_regions.clear()
         self._last_used.clear()
+        self._entry_bytes.clear()
         self.prefill_tps.clear()
 
     def add_kv_cache(
@@ -257,8 +271,9 @@ class KVPrefixCache:
         media_regions: list["MediaRegion"] | None = None,
         prefill_tps: float = 0.0,
     ):
-        """Add a new cache entry. Evicts LRU entries if memory is high."""
-        self._evict_if_needed()
+        """Add a new cache entry. Evicts LRU entries if memory is high or the cache is full."""
+        entry_bytes = _entry_nbytes(cache, ssm_snapshots)
+        self._evict_if_needed(entry_bytes)
         self.prompts.append(prompt_tokens)
         self.caches.append(deepcopy(cache))
         self._snapshots.append(ssm_snapshots)
@@ -266,6 +281,7 @@ class KVPrefixCache:
         self.prefill_tps.append(prefill_tps)
         self._access_counter += 1
         self._last_used.append(self._access_counter)
+        self._entry_bytes.append(entry_bytes)
         logger.info(f"KV cache added: {len(prompt_tokens)} tokens")
 
     def update_kv_cache(
@@ -293,6 +309,7 @@ class KVPrefixCache:
         self.prefill_tps[index] = prefill_tps
         self._access_counter += 1
         self._last_used[index] = self._access_counter
+        self._entry_bytes[index] = _entry_nbytes(cache, self._snapshots[index])
         logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens")
 
     def _get_snapshot(
@@ -426,17 +443,15 @@ class KVPrefixCache:
 
         return match_length
 
-    def _evict_if_needed(self):
-        """Evict least recently used entries while memory usage is high."""
+    def _evict_if_needed(self, incoming_bytes: int = 0):
+        """Evict least recently used entries while memory usage is high, or while adding
+        an entry of incoming_bytes would take the cache over its size limits."""
         if len(self.caches) == 0:
             return
 
         evicted_any = False
-        # Evict LRU entries until below threshold
-        while (
-            len(self.caches) > 0
-            and self.get_memory_used_percentage() > _MEMORY_THRESHOLD
-        ):
+        # Evict LRU entries until below the limits
+        while len(self.caches) > 0 and self._over_limit(incoming_bytes):
             lru_index = self._last_used.index(min(self._last_used))
             evicted_tokens = len(self.prompts[lru_index])
             self.prompts.pop(lru_index)
@@ -444,30 +459,47 @@ class KVPrefixCache:
             self._snapshots.pop(lru_index)
             self._media_regions.pop(lru_index)
             self._last_used.pop(lru_index)
+            self._entry_bytes.pop(lru_index)
             self.prefill_tps.pop(lru_index)
 
             evicted_any = True
-            logger.info(
-                f"KV cache evicted LRU entry ({evicted_tokens} tokens) due to memory usage"
-            )
+            logger.info(f"KV cache evicted LRU entry ({evicted_tokens} tokens)")
 
         if evicted_any:
             gc.collect()
             mx.clear_cache()
 
-    def get_memory_used_percentage(self) -> float:
+    def _over_limit(self, incoming_bytes: int) -> bool:
+        # The same on every rank: they all hold the same entries
+        if len(self.caches) >= _MAX_ENTRIES:
+            return True
+
+        over_budget = sum(self._entry_bytes) + incoming_bytes > _MAX_BYTES
         local_pressure: float = get_memory_used_percentage()
-
         if self._group is None:
-            return local_pressure
+            return over_budget or local_pressure > _MEMORY_THRESHOLD
 
-        all_pressure = mx.distributed.all_gather(
-            mx.array([local_pressure], dtype=mx.float32),
+        # A cache hit changes how much of a prompt each rank prefills, so every rank must
+        # evict the same entries: evict if any rank is under memory pressure or over its
+        # budget (each rank holds different layers, so their entries differ in size).
+        flags = mx.distributed.all_gather(
+            mx.array([local_pressure, float(over_budget)], dtype=mx.float32),
             group=self._group,
+        ).reshape(-1, 2)
+        # .tolist() evals.
+        worst_pressure, any_over_budget = cast(
+            list[float], mx.max(flags, axis=0).tolist()
         )
-        # .item() evals.
-        max_pressure = float(mx.max(all_pressure).item())
-        return max_pressure
+        return worst_pressure > _MEMORY_THRESHOLD or any_over_budget > 0
+
+
+def _entry_nbytes(cache: KVCacheType, snapshots: list[CacheSnapshot] | None) -> int:
+    total = sum(int(c.nbytes) for c in cache)
+    for snapshot in snapshots or []:
+        total += sum(
+            int(state.nbytes) for state in snapshot.states if state is not None
+        )
+    return total
 
 
 def trim_cache(
@@ -536,14 +568,22 @@ def cache_length(cache: KVCacheType) -> int:
 
 
 def get_prefix_length(prompt: mx.array, cached_prompt: mx.array) -> int:
-    """Find the length of the common prefix between two token arrays."""
+    """Find the length of the common prefix between two token arrays.
+
+    Compared on the CPU: the token ids are small and already evaluated, while a comparison
+    on the GPU waits for all the work queued ahead of it (the running batch's decode steps),
+    once for every cached prompt a new request is checked against.
+    """
     n = min(int(prompt.shape[0]), int(cached_prompt.shape[0]))
     if n == 0:
         return 0
 
-    equal = mx.equal(prompt[:n], cached_prompt[:n]).astype(mx.int32)
-    prefix_mask = mx.cumprod(equal)  # stays 1 until first mismatch, then 0 forever
-    return int(mx.sum(prefix_mask).item())
+    tokens: npt.NDArray[np.int64] = np.asarray(prompt, dtype=np.int64)[:n]
+    cached: npt.NDArray[np.int64] = np.asarray(cached_prompt, dtype=np.int64)[:n]
+    different: npt.NDArray[np.bool_] = np.not_equal(tokens, cached)
+    if different.any():
+        return int(np.argmax(different))
+    return n
 
 
 def get_available_memory() -> Memory:
