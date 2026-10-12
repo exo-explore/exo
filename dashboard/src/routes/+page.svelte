@@ -5370,6 +5370,8 @@
           {/if}
 
           <div class="w-full">
+            <!-- No onOpenModelPicker: no model picker is mounted at this step,
+                 so the form shows the onboarding model read-only -->
             <ChatForm
               placeholder="Ask anything"
               autofocus={true}
@@ -5377,7 +5379,6 @@
               showModelSelector={true}
               modelTasks={modelTasks()}
               modelCapabilities={modelCapabilities()}
-              onOpenModelPicker={openChatModelPicker}
               onAutoSend={handleChatSend}
             />
           </div>
