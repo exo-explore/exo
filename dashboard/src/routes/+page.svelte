@@ -1798,7 +1798,7 @@
       return {
         isDownloading: false,
         isFailed: statusInfo.statusText === "FAILED",
-        errorMessage: null,
+        errorMessage: statusInfo.errorMessage ?? null,
         progress: null,
         statusText: statusInfo.statusText,
         perNode: [],
@@ -1834,7 +1834,7 @@
       return {
         isDownloading: false,
         isFailed: statusInfo.statusText === "FAILED",
-        errorMessage: null,
+        errorMessage: statusInfo.errorMessage ?? null,
         progress: null,
         statusText: statusInfo.statusText,
         perNode: result.perNode,
@@ -1876,9 +1876,49 @@
     }
   }
 
+  // Why an instance's runners failed: known diagnostics first (they name the
+  // root cause, e.g. a Metal GPU timeout), then the runner's error message.
+  function getRunnerFailureMessage(runnerIds: string[]): string | undefined {
+    const reasons = new Set<string>();
+    for (const rid of runnerIds) {
+      const [kind, payload] = getTagged(runnersData[rid]);
+      if (kind !== "RunnerFailed" || !payload || typeof payload !== "object")
+        continue;
+      const failed = payload as {
+        errorMessage?: string | null;
+        diagnostics?: unknown[];
+      };
+      for (const diagnostic of failed.diagnostics ?? []) {
+        const [, detail] = getTagged(diagnostic);
+        const message = (detail as { message?: unknown } | null)?.message;
+        if (typeof message === "string" && message) reasons.add(message);
+      }
+      if (failed.errorMessage) reasons.add(failed.errorMessage);
+    }
+    return reasons.size > 0 ? [...reasons].join("\n") : undefined;
+  }
+
+  // One readable line from a failure message. A runner that raised is
+  // reported as "Terminated (exitcode=1\nRunner error: <error>\n<traceback>)"
+  // (worker/runner/supervisor.py), so prefer the error over the bare exit
+  // status. Diagnostics and one-line reasons are returned as they are.
+  function summarizeFailureReason(message: string): string {
+    const lines = message
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const first = lines[0] ?? message;
+    if (!first.startsWith("Terminated (")) return first;
+    const runnerError = lines.find((line) => line.startsWith("Runner error:"));
+    return runnerError
+      ? runnerError.slice("Runner error:".length).trim()
+      : first;
+  }
+
   function deriveInstanceStatus(instanceWrapped: unknown): {
     statusText: string;
     statusClass: string;
+    errorMessage?: string;
     layersLoaded?: number;
     totalLayers?: number;
   } {
@@ -1917,7 +1957,12 @@
 
     if (statuses.length === 0)
       return { statusText: "PREPARING", statusClass: "inactive" };
-    if (has("Failed")) return { statusText: "FAILED", statusClass: "failed" };
+    if (has("Failed"))
+      return {
+        statusText: "FAILED",
+        statusClass: "failed",
+        errorMessage: getRunnerFailureMessage(runnerIds),
+      };
     if (has("Shutdown"))
       return { statusText: "SHUTDOWN", statusClass: "inactive" };
     if (has("Loading")) {
@@ -2464,12 +2509,18 @@
   // ── Instance status transition toasts ──
   // Track previous statuses so we can detect meaningful transitions and fire toasts.
   let previousInstanceStatuses: Record<string, string> = {};
+  // Instances whose failure was already announced. The worker retries a failed
+  // runner several times, so the status flips in and out of FAILED; announce it
+  // once, until the model is ready to serve or the instance is gone.
+  const announcedFailures = new Set<string>();
 
   $effect(() => {
     const currentStatuses: Record<string, string> = {};
+    const failureReasons: Record<string, string | null> = {};
     for (const [id, inst] of Object.entries(instanceData)) {
       const dlStatus = getInstanceDownloadStatus(id, inst);
       currentStatuses[id] = dlStatus.statusText;
+      failureReasons[id] = dlStatus.errorMessage;
     }
 
     const prev = previousInstanceStatuses;
@@ -2507,9 +2558,26 @@
           addToast({ type: "success", message: `Model ready: ${shortName}` });
         }
 
+        if (currentStatus === "READY" || currentStatus === "RUNNING") {
+          announcedFailures.delete(id);
+        }
+
         // Any -> Failed
-        if (prevStatus !== "FAILED" && currentStatus === "FAILED") {
-          addToast({ type: "error", message: `Model failed: ${shortName}` });
+        if (
+          prevStatus !== "FAILED" &&
+          currentStatus === "FAILED" &&
+          !announcedFailures.has(id)
+        ) {
+          announcedFailures.add(id);
+          // One readable line; the instance card's tooltip has the full text
+          const failure = failureReasons[id];
+          const reason = failure ? summarizeFailureReason(failure) : undefined;
+          addToast({
+            type: "error",
+            message: reason
+              ? `Model failed: ${shortName} — ${reason}`
+              : `Model failed: ${shortName}`,
+          });
         }
 
         // Any -> Shutdown
@@ -2519,6 +2587,9 @@
       }
     }
 
+    for (const id of announcedFailures) {
+      if (!(id in currentStatuses)) announcedFailures.delete(id);
+    }
     previousInstanceStatuses = currentStatuses;
   });
 
@@ -5576,9 +5647,12 @@
                           </div>
                           {#if downloadInfo.isFailed && downloadInfo.errorMessage}
                             <div
-                              class="text-xs text-red-400/80 font-mono mt-1 break-words"
+                              class="text-xs text-red-400/80 font-mono mt-1 break-words whitespace-pre-line line-clamp-3"
+                              title={downloadInfo.errorMessage}
                             >
-                              {downloadInfo.errorMessage}
+                              {summarizeFailureReason(
+                                downloadInfo.errorMessage,
+                              )}
                             </div>
                           {/if}
                         {/if}
@@ -6719,9 +6793,12 @@
                             </div>
                             {#if downloadInfo.isFailed && downloadInfo.errorMessage}
                               <div
-                                class="text-xs text-red-400/80 font-mono mt-1 break-words"
+                                class="text-xs text-red-400/80 font-mono mt-1 break-words whitespace-pre-line line-clamp-3"
+                                title={downloadInfo.errorMessage}
                               >
-                                {downloadInfo.errorMessage}
+                                {summarizeFailureReason(
+                                  downloadInfo.errorMessage,
+                                )}
                               </div>
                             {/if}
                           {/if}
