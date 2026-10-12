@@ -6275,7 +6275,7 @@
 
                                   {#if isExpanded}
                                     <div class="mt-2 space-y-1.5">
-                                      {#if nodeProg.progress?.files ?? [].length === 0}
+                                      {#if (nodeProg.progress?.files ?? []).length === 0}
                                         <div
                                           class="text-[11px] font-mono text-exo-light-gray/70"
                                         >
@@ -7502,7 +7502,7 @@
 
                                     {#if isExpanded}
                                       <div class="mt-2 space-y-1.5">
-                                        {#if nodeProg.progress?.files ?? [].length === 0}
+                                        {#if (nodeProg.progress?.files ?? []).length === 0}
                                           <div
                                             class="text-[11px] font-mono text-exo-light-gray/70"
                                           >
