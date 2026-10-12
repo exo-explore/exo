@@ -11,6 +11,7 @@ from exo.download.download_utils import is_read_only_model_dir, resolve_existing
 from exo.routing.event_router import (
     EventRouterBrokenResourceError,
     EventRouterClosedResourceError,
+    NodeEventReceiver,
 )
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
@@ -26,11 +27,11 @@ from exo.shared.types.common import CommandId, NodeId, SystemId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
-    IndexedEvent,
     InputChunkReceived,
     InstanceDeleted,
     NodeDownloadProgress,
     NodeGatheredInfo,
+    StateSnapshot,
     TaskCreated,
     TaskDeleted,
     TaskStatusUpdated,
@@ -70,7 +71,7 @@ class Worker:
         self,
         node_id: NodeId,
         *,
-        event_receiver: Receiver[IndexedEvent],
+        event_receiver: NodeEventReceiver,
         event_sender: Sender[Event],
         # This is for requesting updates. It doesn't need to be a general command sender right now,
         # but I think it's the correct way to be thinking about commands
@@ -145,10 +146,13 @@ class Worker:
 
     async def _event_applier(self):
         with self.event_receiver as events:
-            async for event in events:
+            async for update in events:
+                if isinstance(update, StateSnapshot):
+                    self.state = update.state
+                    continue
                 # 2. for each event, apply it to the state
-                self.state = apply(self.state, event=event)
-                event = event.event
+                self.state = apply(self.state, event=update)
+                event = update.event
 
                 if isinstance(event, InstanceDeleted):
                     self._instance_backoff.reset(event.instance_id)

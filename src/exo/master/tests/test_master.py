@@ -24,6 +24,7 @@ from exo.shared.types.events import (
     InstanceCreated,
     LocalForwarderEvent,
     NodeGatheredInfo,
+    StateSnapshot,
     TaskCreated,
 )
 from exo.shared.types.memory import Memory
@@ -57,6 +58,7 @@ async def test_master():
     local_event_sender, le_receiver = channel[LocalForwarderEvent]()
     fcds, _fcdr = channel[ForwarderDownloadCommand]()
     ev_send, ev_recv = channel[Event]()
+    snapshot_sender, _snapshot_receiver = channel[StateSnapshot]()
 
     async def mock_event_router():
         idx = 0
@@ -91,6 +93,7 @@ async def test_master():
         session_id,
         event_sender=ev_send,
         global_event_sender=ge_sender,
+        snapshot_sender=snapshot_sender,
         local_event_receiver=le_receiver,
         command_receiver=co_receiver,
         download_command_sender=fcds,
