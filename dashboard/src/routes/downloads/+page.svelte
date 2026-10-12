@@ -187,7 +187,14 @@
         return;
       }
 
-      const allNodeIds = Object.keys(downloadsData);
+      // Every node in the cluster gets a column, even one whose download
+      // statuses haven't been announced (yet), so it can still be downloaded to.
+      const allNodeIds = [
+        ...new Set([
+          ...Object.keys(data?.nodes ?? {}),
+          ...Object.keys(downloadsData),
+        ]),
+      ];
       const columns: NodeColumn[] = allNodeIds.map((nodeId) => {
         const diskInfo = nodeDiskData?.[nodeId];
         return {
