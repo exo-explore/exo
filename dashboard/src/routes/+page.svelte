@@ -2043,9 +2043,10 @@
       case "FAILED":
         return "Error";
       case "SHUTDOWN":
+      case "SHUTTING DOWN":
         return "Stopping";
       default:
-        // PREPARING, INITIALIZING, WAITING, LOADING, WARMING UP
+        // Every state before ready: PREPARING, INITIALIZING, LOADING, ...
         return "Starting";
     }
   }
