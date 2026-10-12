@@ -84,7 +84,66 @@ class TestParseToolCalls:
         assert len(results) == 1
         assert isinstance(results[0], GenerationResponse)
         assert results[0].text == "<tool_call>bad content</tool_call>"
-        assert results[0].finish_reason == "error"
+        # The model's output, not a failed request: it finishes as the model finished
+        assert results[0].finish_reason == "stop"
+
+    def test_malformed_qwen_tool_call_is_returned_as_text(self):
+        """What Qwen3.8 once wrote, unprompted, during a 24 h soak: its parser rejects it, and the
+        request used to fail with a 500."""
+        from mlx_lm.tool_parsers import qwen3_coder
+
+        parser = make_mlx_parser(
+            qwen3_coder.tool_call_start,
+            qwen3_coder.tool_call_end,
+            qwen3_coder.parse_tool_call,
+        )
+        texts = ["<tool_call>", "\n</function=\n", "</tool_call>"]
+        results = list(parse_tool_calls(_make_responses(texts), parser, tools=None))
+
+        assert len(results) == 1
+        assert isinstance(results[0], GenerationResponse)
+        assert results[0].text == "<tool_call>\n</function=\n</tool_call>"
+        assert results[0].finish_reason == "stop"
+
+    def test_text_after_a_failed_parse_keeps_coming(self):
+        """A malformed tool call mid-answer doesn't cut off the rest of the answer."""
+
+        def _failing_parser(text: str) -> dict[str, Any]:
+            raise ValueError("parse failed")
+
+        texts = ["<tool_call>", "</function=", "</tool_call>", " and", " more"]
+        results = list(
+            parse_tool_calls(
+                _make_responses(texts),
+                make_mlx_parser("<tool_call>", "</tool_call>", _failing_parser),
+                tools=None,
+            )
+        )
+
+        assert [r.text for r in results if isinstance(r, GenerationResponse)] == [
+            "<tool_call></function=</tool_call>",
+            " and",
+            " more",
+        ]
+        last = results[-1]
+        assert isinstance(last, GenerationResponse)
+        assert last.finish_reason == "stop"
+
+    def test_unclosed_tool_call_at_the_end_yields_text(self):
+        """Generation ending inside a tool call gives back what was written, not an error."""
+        texts = ["<tool_call>", "test_fn", " unfinished"]
+        results = list(
+            parse_tool_calls(
+                _make_responses(texts),
+                _dummy_parser,
+                tools=None,
+            )
+        )
+
+        assert len(results) == 1
+        assert isinstance(results[0], GenerationResponse)
+        assert results[0].text == "<tool_call>test_fn unfinished"
+        assert results[0].finish_reason == "stop"
 
     def test_tool_schema_coerces_string_arguments_to_expected_types(self):
         """Tool argument values should be coerced using provided JSON schema."""
