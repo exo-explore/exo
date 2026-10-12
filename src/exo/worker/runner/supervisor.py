@@ -51,11 +51,14 @@ from exo.utils.task_group import TaskGroup
 from exo.worker.runner.bootstrap import RunnerTerminationError, entrypoint
 from exo.worker.runner.diagnostics import (
     RunnerDiagnosticCollector,
+    RunnerRingTransportError,
     RunnerUnknown,
 )
 
 PREFILL_TIMEOUT_SECONDS = 60
 DECODE_TIMEOUT_SECONDS = 5
+# How often the supervisor checks that its runner is alive and can still reach the others
+RUNNER_WATCH_INTERVAL = 5.0
 
 
 @dataclass(eq=False)
@@ -357,9 +360,25 @@ class RunnerSupervisor:
     async def _watch_runner(self) -> None:
         with self._cancel_watch_runner:
             while True:
-                await anyio.sleep(5)
+                await anyio.sleep(RUNNER_WATCH_INTERVAL)
                 if not self.runner_process.is_alive():
                     await self._check_runner(RuntimeError("Runner found to be dead"))
+                elif self._lost_its_peers():
+                    # MLX gave up on the connection to the other runners of this instance, but
+                    # the process lives on, stuck: every request on the instance would hang.
+                    # Stopping it fails its requests with an error, and the runner and its
+                    # peers are recreated.
+                    await self._check_runner(
+                        RuntimeError(
+                            "Lost the connection to the instance's other runners"
+                        )
+                    )
+
+    def _lost_its_peers(self) -> bool:
+        return any(
+            isinstance(diagnostic, RunnerRingTransportError)
+            for diagnostic in self._runner_stdio_handler.diagnostics.diagnostics()
+        )
 
     async def _check_runner(
         self, e: RunnerTerminationError | Exception | None = None
