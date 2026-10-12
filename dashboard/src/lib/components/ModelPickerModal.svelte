@@ -110,6 +110,7 @@
 
   // Local state
   let searchQuery = $state("");
+  let searchInput: HTMLInputElement | undefined = $state();
   let selectedFamily = $state<string | null>(null);
   let expandedGroups = $state<Set<string>>(new Set());
   let showFilters = $state(false);
@@ -200,6 +201,22 @@
   let mainSearchHfResults = $state<HuggingFaceModel[]>([]);
   let mainSearchHfLoading = $state(false);
   let mainSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Focus the search box when the picker opens so typing searches right away,
+  // and give focus back to whatever opened the picker when it closes
+  let focusBeforeOpen: HTMLElement | null = null;
+  $effect(() => {
+    if (isOpen) {
+      focusBeforeOpen =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      tick().then(() => searchInput?.focus());
+    } else if (focusBeforeOpen) {
+      focusBeforeOpen.focus();
+      focusBeforeOpen = null;
+    }
+  });
 
   // Reset transient state when modal opens, but preserve tab selection
   $effect(() => {
@@ -472,6 +489,46 @@
     });
   });
 
+  // Lowercase words of a name or id, split on spaces, "-", "_" and "/"
+  function searchWords(text: string): string[] {
+    return text
+      .toLowerCase()
+      .split(/[\s_/-]+/)
+      .filter(Boolean);
+  }
+
+  // A query word matches a field when the field, read from the start of one
+  // of its words with the separators dropped, begins with it. So "1b" finds
+  // "Llama 3.2 1B" (but not "v1.1-bf16"), and "llama3" or "gptoss" find
+  // "Llama 3.2" and "GPT-OSS".
+  function wordsStartWith(fieldWords: string[], word: string): boolean {
+    return fieldWords.some((_, i) =>
+      fieldWords.slice(i).join("").startsWith(word),
+    );
+  }
+
+  // True when every word of the query matches one of the fields, in any order
+  function matchesSearch(
+    query: string,
+    fields: (string | undefined)[],
+  ): boolean {
+    const queryWords = query
+      .split(/\s+/)
+      .map((word) => searchWords(word).join(""))
+      .filter(Boolean);
+    const fieldWords = fields.map((field) => searchWords(field ?? ""));
+    return queryWords.every((word) =>
+      fieldWords.some((words) => wordsStartWith(words, word)),
+    );
+  }
+
+  function groupSearchFields(group: ModelGroup): (string | undefined)[] {
+    return [
+      group.name,
+      ...group.variants.flatMap((v) => [v.id, v.name, v.quantization]),
+    ];
+  }
+
   // Filter models based on search, family, and filters
   const filteredGroups = $derived.by((): ModelGroup[] => {
     let result: ModelGroup[] = [...groupedModels];
@@ -489,15 +546,8 @@
 
     // Filter by search query
     if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase().trim();
-      result = result.filter(
-        (g) =>
-          g.name.toLowerCase().includes(query) ||
-          g.variants.some(
-            (v) =>
-              v.id.toLowerCase().includes(query) ||
-              (v.name || "").toLowerCase().includes(query),
-          ),
+      result = result.filter((g) =>
+        matchesSearch(searchQuery, groupSearchFields(g)),
       );
     }
 
@@ -596,16 +646,8 @@
   // Filtered recent groups (apply search query)
   const filteredRecentGroups = $derived.by((): ModelGroup[] => {
     if (!searchQuery.trim()) return recentGroups;
-    const query = searchQuery.toLowerCase().trim();
-    return recentGroups.filter(
-      (g) =>
-        g.name.toLowerCase().includes(query) ||
-        g.variants.some(
-          (v) =>
-            v.id.toLowerCase().includes(query) ||
-            (v.name || "").toLowerCase().includes(query) ||
-            (v.quantization || "").toLowerCase().includes(query),
-        ),
+    return recentGroups.filter((g) =>
+      matchesSearch(searchQuery, groupSearchFields(g)),
     );
   });
 
@@ -702,6 +744,7 @@
           type="search"
           class="flex-1 bg-transparent border-none outline-none text-sm font-mono text-white placeholder-white/40"
           placeholder="Search mlx-community models..."
+          bind:this={searchInput}
           value={hfSearchQuery}
           oninput={(e) => handleHfSearchInput(e.currentTarget.value)}
         />
@@ -728,6 +771,7 @@
           type="search"
           class="flex-1 bg-transparent border-none outline-none text-sm font-mono text-white placeholder-white/40"
           placeholder="Search models..."
+          bind:this={searchInput}
           bind:value={searchQuery}
         />
         <!-- Cluster memory -->
