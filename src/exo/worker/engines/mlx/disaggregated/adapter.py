@@ -10,6 +10,9 @@ from mlx_lm.models.cache import (
     RotatingKVCache,
 )
 from mlx_lm.models.deepseek_v4 import DeepseekV4Cache
+from mlx_vlm.models.cache import ArraysCache as MLXVLMArrayCache
+from mlx_vlm.models.cache import KVCache as MLXVLMKVCache
+from mlx_vlm.models.cache import QuantizedKVCache as MLXVLMQuantizedKVCache
 
 from exo.worker.disaggregated.protocol import (
     DType,
@@ -101,7 +104,17 @@ def send_mlx_kv_cache(
     tokens_sent = 0
     for layer_idx, c in enumerate(caches):
         match c:
-            case QuantizedKVCache() | CacheList() | DeepseekV4Cache():
+            case (
+                QuantizedKVCache()
+                | CacheList()
+                | DeepseekV4Cache()
+                | MLXVLMArrayCache()
+                | MLXVLMKVCache()
+                | MLXVLMQuantizedKVCache()
+            ):
+                # The disaggregated prefill wire format currently reconstructs
+                # only MLX-LM cache classes. Qwen4-Exp uses MLX-VLM caches whose
+                # recurrent state and QSA metadata need a dedicated protocol.
                 raise NotImplementedError
             case KVCache() | RotatingKVCache():
                 keys = c.keys

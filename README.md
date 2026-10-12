@@ -28,6 +28,8 @@ exo connects all your devices into an AI cluster. Not only does exo enable runni
 - **MLX Support**: exo uses [MLX](https://github.com/ml-explore/mlx) as an inference backend and [MLX distributed](https://ml-explore.github.io/mlx/build/html/usage/distributed.html) for distributed communication.
 - **Multiple API Compatibility**: Compatible with OpenAI Chat Completions API, Claude Messages API, OpenAI Responses API, and Ollama API - use your existing tools and clients.
 - **Custom Model Support**: Load custom models from HuggingFace hub to expand the range of available models.
+- **Qwen3.8 Flash Next**: Run the `qwen4_exp` architecture locally with its
+  QSA/GDN/PLE runtime; see the [Qwen3.8 guide](docs/qwen38-flash-next.md).
 
 ## Dashboard
 

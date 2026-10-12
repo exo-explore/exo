@@ -5,8 +5,9 @@ import sys
 import tempfile
 import time
 from collections.abc import Generator
+from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 if TYPE_CHECKING:
     from exo.worker.engines.mlx.vision import VisionProcessor
@@ -38,7 +39,7 @@ import contextlib
 
 import mlx.core as mx
 import mlx.nn as nn
-from mlx_lm.utils import load_model
+from mlx_lm.utils import load_model as load_mlx_lm_model
 from pydantic import RootModel
 
 from exo.download.download_utils import build_model_path
@@ -66,6 +67,96 @@ from exo.worker.engines.mlx.auto_parallel import (
 )
 from exo.worker.engines.mlx.types import Model
 from exo.worker.runner.bootstrap import logger
+
+_MLX_VLM_LANGUAGE_MODEL_TYPES = frozenset({"qwen4_exp"})
+
+
+class MLXVLMLogitsModel(nn.Module):
+    """Adapt an MLX-VLM language module to MLX-LM's logits-only contract."""
+
+    def __init__(self, language_model: nn.Module) -> None:
+        super().__init__()
+        self.language_model = language_model
+
+    @property
+    def model(self) -> nn.Module:
+        inner = getattr(self.language_model, "model", None)
+        if not isinstance(inner, nn.Module):
+            raise TypeError("MLX-VLM language model did not expose an inner model")
+        return inner
+
+    @property
+    def layers(self) -> list[nn.Module]:
+        layers = getattr(self.language_model, "layers", None)
+        if not isinstance(layers, list):
+            raise TypeError("MLX-VLM language model did not expose layers")
+        return cast(list[nn.Module], layers)
+
+    def make_cache(self) -> list[Any]:
+        make_cache = getattr(self.language_model, "make_cache", None)
+        if not callable(make_cache):
+            raise TypeError("MLX-VLM language model did not expose make_cache")
+        return cast(list[Any], make_cache())
+
+    def __call__(
+        self,
+        inputs: mx.array,
+        inputs_embeds: mx.array | None = None,
+        mask: mx.array | str | None = None,
+        cache: Any = None,  # pyright: ignore[reportAny]
+        **kwargs: Any,  # pyright: ignore[reportAny]
+    ) -> mx.array:
+        output = self.language_model(
+            inputs,
+            inputs_embeds=inputs_embeds,
+            mask=mask,
+            cache=cache,
+            **kwargs,
+        )
+        logits = getattr(output, "logits", output)
+        if not isinstance(logits, mx.array):
+            raise TypeError(
+                "MLX-VLM language model did not return logits compatible with EXO"
+            )
+        return logits
+
+
+def load_language_model(
+    model_path: Path, *, lazy: bool = True, strict: bool = False
+) -> tuple[nn.Module, dict[str, Any]]:
+    """Load a text-generation model using the runtime that owns its architecture.
+
+    Qwen3.8-Flash-Next is published as ``qwen4_exp`` conditional-generation
+    weights. Its text runtime, QSA cache, n-gram PLE storage, and official-weight
+    sanitizer live in MLX-VLM rather than MLX-LM. EXO loads the multimodal shell
+    long enough to apply that sanitizer, then retains only the language model;
+    the existing :class:`VisionProcessor` owns vision inference separately.
+    """
+    config_path = model_path / "config.json"
+    try:
+        config = cast(dict[str, Any], json.loads(config_path.read_text()))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Unable to read model config at {config_path}") from exc
+
+    raw_model_type = config.get("model_type")
+    model_type = raw_model_type.lower() if isinstance(raw_model_type, str) else ""
+    if model_type not in _MLX_VLM_LANGUAGE_MODEL_TYPES:
+        return load_mlx_lm_model(model_path, lazy=lazy, strict=strict)
+
+    mlx_vlm_utils = import_module("mlx_vlm.utils")
+    load_mlx_vlm_model = cast(Callable[..., nn.Module], mlx_vlm_utils.load_model)
+    conditional_model = load_mlx_vlm_model(model_path, lazy=lazy, strict=strict)
+    language_model = getattr(conditional_model, "language_model", None)
+    if not isinstance(language_model, nn.Module):
+        raise TypeError(
+            f"MLX-VLM model type {model_type!r} did not expose a language model"
+        )
+
+    # Preserve the convention used by MLX-LM models and downstream helpers.
+    model = MLXVLMLogitsModel(language_model)
+    model.model_path = model_path
+    language_model.model_path = model_path
+    return model, config
 
 
 def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
@@ -172,7 +263,7 @@ def load_mlx_items(
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
         start_time = time.perf_counter()
-        model, _ = load_model(model_path, lazy=True, strict=False)
+        model, _ = load_language_model(model_path, lazy=True, strict=False)
         # Eval layers one by one for progress reporting
         try:
             inner = get_inner_model(model)
@@ -235,7 +326,7 @@ def shard_and_load(
 ) -> Generator[ModelLoadingResponse, None, tuple[nn.Module, TokenizerWrapper]]:
     model_path = build_model_path(shard_metadata.model_card.model_id)
 
-    model, _ = load_model(model_path, lazy=True, strict=False)
+    model, _ = load_language_model(model_path, lazy=True, strict=False)
     logger.debug(model)
     if hasattr(model, "model") and isinstance(model.model, DeepseekV3Model):  # type: ignore
         pass
@@ -324,8 +415,13 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
         or "qwen-3.5" in model_id_lower
         or "qwen3.6" in model_id_lower
         or "qwen-3.6" in model_id_lower
+        or "qwen3.8" in model_id_lower
+        or "qwen-3.8" in model_id_lower
+        or "qwen4_exp" in model_id_lower
+        or "qwen4-exp" in model_id_lower
     ):
-        # For Qwen3.5 / Qwen3.6: 248046 (<|im_end|>), 248044 (<|endoftext|>)
+        # For Qwen3.5+ / Qwen4-Exp: 248046 (<|im_end|>),
+        # 248044 (<|endoftext|>).
         return [248046, 248044]
     elif "gemma-4" in model_id_lower or "gemma-3" in model_id_lower:
         return [1, 106, 50]
@@ -499,6 +595,27 @@ def _v4_reasoning_effort(task_params: TextGenerationTaskParams) -> str | None:
     return None
 
 
+def normalize_chat_template_reasoning_effort(
+    task_params: TextGenerationTaskParams,
+) -> str | None:
+    effort = task_params.reasoning_effort
+    if effort is None:
+        return None
+    if "qwen3.8" not in task_params.model.lower():
+        return effort
+
+    # Qwen3.8's template accepts only low, medium, and xhigh. Normalize the
+    # OpenAI-compatible scale at EXO's API boundary instead of letting Jinja
+    # reject otherwise valid high/minimal requests.
+    return {
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "xhigh",
+        "xhigh": "xhigh",
+    }.get(effort, effort)
+
+
 def _strip_v4_thinking_markers(content: str) -> str:
     """Remove `<think>…</think>` blocks and any stray `<think>`/`</think>` tags
     from prior-turn assistant content.
@@ -624,8 +741,10 @@ def render_chat_template(
         # Jinja ignores unknown variables, so passing both is safe.
         extra_kwargs["enable_thinking"] = task_params.enable_thinking
         extra_kwargs["thinking"] = task_params.enable_thinking
-    if task_params.reasoning_effort is not None:
-        extra_kwargs["reasoning_effort"] = task_params.reasoning_effort
+    if (
+        reasoning_effort := normalize_chat_template_reasoning_effort(task_params)
+    ) is not None:
+        extra_kwargs["reasoning_effort"] = reasoning_effort
 
     patched_template: str | None = None
     if task_params.tools:

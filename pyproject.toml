@@ -25,7 +25,7 @@ dependencies = [
   "python-multipart>=0.0.21",
   "msgspec>=0.19.0",
   "zstandard>=0.23.0",
-  "transformers>=5.6.2",
+  "transformers>=5.14.0",
   "python-daemon>=3.1.2",
 ]
 
@@ -50,7 +50,7 @@ mlx-none = ["anyio"]
 mlx = [
   "mlx==0.32.0",
   "mlx-lm",
-  "mlx-vlm>=0.3.11",
+  "mlx-vlm>=0.6.17",
   "mflux==0.17.5",
   "torch==2.10.0; sys_platform == 'darwin'",
   "torch==2.10.0; sys_platform == 'linux'",
@@ -94,6 +94,7 @@ mlx-cuda-13 = [
   { url = "https://github.com/rltakashige/mlx-jaccl-fix-small-recv/releases/download/mlx_cuda/mlx_cuda_13-0.32.0-py3-none-manylinux_2_35_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine != 'aarch64'" },
 ]
 mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/deepseek-v4" }
+mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm", rev = "b0991483509f50058b2db773b672177763a79c4e" }
 mflux = { git = "https://github.com/evanev7/mflux", branch = "exo2" }
 torch = [
   { index = "pytorch-cpu", marker = "sys_platform == 'linux' and extra == 'mlx-cpu' and extra != 'mlx-cuda13' and extra != 'mlx-cuda12'" },
@@ -186,7 +187,14 @@ root = "tools/src"
 required-version = ">=0.8.6"
 prerelease = "allow"
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
-override-dependencies = ["opencv-python; python_version < '0'"]
+override-dependencies = [
+  # EXO uses MLX-VLM's model runtime, not its bundled web server. Keep EXO's
+  # tested API stack instead of accepting MLX-VLM's unrelated major upgrade.
+  "fastapi==0.128.0",
+  "mlx>=0.32.0.dev0",
+  "opencv-python; python_version < '0'",
+  "starlette==0.50.0",
+]
 conflicts = [
   [
     { extra = "mlx-cuda13" },

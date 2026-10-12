@@ -60,6 +60,12 @@ from mlx_lm.models.qwen3_vl import Model as Qwen3VLModel
 from mlx_lm.models.step3p5 import Model as Step35Model
 from mlx_lm.models.step3p5 import Step3p5MLP as Step35MLP
 from mlx_lm.models.step3p5 import Step3p5Model as Step35InnerModel
+from mlx_vlm.models.qwen4_exp.language import (
+    LanguageModel as Qwen4ExpLanguageModel,
+)
+from mlx_vlm.models.qwen4_exp.language import (
+    Qwen4ExpModel as Qwen4ExpInnerModel,
+)
 
 from exo.shared.types.worker.runner_response import ModelLoadingResponse
 from exo.shared.types.worker.shards import PipelineShardMetadata
@@ -244,23 +250,29 @@ def get_layers(inner_model_instance: nn.Module) -> list[_LayerCallable]:
 
 
 def _patch_hybrid_cache(
-    model: Qwen3_5TextModel | Qwen3NextModel | NemotronHModel,
+    model: Qwen3_5TextModel | Qwen3NextModel | Qwen4ExpLanguageModel | NemotronHModel,
     fa_idx: int,
     has_full_attn: bool,
     ssm_idx: int,
     has_linear: bool,
 ) -> None:
     # Hacks to make make_mask happy.
-    original = model.make_cache
+    original = cast(Callable[[], list[ArraysCache | KVCache]], model.make_cache)
 
     def patched() -> list[ArraysCache | KVCache]:
         cache = original()
         if not has_full_attn:
             entry = cache[fa_idx]
-            orig_make_mask = entry.make_mask
+            orig_make_mask = cast(
+                Callable[[int], mx.array | Literal["causal"] | None],
+                entry.make_mask,
+            )
             entry.make_mask = lambda n, **_kw: orig_make_mask(n)  # type: ignore
         if not has_linear:
-            orig_ssm_make_mask = cache[ssm_idx].make_mask
+            orig_ssm_make_mask = cast(
+                Callable[..., mx.array | Literal["causal"] | None],
+                cache[ssm_idx].make_mask,
+            )
 
             def _ssm_mask(
                 n: int, **kw: bool | int | None
@@ -338,7 +350,10 @@ def pipeline_auto_parallel(
         inner_model_instance._swa_idx = 0 if not sliding_layers else sliding_layers[0]
         inner_model_instance._full_idx = 0 if not full_layers else full_layers[0]
 
-    if isinstance(inner_model_instance, (Qwen3_5TextModelInner, Qwen3NextInnerModel)):
+    if isinstance(
+        inner_model_instance,
+        (Qwen3_5TextModelInner, Qwen3NextInnerModel, Qwen4ExpInnerModel),
+    ):
         full_attn_layers = [
             i for i, layer in enumerate(layers) if not getattr(layer, "is_linear", True)
         ]
@@ -349,7 +364,10 @@ def pipeline_auto_parallel(
         inner_model_instance.ssm_idx = linear_layers[0] if linear_layers else 0
         if not full_attn_layers or not linear_layers:
             _patch_hybrid_cache(
-                cast(Qwen3_5TextModel | Qwen3NextModel, model),
+                cast(
+                    Qwen3_5TextModel | Qwen3NextModel | Qwen4ExpLanguageModel,
+                    model,
+                ),
                 fa_idx=inner_model_instance.fa_idx,
                 has_full_attn=bool(full_attn_layers),
                 ssm_idx=inner_model_instance.ssm_idx,

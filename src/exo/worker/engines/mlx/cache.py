@@ -1,7 +1,7 @@
 import gc
 import os
 from copy import deepcopy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, cast
 
 import mlx.core as mx
 import numpy as np
@@ -20,6 +20,9 @@ from mlx_lm.models.deepseek_v4 import (
     _CompressorBranch as CompressorBranch,  # type: ignore
 )
 from mlx_lm.tokenizer_utils import TokenizerWrapper
+from mlx_vlm.models.cache import ArraysCache as MLXVLMArrayCache
+from mlx_vlm.models.cache import KVCache as MLXVLMKVCache
+from mlx_vlm.models.cache import QuantizedKVCache as MLXVLMQuantizedKVCache
 
 from exo.shared.types.memory import Memory
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
@@ -54,7 +57,12 @@ class CacheSnapshot:
     def __init__(
         self,
         states: list[
-            RotatingKVCache | ArraysCache | CacheList | DeepseekV4Cache | None
+            RotatingKVCache
+            | ArraysCache
+            | MLXVLMArrayCache
+            | CacheList
+            | DeepseekV4Cache
+            | None
         ],
         token_count: int,
     ):
@@ -103,6 +111,31 @@ def _copy_arrays_cache(ac: ArraysCache) -> ArraysCache:
         entries.append(_detached_copy(entry))
     copy = ArraysCache(len(entries))
     copy.cache = entries  # type: ignore[reportUnknownMemberType]
+    return copy
+
+
+def _copy_mlx_vlm_arrays_cache(ac: MLXVLMArrayCache) -> MLXVLMArrayCache:
+    entries: list[mx.array | None] = []
+    for entry in ac.cache:  # type: ignore[reportUnknownMemberType]
+        if entry is None:
+            entries.append(None)
+            continue
+        assert isinstance(entry, mx.array)
+        entries.append(_detached_copy(entry))
+    copy = MLXVLMArrayCache(len(entries))
+    copy.cache = entries
+    left_padding = cast(
+        mx.array | None,
+        ac.left_padding,
+    )
+    lengths = cast(
+        mx.array | None,
+        ac.lengths,
+    )
+    if left_padding is not None:
+        copy.left_padding = _detached_copy(left_padding)
+    if lengths is not None:
+        copy.lengths = _detached_copy(lengths)
     return copy
 
 
@@ -165,8 +198,20 @@ def _copy_v4_cache(c: DeepseekV4Cache) -> DeepseekV4Cache:
 
 
 def copy_snapshot_entry(
-    entry: ArraysCache | RotatingKVCache | CacheList | DeepseekV4Cache | None,
-) -> ArraysCache | RotatingKVCache | CacheList | DeepseekV4Cache | None:
+    entry: ArraysCache
+    | MLXVLMArrayCache
+    | RotatingKVCache
+    | CacheList
+    | DeepseekV4Cache
+    | None,
+) -> (
+    ArraysCache
+    | MLXVLMArrayCache
+    | RotatingKVCache
+    | CacheList
+    | DeepseekV4Cache
+    | None
+):
     match entry:
         case None:
             return None
@@ -175,6 +220,8 @@ def copy_snapshot_entry(
             return snap if snap is not None else deepcopy(entry)
         case ArraysCache():
             return _copy_arrays_cache(entry)
+        case MLXVLMArrayCache():
+            return _copy_mlx_vlm_arrays_cache(entry)
         case CacheList():
             return _copy_cache_list(entry)
         case DeepseekV4Cache():
@@ -183,11 +230,18 @@ def copy_snapshot_entry(
 
 def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
     states: list[
-        RotatingKVCache | ArraysCache | CacheList | DeepseekV4Cache | None
+        RotatingKVCache
+        | ArraysCache
+        | MLXVLMArrayCache
+        | CacheList
+        | DeepseekV4Cache
+        | None
     ] = []
     for c in cache:
         if isinstance(c, ArraysCache):
             states.append(_copy_arrays_cache(c))
+        elif isinstance(c, MLXVLMArrayCache):
+            states.append(_copy_mlx_vlm_arrays_cache(c))
         elif isinstance(c, RotatingKVCache):
             states.append(copy_rotating_kv_cache(c))
         elif isinstance(c, CacheList) and not bool(c.is_trimmable()):  # type: ignore[reportUnknownMemberType]
@@ -217,7 +271,7 @@ def is_non_trimmable_cache_entry(c: object) -> bool:
     """A cache entry is non-trimmable if `trim(n)` can't roll back its full
     state — meaning the prefill +2 rollback must snapshot+restore it instead.
     """
-    if isinstance(c, (ArraysCache, RotatingKVCache)):
+    if isinstance(c, (ArraysCache, MLXVLMArrayCache, RotatingKVCache)):
         return True
     if isinstance(c, CacheList):
         return not bool(c.is_trimmable())  # type: ignore[reportUnknownMemberType]
@@ -382,7 +436,7 @@ class KVPrefixCache:
             trim_cache(prompt_cache, tokens_to_trim, restore_snap)
             # Reset cache offset to match trimmed length
             for c in prompt_cache:
-                if isinstance(c, (ArraysCache, RotatingKVCache)):
+                if isinstance(c, (ArraysCache, MLXVLMArrayCache, RotatingKVCache)):
                     continue
                 if isinstance(c, DeepseekV4Cache):
                     continue
@@ -476,29 +530,31 @@ def trim_cache(
     snapshot: CacheSnapshot | None = None,
 ) -> None:
     for i, c in enumerate(cache):
-        non_trimmable = isinstance(c, (ArraysCache, RotatingKVCache)) or (
-            isinstance(c, CacheList) and not bool(c.is_trimmable())  # type: ignore[reportUnknownMemberType]
-        )
-        if non_trimmable:
+        if isinstance(c, (ArraysCache, MLXVLMArrayCache, RotatingKVCache)):
             if snapshot is not None and snapshot.states[i] is not None:
                 restored = copy_snapshot_entry(snapshot.states[i])
                 if restored is not None:
                     cache[i] = restored  # type: ignore
-            elif isinstance(c, (ArraysCache, RotatingKVCache)):
+            elif isinstance(c, MLXVLMArrayCache):
+                cache[i] = MLXVLMArrayCache(len(c.cache))  # type: ignore
+            elif isinstance(c, ArraysCache):
                 c.state = [None] * len(c.state)
-                if isinstance(c, RotatingKVCache):
-                    c.offset = 0
-                    c._idx = 0
             else:
-                # CacheList without a snapshot — zero each inner cache's state
-                for inner in c:  # type: ignore[reportUnknownVariableType]
-                    if isinstance(inner, (ArraysCache, RotatingKVCache)):
-                        inner.state = [None] * len(inner.state)
-                        if isinstance(inner, RotatingKVCache):
-                            inner.offset = 0
-                            inner._idx = 0
-        else:
-            c.trim(num_tokens)
+                c.state = [None] * len(c.state)
+                c.offset = 0
+                c._idx = 0
+            continue
+        if isinstance(c, CacheList) and not bool(c.is_trimmable()):  # type: ignore[reportUnknownMemberType]
+            # CacheList without a snapshot — zero each inner cache's state.
+            for inner in c:  # type: ignore[reportUnknownVariableType]
+                if isinstance(inner, (ArraysCache, RotatingKVCache)):
+                    inner.state = [None] * len(inner.state)
+                    if isinstance(inner, RotatingKVCache):
+                        inner.offset = 0
+                        inner._idx = 0
+            continue
+        trim = cast(Callable[[int], object], c.trim)
+        trim(num_tokens)
 
 
 def encode_prompt(tokenizer: TokenizerWrapper, prompt: str) -> mx.array:
@@ -518,12 +574,15 @@ def _entry_length(
     | RotatingKVCache
     | QuantizedKVCache
     | ArraysCache
+    | MLXVLMArrayCache
+    | MLXVLMKVCache
+    | MLXVLMQuantizedKVCache
     | CacheList
     | DeepseekV4Cache,
 ) -> int:
     # Use .offset attribute which KVCache types have (len() not implemented in older QuantizedKVCache).
     if hasattr(c, "offset"):
-        return c.offset
+        return int(c.offset)  # type: ignore[reportUnknownMemberType,reportAttributeAccessIssue]
     # For CacheList
     if hasattr(c, "size"):
         return int(c.size())  # type: ignore
@@ -563,7 +622,7 @@ def make_kv_cache(
     assert hasattr(model, "layers")
 
     if hasattr(model, "make_cache"):
-        logger.info("Using MLX LM's make cache")
+        logger.info("Using model-provided cache")
         return model.make_cache()  # type: ignore
 
     if max_kv_size is None:
