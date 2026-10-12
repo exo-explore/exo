@@ -176,13 +176,18 @@ class DownloadCoordinator:
                 if cmd.command.target_node_id != self.node_id:
                     continue
 
-                match cmd.command:
-                    case StartDownload(shard_metadata=shard):
-                        await self._start_download(shard)
-                    case DeleteDownload(model_id=model_id):
-                        await self._delete_download(model_id)
-                    case CancelDownload(model_id=model_id):
-                        await self._cancel_download(model_id)
+                try:
+                    match cmd.command:
+                        case StartDownload(shard_metadata=shard):
+                            await self._start_download(shard)
+                        case DeleteDownload(model_id=model_id):
+                            await self._delete_download(model_id)
+                        case CancelDownload(model_id=model_id):
+                            await self._cancel_download(model_id)
+                except ValueError as e:
+                    # e.g. a model id that isn't a valid folder name; skip the command,
+                    # don't stop processing downloads
+                    logger.warning(f"Ignoring download command {cmd.command}: {e}")
 
     async def _cancel_download(self, model_id: ModelId) -> None:
         if model_id in self.active_downloads and model_id in self.download_status:
