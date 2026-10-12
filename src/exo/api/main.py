@@ -2023,7 +2023,8 @@ class API:
                     if queue := self._image_generation_queues.get(
                         event.command_id, None
                     ):
-                        assert isinstance(event.chunk, ImageChunk)
+                        # Image runners report failures as ErrorChunks
+                        assert isinstance(event.chunk, (ImageChunk, ErrorChunk))
                         try:
                             await queue.send(event.chunk)
                         except (BrokenResourceError, ClosedResourceError):
