@@ -54,6 +54,29 @@ def take_ready_topk(batch: GenerationBatch) -> BatchTopKLogprobs:
     return _get_buffer(batch).ready
 
 
+def _lazy_cache_metadata(cache: list[object]) -> list[mx.array]:
+    """The per-sequence bookkeeping arrays a cache updates lazily at every step: an
+    ArraysCache's left padding and lengths, which a linear attention layer moves on by the
+    number of tokens it processed.
+
+    Most of them are never read during decode (a model builds its linear attention mask
+    from one layer's cache), so unless they are evaluated each update chains onto the last
+    and keeps every earlier one alive, each holding a small Metal buffer. A model with
+    linear attention layers (Qwen3.5) then reaches Metal's resource limit, and the runner
+    crashes: within an hour of steady generation."""
+    arrays: list[mx.array] = []
+    for entry in cache:
+        sub_caches = cast(list[object] | None, getattr(entry, "caches", None))
+        if sub_caches is not None:
+            arrays.extend(_lazy_cache_metadata(sub_caches))
+            continue
+        for name in ("left_padding", "lengths"):
+            value = cast(object, getattr(entry, name, None))
+            if isinstance(value, mx.array):
+                arrays.append(value)
+    return arrays
+
+
 def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
     self._current_tokens = self._next_tokens
     self._current_logprobs = self._next_logprobs
@@ -111,9 +134,14 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
             pending_indices,
             pending_values,
             pending_selected,
+            *_lazy_cache_metadata(self.prompt_cache),
         )
     else:
-        mx.async_eval(self._next_tokens, self._next_logprobs)
+        mx.async_eval(
+            self._next_tokens,
+            self._next_logprobs,
+            *_lazy_cache_metadata(self.prompt_cache),
+        )
 
     current_lp = self._current_logprobs
     if isinstance(current_lp, mx.array):
