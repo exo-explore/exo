@@ -5,7 +5,7 @@ import json
 import random
 import shutil
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
+from collections.abc import AsyncGenerator, Iterable
 from datetime import datetime, timezone
 from functools import partial
 from http import HTTPStatus
@@ -53,8 +53,10 @@ from exo.api.adapters.responses import (
     generate_responses_stream,
     responses_request_to_text_generation,
 )
+from exo.api.collected_response import CollectedResponse
 from exo.api.keepalive import with_sse_keepalive
 from exo.api.recent_events import RecentEvents
+from exo.api.request_logger import RequestLogger
 from exo.api.types import (
     AddCustomModelParams,
     AdvancedImageParams,
@@ -281,13 +283,7 @@ class API:
 
         self.app = FastAPI()
 
-        @self.app.middleware("http")
-        async def _log_requests(  # pyright: ignore[reportUnusedFunction]
-            request: Request,
-            call_next: Callable[[Request], Awaitable[StreamingResponse]],
-        ) -> StreamingResponse:
-            logger.debug(f"API request: {request.method} {request.url.path}")
-            return await call_next(request)
+        self.app.add_middleware(RequestLogger)
 
         self._setup_exception_handlers()
         self._setup_cors()
@@ -974,7 +970,7 @@ class API:
                 },
             )
         else:
-            return StreamingResponse(
+            return CollectedResponse(
                 collect_chat_response(
                     command.command_id,
                     self._token_chunk_stream(command),
@@ -1593,7 +1589,7 @@ class API:
                 },
             )
         else:
-            return StreamingResponse(
+            return CollectedResponse(
                 collect_claude_response(
                     command.command_id,
                     payload.model,
@@ -1630,7 +1626,7 @@ class API:
             )
 
         else:
-            return StreamingResponse(
+            return CollectedResponse(
                 collect_responses_response(
                     command.command_id,
                     payload.model,
@@ -1671,7 +1667,7 @@ class API:
                 },
             )
         else:
-            return StreamingResponse(
+            return CollectedResponse(
                 collect_ollama_chat_response(
                     command.command_id,
                     self._token_chunk_stream(command),
@@ -1707,7 +1703,7 @@ class API:
                 },
             )
         else:
-            return StreamingResponse(
+            return CollectedResponse(
                 collect_ollama_generate_response(
                     command.command_id,
                     self._token_chunk_stream(command),
