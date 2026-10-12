@@ -5134,7 +5134,7 @@
             </h1>
             <p class="text-sm font-sans text-white/40">
               Showing recommended models for your devices ({Math.round(
-                clusterMemory().total / (1024 * 1024 * 1024),
+                availableMemoryGB(),
               )} GB memory available).
             </p>
           </div>
