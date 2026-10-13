@@ -5134,7 +5134,7 @@
             </h1>
             <p class="text-sm font-sans text-white/40">
               Showing recommended models for your devices ({Math.round(
-                clusterMemory().total / (1024 * 1024 * 1024),
+                availableMemoryGB(),
               )} GB memory available).
             </p>
           </div>
@@ -5370,6 +5370,8 @@
           {/if}
 
           <div class="w-full">
+            <!-- No onOpenModelPicker: no model picker is mounted at this step,
+                 so the form shows the onboarding model read-only -->
             <ChatForm
               placeholder="Ask anything"
               autofocus={true}
@@ -5377,7 +5379,6 @@
               showModelSelector={true}
               modelTasks={modelTasks()}
               modelCapabilities={modelCapabilities()}
-              onOpenModelPicker={openChatModelPicker}
               onAutoSend={handleChatSend}
             />
           </div>
@@ -5409,7 +5410,7 @@
               onboardingStep = 1;
             }, 50);
           }}
-          class="flex items-center gap-1.5 text-xs font-sans text-white/15 hover:text-white/35 transition-colors duration-300 cursor-pointer"
+          class="flex items-center gap-1.5 text-xs font-sans text-white/50 hover:text-white/80 transition-colors duration-300 cursor-pointer"
         >
           <svg
             width="12"
@@ -5429,7 +5430,7 @@
         <button
           type="button"
           onclick={completeOnboarding}
-          class="flex items-center gap-1.5 text-xs font-sans text-white/15 hover:text-white/35 transition-colors duration-300 cursor-pointer"
+          class="flex items-center gap-1.5 text-xs font-sans text-white/50 hover:text-white/80 transition-colors duration-300 cursor-pointer"
         >
           <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
             <path d="M3 2.5v11L9 8 3 2.5z" />
