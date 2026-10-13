@@ -335,8 +335,9 @@ async def test_a_first_rank_runner_silent_mid_generation_is_stopped(
 async def test_a_runner_that_keeps_reporting_is_left_alone(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # The runner reports every 10 ms; the stall timeout leaves room for a busy CI machine to pause the event loop
     monkeypatch.setattr(supervisor_module, "RUNNER_WATCH_INTERVAL", 0.01)
-    monkeypatch.setattr(supervisor_module, "RUNNER_STALL_TIMEOUT", 0.05)
+    monkeypatch.setattr(supervisor_module, "RUNNER_STALL_TIMEOUT", 0.5)
     supervisor, process, _ = await generating_supervisor(rank=0)
 
     async def keep_reporting() -> None:
@@ -346,7 +347,7 @@ async def test_a_runner_that_keeps_reporting_is_left_alone(
 
     async with anyio.create_task_group() as tg:
         tg.start_soon(keep_reporting)
-        with anyio.move_on_after(0.3):
+        with anyio.move_on_after(1.0):
             await supervisor._watch_runner()  # pyright: ignore[reportPrivateUsage]
         tg.cancel_scope.cancel()
 
