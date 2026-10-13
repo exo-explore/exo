@@ -428,6 +428,11 @@ class Args(FrozenModel):
         parser = argparse.ArgumentParser(prog="EXO")
         default_verbosity = 0
         parser.add_argument(
+            "--version",
+            action="version",
+            version=f"exo {__version__}",
+        )
+        parser.add_argument(
             "-q",
             "--quiet",
             action="store_const",
