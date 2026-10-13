@@ -43,6 +43,13 @@ final class ExoProcessController: ObservableObject {
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".exo")
     }()
 
+    /// exo's stdout and stderr. Kept apart from exo's own log directory,
+    /// ~/.exo/exo_log, which exo rotates and prunes itself.
+    static let logFile = ExoLogFile(url: exoDirectoryURL.appendingPathComponent("exo_app.log"))
+
+    /// How often the log's size is checked while exo runs.
+    private static let logRotationInterval: UInt64 = 30_000_000_000
+
     @Published private(set) var status: Status = .stopped
     @Published private(set) var lastError: String?
     @Published private(set) var launchCountdownSeconds: Int?
@@ -147,6 +154,7 @@ final class ExoProcessController: ObservableObject {
     private var process: Process?
     private var runtimeDirectoryURL: URL?
     private var pendingLaunchTask: Task<Void, Never>?
+    private var logRotationTask: Task<Void, Never>?
 
     func launchIfNeeded() {
         guard process?.isRunning != true else { return }
@@ -173,23 +181,39 @@ final class ExoProcessController: ObservableObject {
             child.currentDirectoryURL = exoHomeURL
             child.environment = makeEnvironment(for: runtimeURL)
 
-            child.standardOutput = FileHandle.nullDevice
-            child.standardError = FileHandle.nullDevice
+            // exo's output goes to the log so a failure can be explained. If
+            // the log can't be opened, exo still runs, without it.
+            let logFile = Self.logFile
+            _ = try? logFile.rotateIfNeeded()
+            let logHandle = try? logFile.openForAppending()
+            defer { try? logHandle?.close() }
+            try? logHandle?.write(
+                contentsOf: Data(
+                    "=== EXO.app \(buildTag()) started exo at \(Date().ISO8601Format()) ===\n".utf8)
+            )
+            let logOffset = logFile.size()
+            child.standardOutput = logHandle ?? FileHandle.nullDevice
+            child.standardError = logHandle ?? FileHandle.nullDevice
 
             child.terminationHandler = { [weak self] proc in
                 Task { @MainActor in
-                    guard let self else { return }
+                    // Ignore an exit reported after exo was started again.
+                    guard let self, self.process === proc else { return }
                     self.process = nil
+                    self.stopLogRotation()
                     switch self.status {
                     case .stopped:
                         break
                     case .failed:
                         break
                     default:
-                        self.status = .failed(
-                            message: "Exited with code \(proc.terminationStatus)"
+                        let reason = ExoExitReason(
+                            terminationReason: proc.terminationReason,
+                            status: proc.terminationStatus,
+                            output: logFile.text(from: logOffset)
                         )
-                        self.lastError = "Process exited with code \(proc.terminationStatus)"
+                        self.status = .failed(message: reason.message)
+                        self.lastError = reason.message
                     }
                 }
             }
@@ -197,14 +221,61 @@ final class ExoProcessController: ObservableObject {
             try child.run()
             process = child
             status = .running
+            startLogRotation()
 
             // Show welcome popout on every launch
             isFirstLaunchReady = true
         } catch {
             process = nil
-            status = .failed(message: "Launch error")
+            status = .failed(message: "Couldn't start exo: \(error.localizedDescription)")
             lastError = error.localizedDescription
         }
+    }
+
+    /// Opens exo's log in Console, or shows it in Finder if Console isn't
+    /// there.
+    func showLogs() {
+        let logURL = Self.logFile.url
+        guard FileManager.default.fileExists(atPath: logURL.path) else {
+            NSWorkspace.shared.activateFileViewerSelecting([Self.exoDirectoryURL])
+            return
+        }
+        guard
+            let console = NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: "com.apple.Console")
+        else {
+            NSWorkspace.shared.activateFileViewerSelecting([logURL])
+            return
+        }
+        NSWorkspace.shared.open(
+            [logURL], withApplicationAt: console,
+            configuration: NSWorkspace.OpenConfiguration()
+        ) { _, error in
+            if error != nil {
+                DispatchQueue.main.async {
+                    NSWorkspace.shared.activateFileViewerSelecting([logURL])
+                }
+            }
+        }
+    }
+
+    /// Keeps the log to its size limit while exo runs; see `ExoLogFile`.
+    private func startLogRotation() {
+        stopLogRotation()
+        let logFile = Self.logFile
+        let interval = Self.logRotationInterval
+        logRotationTask = Task.detached(priority: .utility) {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: interval)
+                if Task.isCancelled { return }
+                _ = try? logFile.rotateIfNeeded()
+            }
+        }
+    }
+
+    private func stopLogRotation() {
+        logRotationTask?.cancel()
+        logRotationTask = nil
     }
 
     func stop() {
@@ -214,6 +285,7 @@ final class ExoProcessController: ObservableObject {
         }
         process.terminationHandler = nil
         status = .stopped
+        stopLogRotation()
 
         guard process.isRunning else {
             self.process = nil

@@ -136,6 +136,22 @@ struct ContentView: View {
                     Text(detail)
                         .font(.caption2)
                         .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if case .failed = controller.status {
+                    HStack(spacing: 6) {
+                        Button("Restart") {
+                            startExo()
+                        }
+                        Button("Show Logs") {
+                            controller.showLogs()
+                        }
+                        .help("Open exo's output (~/.exo/exo_app.log) in Console")
+                    }
+                    .font(.caption2)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .padding(.top, 4)
                 }
             }
             Spacer()
@@ -541,10 +557,7 @@ struct ContentView: View {
             },
             set: { isOn in
                 if isOn {
-                    stateService.resetTransientState()
-                    stateService.startPolling()
-                    controller.cancelPendingLaunch()
-                    controller.launchIfNeeded()
+                    startExo()
                 } else {
                     stateService.stopPolling()
                     controller.stop()
@@ -552,6 +565,14 @@ struct ContentView: View {
                 }
             }
         )
+    }
+
+    /// Switching exo on, or Restart after it has failed.
+    private func startExo() {
+        stateService.resetTransientState()
+        stateService.startPolling()
+        controller.cancelPendingLaunch()
+        controller.launchIfNeeded()
     }
 
     private func bindingForNode(_ node: NodeViewModel) -> Binding<NodeViewModel?> {
