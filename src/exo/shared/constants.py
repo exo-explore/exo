@@ -61,9 +61,15 @@ RESOURCES_DIR = (
     find_resources() if _RESOURCES_DIR_ENV is None else Path.home() / _RESOURCES_DIR_ENV
 )
 _DASHBOARD_DIR_ENV = os.environ.get("EXO_DASHBOARD_DIR", None)
-DASHBOARD_DIR = (
-    find_dashboard() if _DASHBOARD_DIR_ENV is None else Path.home() / _DASHBOARD_DIR_ENV
-)
+
+
+def dashboard_dir() -> Path:
+    """The built dashboard. Looked up only when it's served, so exo --help and --version work
+    before the dashboard is built."""
+    if _DASHBOARD_DIR_ENV is not None:
+        return Path.home() / _DASHBOARD_DIR_ENV
+    return find_dashboard()
+
 
 # Log files (data/logs or cache)
 EXO_LOG_DIR = EXO_CACHE_HOME / "exo_log"

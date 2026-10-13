@@ -142,13 +142,13 @@ from exo.master.placement import place_instance as get_instance_placements
 from exo.routing.event_router import NodeEventReceiver
 from exo.shared.apply import apply
 from exo.shared.constants import (
-    DASHBOARD_DIR,
     ENABLE_DISAGGREGATION,
     EXO_CACHE_HOME,
     EXO_EVENT_LOG_DIR,
     EXO_IMAGE_CACHE_DIR,
     EXO_MAX_CHUNK_SIZE,
     EXO_TRACING_CACHE_DIR,
+    dashboard_dir,
 )
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
@@ -308,7 +308,7 @@ class API:
         self.app.mount(
             "/",
             StaticFiles(
-                directory=DASHBOARD_DIR,
+                directory=dashboard_dir(),
                 html=True,
             ),
             name="dashboard",
