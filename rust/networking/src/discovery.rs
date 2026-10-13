@@ -24,6 +24,8 @@ const MAGIC: [u8; 3] = *b"EXO";
 const RECENT_NONCES: usize = 8;
 /// How often to repeat the warning while no Hello can be sent at all.
 const BLOCKED_WARNING_INTERVAL: Duration = Duration::from_secs(60);
+/// How often to repeat that an exo with another version or namespace is on the network.
+const OTHER_CLUSTER_NOTICE_INTERVAL: Duration = Duration::from_secs(10 * 60);
 /// A pause this long (the process was suspended, the machine slept, or the runtime was
 /// starved) may have let peers expire their sessions with us while we still hold ours.
 const STALL_THRESHOLD: Duration = Duration::from_secs(5);
@@ -44,6 +46,7 @@ pub struct Discovery {
     tick: Interval,
     /// When we last warned that no Hello could be sent; `None` while sending works.
     blocked_since_warning: Mutex<Option<Instant>>,
+    other_cluster_notice: Mutex<OtherClusterNotice>,
     stall_guard: StallGuard,
     _sync: Mutex<WatchHandle>,
 }
@@ -137,6 +140,7 @@ impl Discovery {
                 tick
             },
             blocked_since_warning: Mutex::new(None),
+            other_cluster_notice: Mutex::new(OtherClusterNotice::default()),
             stall_guard: StallGuard::default(),
             _sync,
         })
@@ -209,6 +213,15 @@ impl Discovery {
                 }
                 if hello.namespace != self.namespace {
                     trace!("dropped: different namespace");
+                    if self.other_cluster_notice.lock().due(Instant::now()) {
+                        info!(
+                            "found another exo at {} that can't join this cluster: it runs a \
+                             different version of exo, or was started with a different \
+                             namespace. Nodes connect only when both match, so update every \
+                             device to the same version of exo.",
+                            addr.ip()
+                        );
+                    }
                     return Ok(None);
                 }
 
@@ -334,6 +347,25 @@ impl StallGuard {
                 false
             }
             None => false,
+        }
+    }
+}
+
+/// Rate-limits the notice that an exo of another version or namespace is on the network: a
+/// node sends a Hello every second from each of its interfaces.
+#[derive(Default)]
+struct OtherClusterNotice {
+    last: Option<Instant>,
+}
+
+impl OtherClusterNotice {
+    fn due(&mut self, now: Instant) -> bool {
+        match self.last {
+            Some(last) if now.duration_since(last) < OTHER_CLUSTER_NOTICE_INTERVAL => false,
+            _ => {
+                self.last = Some(now);
+                true
+            }
         }
     }
 }
@@ -485,6 +517,17 @@ mod tests {
         // The next tick is on time again
         let next_late = tick.tick().await.elapsed();
         assert!(next_late < STALL_THRESHOLD, "{next_late:?}");
+    }
+
+    #[test]
+    fn says_another_cluster_is_there_once_per_interval() {
+        let mut notice = OtherClusterNotice::default();
+        let start = Instant::now();
+        assert!(notice.due(start));
+        assert!(!notice.due(start + Duration::from_secs(1)));
+        assert!(!notice.due(start + OTHER_CLUSTER_NOTICE_INTERVAL - Duration::from_millis(1)));
+        assert!(notice.due(start + OTHER_CLUSTER_NOTICE_INTERVAL));
+        assert!(!notice.due(start + OTHER_CLUSTER_NOTICE_INTERVAL + Duration::from_secs(1)));
     }
 
     #[test]
