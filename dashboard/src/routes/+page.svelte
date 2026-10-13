@@ -144,6 +144,28 @@
     }));
   });
 
+  // Dismissed RDMA warnings stay dismissed across reloads (in this browser)
+  const RDMA_NOT_ENABLED_DISMISSED_KEY = "exo-rdma-not-enabled-dismissed";
+  const RDMA_INCOMPATIBLE_PORT_DISMISSED_KEY =
+    "exo-rdma-incompatible-port-dismissed";
+
+  function loadWarningDismissed(key: string): boolean {
+    try {
+      return localStorage.getItem(key) === "true";
+    } catch {
+      // Storage unavailable: show the warning
+      return false;
+    }
+  }
+
+  function saveWarningDismissed(key: string): void {
+    try {
+      localStorage.setItem(key, "true");
+    } catch {
+      // Storage unavailable: the dismissal lasts until the page reloads
+    }
+  }
+
   // Detect TB5 nodes where RDMA is not enabled
   const tb5WithoutRdma = $derived.by(() => {
     const rdmaCtl = rdmaCtlData;
@@ -158,7 +180,13 @@
     // At least one TB5 node has RDMA disabled
     return tb5NodeIds.some((id) => rdmaCtl[id]?.enabled !== true);
   });
-  let tb5InfoDismissed = $state(false);
+  let tb5InfoDismissed = $state(
+    loadWarningDismissed(RDMA_NOT_ENABLED_DISMISSED_KEY),
+  );
+  function dismissTb5Info() {
+    tb5InfoDismissed = true;
+    saveWarningDismissed(RDMA_NOT_ENABLED_DISMISSED_KEY);
+  }
 
   // Detect Mac Studio nodes using RDMA on en2 (the port next to ethernet — RDMA doesn't work there)
   const macStudioEn2RdmaWarning = $derived.by(() => {
@@ -226,7 +254,13 @@
 
     return unique.length > 0 ? unique : null;
   });
-  let macStudioEn2Dismissed = $state(false);
+  let macStudioEn2Dismissed = $state(
+    loadWarningDismissed(RDMA_INCOMPATIBLE_PORT_DISMISSED_KEY),
+  );
+  function dismissMacStudioEn2() {
+    macStudioEn2Dismissed = true;
+    saveWarningDismissed(RDMA_INCOMPATIBLE_PORT_DISMISSED_KEY);
+  }
 
   // Helper to get friendly node name from node ID
   function getNodeName(nodeId: string): string {
@@ -4199,7 +4233,7 @@
             </span>
             <button
               type="button"
-              onclick={() => (tb5InfoDismissed = true)}
+              onclick={dismissTb5Info}
               class="ml-1 text-yellow-300/60 hover:text-yellow-200 transition-colors cursor-pointer"
               title="Dismiss"
             >
@@ -4273,7 +4307,7 @@
             </span>
             <button
               type="button"
-              onclick={() => (macStudioEn2Dismissed = true)}
+              onclick={dismissMacStudioEn2}
               class="ml-1 text-red-300/60 hover:text-red-200 transition-colors cursor-pointer"
               title="Dismiss"
             >
@@ -5630,86 +5664,6 @@
 
           {@render clusterWarnings()}
 
-          <!-- TB5 RDMA Not Enabled Warning -->
-          {#if tb5WithoutRdma && !tb5InfoDismissed}
-            <div
-              class="absolute left-4 group"
-              class:top-16={tbBridgeCycles.length > 0}
-              class:top-4={tbBridgeCycles.length === 0}
-              role="status"
-            >
-              <div
-                class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
-              >
-                <svg
-                  class="w-5 h-5 text-yellow-400 flex-shrink-0"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d={warningIconPath}
-                  />
-                </svg>
-                <span class="text-sm font-mono text-yellow-200">
-                  RDMA NOT ENABLED
-                </span>
-                <button
-                  type="button"
-                  onclick={() => (tb5InfoDismissed = true)}
-                  class="ml-1 text-yellow-300/60 hover:text-yellow-200 transition-colors cursor-pointer"
-                  title="Dismiss"
-                >
-                  <svg
-                    class="w-4 h-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    stroke-width="2"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d="M6 18L18 6M6 6l12 12"
-                    />
-                  </svg>
-                </button>
-              </div>
-              <!-- Tooltip on hover -->
-              <div
-                class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
-              >
-                <p class="text-xs text-white/80 mb-2">
-                  Thunderbolt 5 hardware detected on multiple nodes. Enable RDMA
-                  for significantly faster inter-node communication.
-                </p>
-                <p class="text-xs text-white/60 mb-1.5">
-                  <span class="text-yellow-300">To enable:</span>
-                </p>
-                <ol
-                  class="text-xs text-white/60 list-decimal list-inside space-y-0.5 mb-1.5"
-                >
-                  <li>Connect nodes with TB5 cables</li>
-                  <li>Boot to Recovery (hold power 10s → Options)</li>
-                  <li>Open Terminal from the Utilities menu</li>
-                  <li>
-                    Run
-                    <code class="text-yellow-300 bg-yellow-400/10 px-1 rounded"
-                      >rdma_ctl enable</code
-                    >
-                  </li>
-                  <li>Reboot</li>
-                </ol>
-                <p class="text-xs text-white/40">
-                  Requires macOS 26.2+, TB5 cables, and matching OS versions.
-                </p>
-              </div>
-            </div>
-          {/if}
-
           <!-- Exit topology-only mode button -->
           <button
             type="button"
@@ -5775,88 +5729,6 @@
             {/if}
 
             {@render clusterWarnings()}
-
-            <!-- TB5 RDMA Not Enabled Warning -->
-            {#if tb5WithoutRdma && !tb5InfoDismissed}
-              <div
-                class="absolute left-4 group"
-                class:top-16={tbBridgeCycles.length > 0}
-                class:top-4={tbBridgeCycles.length === 0}
-                role="status"
-              >
-                <div
-                  class="flex items-center gap-2 px-3 py-2 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm cursor-help"
-                >
-                  <svg
-                    class="w-5 h-5 text-yellow-400 flex-shrink-0"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    stroke-width="2"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d={warningIconPath}
-                    />
-                  </svg>
-                  <span class="text-sm font-mono text-yellow-200">
-                    RDMA NOT ENABLED
-                  </span>
-                  <button
-                    type="button"
-                    onclick={() => (tb5InfoDismissed = true)}
-                    class="ml-1 text-yellow-300/60 hover:text-yellow-200 transition-colors cursor-pointer"
-                    title="Dismiss"
-                  >
-                    <svg
-                      class="w-4 h-4"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      stroke-width="2"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        d="M6 18L18 6M6 6l12 12"
-                      />
-                    </svg>
-                  </button>
-                </div>
-
-                <!-- Tooltip on hover -->
-                <div
-                  class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
-                >
-                  <p class="text-xs text-white/80 mb-2">
-                    Thunderbolt 5 hardware detected on multiple nodes. Enable
-                    RDMA for significantly faster inter-node communication.
-                  </p>
-                  <p class="text-xs text-white/60 mb-1.5">
-                    <span class="text-yellow-300">To enable:</span>
-                  </p>
-                  <ol
-                    class="text-xs text-white/60 list-decimal list-inside space-y-0.5 mb-1.5"
-                  >
-                    <li>Connect nodes with TB5 cables</li>
-                    <li>Boot to Recovery (hold power 10s → Options)</li>
-                    <li>Open Terminal from the Utilities menu</li>
-                    <li>
-                      Run
-                      <code
-                        class="text-yellow-300 bg-yellow-400/10 px-1 rounded"
-                        >rdma_ctl enable</code
-                      >
-                    </li>
-                    <li>Reboot</li>
-                  </ol>
-                  <p class="text-xs text-white/40">
-                    Requires macOS 26.2+, TB5 cables, and matching OS versions.
-                  </p>
-                </div>
-              </div>
-            {/if}
 
             <!-- Node Filter Indicator (top-right corner) -->
             {#if isFilterActive()}
