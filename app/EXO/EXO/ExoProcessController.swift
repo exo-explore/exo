@@ -156,6 +156,15 @@ final class ExoProcessController: ObservableObject {
     private var pendingLaunchTask: Task<Void, Never>?
     private var logRotationTask: Task<Void, Never>?
 
+    private var readinessTask: Task<Void, Never>?
+    private let readinessProbe: () async -> Bool
+
+    /// `readinessProbe` says whether a started exo is up yet. Until it does,
+    /// the status is `.starting`.
+    init(readinessProbe: @escaping () async -> Bool = { await ExoReadiness.answers() }) {
+        self.readinessProbe = readinessProbe
+    }
+
     func launchIfNeeded() {
         guard process?.isRunning != true else { return }
         launch()
@@ -220,7 +229,7 @@ final class ExoProcessController: ObservableObject {
 
             try child.run()
             process = child
-            status = .running
+            markRunningOnceReady(child)
             startLogRotation()
 
             // Show welcome popout on every launch
@@ -278,7 +287,24 @@ final class ExoProcessController: ObservableObject {
         logRotationTask = nil
     }
 
+    /// Stays `.starting` until exo's API answers, so the app doesn't say
+    /// Running while exo is still loading and the dashboard can't be opened.
+    private func markRunningOnceReady(_ child: Process) {
+        readinessTask?.cancel()
+        let probe = readinessProbe
+        readinessTask = Task { [weak self] in
+            let ready = await ExoReadiness.wait(
+                every: .milliseconds(500), while: { child.isRunning }, until: probe)
+            guard ready, let self, self.process === child, self.status == .starting else {
+                return
+            }
+            self.status = .running
+        }
+    }
+
     func stop() {
+        readinessTask?.cancel()
+        readinessTask = nil
         guard let process else {
             status = .stopped
             return
