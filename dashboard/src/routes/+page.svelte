@@ -2764,6 +2764,52 @@
   const nodeCount = $derived(data ? Object.keys(data.nodes).length : 0);
   const instanceCount = $derived(Object.keys(instanceData).length);
 
+  // ── "Add a device" hint ──
+  // A device that stays alone usually means the other Mac isn't running exo,
+  // is on another network, or runs another exo version (devices only find
+  // each other on the same version). Wait a while first: peers can take a
+  // few seconds to show up after startup.
+  const ADD_DEVICE_HINT_DISMISSED_KEY = "exo-add-device-hint-dismissed";
+  const ADD_DEVICE_HINT_DELAY_MS = 30_000;
+  let addDeviceHintDismissed = $state(loadAddDeviceHintDismissed());
+  let aloneLongEnough = $state(false);
+
+  function loadAddDeviceHintDismissed(): boolean {
+    try {
+      return localStorage.getItem(ADD_DEVICE_HINT_DISMISSED_KEY) === "true";
+    } catch {
+      // Storage unavailable: show the hint
+      return false;
+    }
+  }
+
+  function dismissAddDeviceHint() {
+    addDeviceHintDismissed = true;
+    try {
+      localStorage.setItem(ADD_DEVICE_HINT_DISMISSED_KEY, "true");
+    } catch {
+      // Storage unavailable: hidden until the page reloads
+    }
+  }
+
+  // Restarts whenever the node count changes: the hint needs 30 s alone, and
+  // goes away as soon as a second device joins
+  $effect(() => {
+    aloneLongEnough = false;
+    if (nodeCount !== 1) return;
+    const timer = setTimeout(() => {
+      aloneLongEnough = true;
+    }, ADD_DEVICE_HINT_DELAY_MS);
+    return () => clearTimeout(timer);
+  });
+
+  const showAddDeviceHint = $derived(
+    aloneLongEnough &&
+      nodeCount === 1 &&
+      !addDeviceHintDismissed &&
+      !showOnboardingOverlay,
+  );
+
   // ── Instance status transition toasts ──
   // Track previous statuses so we can detect meaningful transitions and fire toasts.
   let previousInstanceStatuses: Record<string, string> = {};
@@ -5764,6 +5810,57 @@
                   />
                 </svg>
               </button>
+            {/if}
+
+            <!-- Only one device: how to add another (bottom-left corner) -->
+            {#if showAddDeviceHint}
+              <div
+                class="absolute bottom-4 left-4 right-4 sm:right-auto sm:max-w-sm flex items-start gap-2 px-3 py-2.5 rounded border border-white/10 bg-exo-dark-gray/90 backdrop-blur-sm"
+                role="status"
+                transition:fade={{ duration: 200 }}
+              >
+                <svg
+                  class="w-4 h-4 mt-px text-white/40 flex-shrink-0"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  aria-hidden="true"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d={infoIconPath}
+                  />
+                </svg>
+                <p class="flex-1 text-xs leading-relaxed text-white/60">
+                  <span class="text-white/80">Only this device so far.</span>
+                  To add another, install exo on it and start it on the same network
+                  (or connect them with a Thunderbolt cable). Devices connect only
+                  when they run the same version of exo.
+                </p>
+                <button
+                  type="button"
+                  onclick={dismissAddDeviceHint}
+                  class="text-white/40 hover:text-white/70 transition-colors cursor-pointer flex-shrink-0"
+                  title="Dismiss"
+                  aria-label="Dismiss"
+                >
+                  <svg
+                    class="w-4 h-4"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </button>
+              </div>
             {/if}
           </div>
 
