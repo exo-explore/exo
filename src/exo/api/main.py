@@ -5,6 +5,7 @@ import hashlib
 import json
 import random
 import shutil
+import socket
 import time
 from collections.abc import AsyncGenerator, Iterable
 from datetime import datetime, timezone
@@ -15,6 +16,7 @@ from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
 import anyio
+import httpx
 from anyio import BrokenResourceError, ClosedResourceError, to_thread
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -272,6 +274,8 @@ class API:
         node_id: NodeId,
         *,
         port: int,
+        # Already bound to port and listening, see listen_on_api_port
+        listening_socket: socket.socket,
         event_receiver: NodeEventReceiver,
         command_sender: Sender[ForwarderCommand],
         download_command_sender: Sender[ForwarderDownloadCommand],
@@ -288,6 +292,7 @@ class API:
         self.node_id: NodeId = node_id
         self.last_completed_election: int = 0
         self.port = port
+        self._listening_socket = listening_socket
 
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
@@ -1972,8 +1977,8 @@ class API:
                 tg.start_soon(self._pause_on_new_election)
                 tg.start_soon(self._cleanup_expired_images)
                 tg.start_soon(self._resend_lost_finishes)
-                print_startup_banner(self.port)
                 tg.start_soon(self.run_api, shutdown_ev)
+                tg.start_soon(self._print_banner_once_serving)
                 try:
                     await anyio.sleep_forever()
                 finally:
@@ -1994,7 +1999,8 @@ class API:
 
     async def run_api(self, ev: anyio.Event):
         cfg = Config()
-        cfg.bind = [f"0.0.0.0:{self.port}"]
+        # Serve the socket the node bound when it started; hypercorn takes ownership of it
+        cfg.bind = [f"fd://{self._listening_socket.detach()}"]
         # nb: shared.logging needs updating if any of this changes
         cfg.accesslog = None
         cfg.errorlog = "-"
@@ -2020,6 +2026,17 @@ class API:
                     "Graceful server shutdown timed out, some connections forcebly closed"
                 )
                 logger.opt(exception=e).debug("")
+
+    async def _print_banner_once_serving(self) -> None:
+        """Print the startup banner once the API answers requests, so its URL works when shown."""
+        async with httpx.AsyncClient(trust_env=False) as client:
+            while True:
+                try:
+                    await client.get(f"http://127.0.0.1:{self.port}/node_id", timeout=1)
+                    break
+                except httpx.TransportError:
+                    await anyio.sleep(0.05)
+        print_startup_banner(self.port)
 
     async def _apply_state(self):
         with self.event_receiver as events:

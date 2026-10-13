@@ -20,6 +20,7 @@ from pydantic import PositiveInt
 
 import exo.routing.topics as topics
 from exo import __version__
+from exo.api.listening_socket import ApiPortInUseError, listen_on_api_port
 from exo.api.main import API
 from exo.download.coordinator import DownloadCoordinator
 from exo.download.impl_shard_downloader import exo_shard_downloader
@@ -65,6 +66,10 @@ class Node:
 
     @classmethod
     async def create(cls, args: "Args") -> Self:
+        # Take the API's port before starting anything, so a port in use fails fast and clearly
+        api_listening_socket = (
+            listen_on_api_port(args.api_port) if args.spawn_api else None
+        )
         node_id = get_node_zid()
         session_id = SessionId(master_node_id=node_id, election_clock=0)
         router = Router.create(
@@ -105,10 +110,11 @@ class Node:
         else:
             download_coordinator = None
 
-        if args.spawn_api:
+        if api_listening_socket is not None:
             api = API(
                 node_id,
                 port=args.api_port,
+                listening_socket=api_listening_socket,
                 event_receiver=event_router.receiver(),
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
@@ -379,7 +385,12 @@ def main_inner(args: "Args"):
         os.environ["EXO_FAST_SYNCH"] = "false"
         logger.info("FAST_SYNCH forced OFF")
 
-    node = anyio.run(Node.create, args)
+    try:
+        node = anyio.run(Node.create, args)
+    except ApiPortInUseError as error:
+        logger.error(str(error))
+        logger_cleanup()
+        raise SystemExit(1) from None
     try:
         anyio.run(node.run)
     except BaseException as exception:
