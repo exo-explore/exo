@@ -9,7 +9,6 @@ private let hfEndpointKey = "EXOHFEndpoint"
 private let enableImageModelsKey = "EXOEnableImageModels"
 private let offlineModeKey = "EXOOfflineMode"
 private let fastSynchEnabledKey = "EXOFastSynchEnabled"
-private let onboardingCompletedKey = StartupPreferences.onboardingCompletedKey
 private let defaultModelsDirKey = "EXODefaultModelsDir"
 private let additionalModelsDirsKey = "EXOAdditionalModelsDirs"
 private let readOnlyModelsDirsKey = "EXOReadOnlyModelsDirs"
@@ -148,9 +147,6 @@ final class ExoProcessController: ObservableObject {
         }
     }
 
-    /// Fires once when EXO transitions to `.running` for the very first time (fresh install).
-    @Published private(set) var isFirstLaunchReady = false
-
     private var process: Process?
     private var runtimeDirectoryURL: URL?
     private var pendingLaunchTask: Task<Void, Never>?
@@ -231,9 +227,6 @@ final class ExoProcessController: ObservableObject {
             process = child
             markRunningOnceReady(child)
             startLogRotation()
-
-            // Show welcome popout on every launch
-            isFirstLaunchReady = true
         } catch {
             process = nil
             status = .failed(message: "Couldn't start exo: \(error.localizedDescription)")
@@ -347,17 +340,6 @@ final class ExoProcessController: ObservableObject {
     func restart() {
         stop()
         launch()
-    }
-
-    /// Mark onboarding as completed (user interacted with the welcome popout).
-    func markOnboardingCompleted() {
-        UserDefaults.standard.set(true, forKey: onboardingCompletedKey)
-    }
-
-    /// Reset onboarding so the welcome popout appears on next launch.
-    func resetOnboarding() {
-        UserDefaults.standard.removeObject(forKey: onboardingCompletedKey)
-        isFirstLaunchReady = false
     }
 
     func scheduleLaunch(after seconds: TimeInterval) {

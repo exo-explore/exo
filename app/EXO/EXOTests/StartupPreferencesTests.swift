@@ -145,4 +145,116 @@ struct StartupPreferencesTests {
         toggle.wrappedValue = true
         #expect(StartupPreferences(defaults: storage.defaults).openDashboardOnStartup)
     }
+
+    // MARK: - Welcome popout
+
+    @Test func welcomePopoutUntilItHasBeenSeenThenTheDashboardDirectly() {
+        let storage = TemporaryDefaults()
+        let preferences = StartupPreferences(defaults: storage.defaults)
+        #expect(!preferences.onboardingCompleted)
+        #expect(preferences.startupDashboard == .showWelcome)
+
+        preferences.markOnboardingCompleted()
+
+        #expect(preferences.onboardingCompleted)
+        #expect(preferences.startupDashboard == .openDashboard)
+    }
+
+    @Test func upgradeFromAVersionThatShowedThePopoutEveryTimeSkipsIt() {
+        // Earlier versions recorded the popout as seen but never read it.
+        let storage = TemporaryDefaults()
+        storage.defaults.set(true, forKey: StartupPreferences.onboardingCompletedKey)
+
+        #expect(StartupPreferences(defaults: storage.defaults).startupDashboard == .openDashboard)
+    }
+
+    @Test func turningOffOpenDashboardOnStartupOpensNothing() {
+        let storage = TemporaryDefaults()
+        let preferences = StartupPreferences(defaults: storage.defaults)
+        storage.defaults.set(false, forKey: StartupPreferences.openDashboardOnStartupKey)
+        #expect(preferences.startupDashboard == .none)
+
+        preferences.markOnboardingCompleted()
+        #expect(preferences.startupDashboard == .none)
+    }
+
+    @Test func reinstallAfterInAppUninstallShowsTheWelcomeAgain() {
+        let storage = TemporaryDefaults()
+        let preferences = StartupPreferences(defaults: storage.defaults)
+        preferences.markOnboardingCompleted()
+
+        preferences.resetForUninstall()
+
+        #expect(preferences.startupDashboard == .showWelcome)
+    }
+}
+
+/// Records what the opener did instead of showing a popover or a browser.
+@MainActor
+private final class StartupDashboardSpy {
+    var welcomesShown = 0
+    var dashboardsOpened = 0
+    var finishWelcome: (() -> Void)?
+
+    func opener(_ preferences: StartupPreferences) -> StartupDashboardOpener {
+        StartupDashboardOpener(
+            preferences: preferences,
+            showWelcome: { onSeen in
+                self.welcomesShown += 1
+                self.finishWelcome = onSeen
+            },
+            openDashboard: { self.dashboardsOpened += 1 }
+        )
+    }
+}
+
+@MainActor
+struct StartupDashboardOpenerTests {
+
+    @Test func firstLaunchShowsTheWelcomeOnceAndLaterLaunchesOpenTheDashboard() {
+        let storage = TemporaryDefaults()
+        let preferences = StartupPreferences(defaults: storage.defaults)
+        let spy = StartupDashboardSpy()
+
+        // First launch: exo comes up, is switched off and on, and restarted.
+        let firstLaunch = spy.opener(preferences)
+        for _ in 0..<3 {
+            firstLaunch.exoIsUp()
+        }
+        #expect(spy.welcomesShown == 1)
+        #expect(spy.dashboardsOpened == 0)
+        spy.finishWelcome?()  // dismissed, used, or counted down
+
+        // Every later launch (e.g. at login): the dashboard, once, no popout.
+        for _ in 0..<2 {
+            let laterLaunch = spy.opener(preferences)
+            laterLaunch.exoIsUp()
+            laterLaunch.exoIsUp()
+        }
+        #expect(spy.welcomesShown == 1)
+        #expect(spy.dashboardsOpened == 2)
+    }
+
+    @Test func welcomeComesBackIfTheAppQuitBeforeItWasSeen() {
+        let storage = TemporaryDefaults()
+        let preferences = StartupPreferences(defaults: storage.defaults)
+        let spy = StartupDashboardSpy()
+
+        spy.opener(preferences).exoIsUp()
+        spy.opener(preferences).exoIsUp()
+
+        #expect(spy.welcomesShown == 2)
+        #expect(spy.dashboardsOpened == 0)
+    }
+
+    @Test func nothingOpensWhenTheSettingIsOff() {
+        let storage = TemporaryDefaults()
+        storage.defaults.set(false, forKey: StartupPreferences.openDashboardOnStartupKey)
+        let spy = StartupDashboardSpy()
+
+        spy.opener(StartupPreferences(defaults: storage.defaults)).exoIsUp()
+
+        #expect(spy.welcomesShown == 0)
+        #expect(spy.dashboardsOpened == 0)
+    }
 }

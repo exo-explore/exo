@@ -28,12 +28,36 @@ struct StartupPreferences {
         self.defaults = defaults
     }
 
-    /// Whether to show the welcome popout, which opens the web dashboard in
-    /// the browser, when exo starts. Settings writes this key directly via
+    /// Whether to open the web dashboard in the browser when exo first comes
+    /// up after the app starts. Settings writes this key directly via
     /// `@AppStorage`.
     var openDashboardOnStartup: Bool {
         defaults.object(forKey: Self.openDashboardOnStartupKey) as? Bool
             ?? Self.openDashboardOnStartupDefault
+    }
+
+    /// Whether the welcome popout has been seen (dismissed, used, or left to
+    /// open the dashboard by itself).
+    var onboardingCompleted: Bool {
+        defaults.bool(forKey: Self.onboardingCompletedKey)
+    }
+
+    func markOnboardingCompleted() {
+        defaults.set(true, forKey: Self.onboardingCompletedKey)
+    }
+
+    enum StartupDashboard: Equatable {
+        case none
+        /// The welcome popout, which opens the dashboard.
+        case showWelcome
+        case openDashboard
+    }
+
+    /// How the dashboard is opened when exo first comes up after the app
+    /// starts: the welcome popout until it has been seen once, then directly.
+    var startupDashboard: StartupDashboard {
+        guard openDashboardOnStartup else { return .none }
+        return onboardingCompleted ? .openDashboard : .showWelcome
     }
 
     /// Decides, as the app starts, whether to register it as a login item now.
