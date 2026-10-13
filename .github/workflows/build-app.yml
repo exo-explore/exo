@@ -169,7 +169,7 @@ jobs:
       - name: Setup Python
         run: |
           uv python install
-          uv sync --locked
+          uv sync --locked --extra mlx
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
