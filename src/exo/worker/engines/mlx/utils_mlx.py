@@ -88,6 +88,19 @@ class HostList(RootModel[list[str]]):
         return cls(root=[str(host) for host in hosts])
 
 
+# Wiring the weights (mx.set_wired_limit) makes decoding on JACCL (RDMA)
+# tensor-parallel instances slow down steadily over a long generation: on 4x
+# M5 Pro, DeepSeek-V4-Flash fell from 42 to 10 tok/s within 2,000 tokens, with
+# multi-second stalls inside collectives. Unwired it stays at ~41 tok/s. A
+# single device does not slow down, so only JACCL instances leave memory
+# unwired.
+_wire_memory = True
+
+
+def wire_memory_enabled() -> bool:
+    return _wire_memory
+
+
 def mlx_distributed_init(
     bound_instance: BoundInstance,
 ) -> mx.distributed.Group:
@@ -142,6 +155,8 @@ def mlx_distributed_init(
                 os.environ["MLX_RANK"] = str(rank)
                 os.environ["MLX_JACCL_COORDINATOR"] = jaccl_coordinator
                 group = mx.distributed.init(backend="jaccl", strict=True)
+                global _wire_memory
+                _wire_memory = False
 
         logger.info(f"Rank {rank} mlx distributed initialization complete")
 
@@ -803,6 +818,9 @@ def set_wired_limit_for_model(model_size: Memory):
     to exiting the context manager.
     """
     if not mx.metal.is_available():
+        return
+    if not _wire_memory:
+        logger.info("Leaving memory unwired (JACCL instance).")
         return
 
     max_rec_size = Memory.from_bytes(

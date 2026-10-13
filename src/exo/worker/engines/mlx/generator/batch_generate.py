@@ -49,6 +49,7 @@ from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.engines.mlx.utils_mlx import (
     fix_unmatched_think_end_tokens,
     system_prompt_token_count,
+    wire_memory_enabled,
 )
 from exo.worker.engines.mlx.vision import (
     MediaRegion,
@@ -107,6 +108,9 @@ class ExoBatchGenerator:
             stop_tokens=[[t] for t in eos_ids_from_tokenizer(self.tokenizer)],
             prefill_step_size=4096,
         )
+        if not wire_memory_enabled():
+            # mlx_lm's BatchGenerator wires memory when it is created.
+            mx.set_wired_limit(0)
         self._step_count = 0
         # Cancelled sequences left to finish at their next step
         self._finishing: set[int] = set()
