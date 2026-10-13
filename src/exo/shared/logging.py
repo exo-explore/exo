@@ -2,7 +2,7 @@ import logging
 import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, TextIO
+from typing import TYPE_CHECKING, Literal, TextIO
 
 import zstandard
 from hypercorn import Config
@@ -62,6 +62,19 @@ class _InterceptHandler(logging.Handler):
         logger.opt(depth=3, exception=record.exc_info).log(level, record.getMessage())
 
 
+type ConsoleLogLevel = Literal["WARNING", "INFO", "DEBUG"]
+
+
+def console_log_level(verbosity: int) -> ConsoleLogLevel:
+    """The lowest level shown on the console: -q (verbosity -1) shows warnings and errors only,
+    the default shows info, and -v or more shows debug."""
+    if verbosity < 0:
+        return "WARNING"
+    if verbosity == 0:
+        return "INFO"
+    return "DEBUG"
+
+
 def logger_setup(log_file: Path | None, verbosity: int = 0):
     """Set up logging for this process - formatting, file handles, verbosity and output"""
 
@@ -75,11 +88,11 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
     # replace all stdlib loggers with _InterceptHandlers that log to loguru
     logging.basicConfig(handlers=[_InterceptHandler()], level=0)
 
-    if verbosity == 0:
+    if verbosity <= 0:
         logger.add(
             sys.__stderr__,  # type: ignore
             format="[ {time:hh:mm:ss.SSSSA} | <level>{level: <8}</level>] <level>{message}</level>",
-            level="INFO",
+            level=console_log_level(verbosity),
             colorize=True,
             enqueue=True,
         )
@@ -87,7 +100,7 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
         logger.add(
             sys.__stderr__,  # type: ignore
             format="[ {time:YYYY-MM-DD HH:mm:ss.SSS} | <level>{level: <8}</level> | {name}:{function}:{line} ] <level>{message}</level>",
-            level="DEBUG",
+            level=console_log_level(verbosity),
             colorize=True,
             enqueue=True,
         )
