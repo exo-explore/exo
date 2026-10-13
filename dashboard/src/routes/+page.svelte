@@ -2092,12 +2092,14 @@
       case "FAILED":
         return "text-red-400";
       case "SHUTDOWN":
+      case "SHUTTING DOWN":
         return "text-gray-400";
       case "DOWNLOADING":
         return "text-blue-400";
       case "LOADING":
       case "WARMING UP":
-      case "WAITING":
+      case "CONNECTING":
+      case "CONNECTED":
       case "INITIALIZING":
         return "text-yellow-400";
       case "RUNNING":
@@ -2171,15 +2173,17 @@
         const r = runnersData[rid];
         if (!r) return null;
         const [kind] = getTagged(r);
+        // Every RunnerStatus the backend sends (shared/types/worker/runners.py)
         const statusMap: Record<string, string> = {
-          RunnerWaitingForInitialization: "WaitingForInitialization",
-          RunnerInitializingBackend: "InitializingBackend",
-          RunnerWaitingForModel: "WaitingForModel",
+          RunnerIdle: "Idle",
+          RunnerConnecting: "Connecting",
+          RunnerConnected: "Connected",
           RunnerLoading: "Loading",
           RunnerLoaded: "Loaded",
           RunnerWarmingUp: "WarmingUp",
           RunnerReady: "Ready",
           RunnerRunning: "Running",
+          RunnerShuttingDown: "ShuttingDown",
           RunnerShutdown: "Shutdown",
           RunnerFailed: "Failed",
         };
@@ -2199,6 +2203,8 @@
       };
     if (has("Shutdown"))
       return { statusText: "SHUTDOWN", statusClass: "inactive" };
+    if (has("ShuttingDown"))
+      return { statusText: "SHUTTING DOWN", statusClass: "inactive" };
     if (has("Loading")) {
       // Tensor parallel: each runner loads all layers — use max/min (bottleneck)
       // Pipeline parallel: each runner loads a disjoint slice — use sum
@@ -2238,11 +2244,14 @@
       return { statusText: "RUNNING", statusClass: "running" };
     if (has("Ready")) return { statusText: "READY", statusClass: "loaded" };
     if (has("Loaded")) return { statusText: "LOADED", statusClass: "loaded" };
-    if (has("WaitingForModel"))
-      return { statusText: "WAITING", statusClass: "starting" };
-    if (has("InitializingBackend"))
-      return { statusText: "INITIALIZING", statusClass: "starting" };
-    if (has("WaitingForInitialization"))
+    // Runners of a multi-device instance connect to each other before loading;
+    // the group is connecting until every runner has connected
+    if (has("Connecting"))
+      return { statusText: "CONNECTING", statusClass: "starting" };
+    if (has("Connected"))
+      return { statusText: "CONNECTED", statusClass: "starting" };
+    // Started, not yet connecting or loading (e.g. waiting for a download)
+    if (has("Idle"))
       return { statusText: "INITIALIZING", statusClass: "starting" };
 
     return { statusText: "RUNNING", statusClass: "active" };
@@ -3054,7 +3063,8 @@
       }
       if (
         status.statusText === "WARMING UP" ||
-        status.statusText === "WAITING" ||
+        status.statusText === "CONNECTED" ||
+        status.statusText === "CONNECTING" ||
         status.statusText === "INITIALIZING" ||
         status.statusText === "PREPARING"
       ) {
@@ -5844,8 +5854,7 @@
                   {@const isDownloading = downloadInfo.isDownloading}
                   {@const isFailed = statusText === "FAILED"}
                   {@const isLoading = statusText === "LOADING"}
-                  {@const isWarmingUp =
-                    statusText === "WARMING UP" || statusText === "WAITING"}
+                  {@const isWarmingUp = statusText === "WARMING UP"}
                   {@const isReady =
                     statusText === "READY" || statusText === "LOADED"}
                   {@const isRunning = statusText === "RUNNING"}
@@ -7074,8 +7083,7 @@
                     {@const isDownloading = downloadInfo.isDownloading}
                     {@const isFailed = statusText === "FAILED"}
                     {@const isLoading = statusText === "LOADING"}
-                    {@const isWarmingUp =
-                      statusText === "WARMING UP" || statusText === "WAITING"}
+                    {@const isWarmingUp = statusText === "WARMING UP"}
                     {@const isReady =
                       statusText === "READY" || statusText === "LOADED"}
                     {@const isRunning = statusText === "RUNNING"}
