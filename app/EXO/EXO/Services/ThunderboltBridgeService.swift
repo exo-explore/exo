@@ -90,7 +90,7 @@ final class ThunderboltBridgeService: ObservableObject {
         alert.addButton(withTitle: "Disable Bridge")
         alert.addButton(withTitle: "Not Now")
 
-        let response = alert.runModal()
+        let response = alert.runModalInFront()
 
         if response == .alertFirstButtonReturn {
             Task {
@@ -218,7 +218,7 @@ final class ThunderboltBridgeService: ObservableObject {
         alert.informativeText = message
         alert.alertStyle = .critical
         alert.addButton(withTitle: "OK")
-        alert.runModal()
+        alert.runModalInFront()
     }
 }
 

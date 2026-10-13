@@ -106,9 +106,11 @@ struct SettingsView: View {
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 260)
                 }
-                Text("Defaults to huggingface.co. Use a mirror (e.g. hf-mirror.com) for China.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                Text(
+                    "Defaults to huggingface.co. Use a mirror (e.g. https://hf-mirror.com) for China."
+                )
+                .font(.caption)
+                .foregroundColor(.secondary)
             }
 
             Section {
@@ -588,6 +590,17 @@ struct SettingsView: View {
     // MARK: - Actions
 
     private func showUninstallConfirmationAlert() {
+        let (alert, keepModels) = Self.makeUninstallAlert()
+        let response = alert.runModalInFront()
+        if response == .alertFirstButtonReturn {
+            performUninstall(keepModels: keepModels.state == .on)
+        }
+    }
+
+    /// The Uninstall confirmation. "Keep downloaded models" starts ticked:
+    /// models can take hundreds of gigabytes to download again, so deleting
+    /// them has to be chosen.
+    static func makeUninstallAlert() -> (alert: NSAlert, keepModels: NSButton) {
         let alert = NSAlert()
         alert.messageText = "Uninstall EXO"
         alert.informativeText = """
@@ -605,7 +618,7 @@ struct SettingsView: View {
         let checkbox = NSButton(
             checkboxWithTitle: "Keep downloaded models (~/.exo/models)",
             target: nil, action: nil)
-        checkbox.state = .off
+        checkbox.state = .on
         checkbox.sizeToFit()
         alert.accessoryView = checkbox
 
@@ -615,11 +628,7 @@ struct SettingsView: View {
         if let uninstallButton = alert.buttons.first {
             uninstallButton.hasDestructiveAction = true
         }
-
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            performUninstall(keepModels: checkbox.state == .on)
-        }
+        return (alert, checkbox)
     }
 
     private func performUninstall(keepModels: Bool) {
@@ -650,7 +659,7 @@ struct SettingsView: View {
                     errorAlert.informativeText = error.localizedDescription
                     errorAlert.alertStyle = .critical
                     errorAlert.addButton(withTitle: "OK")
-                    errorAlert.runModal()
+                    errorAlert.runModalInFront()
                     self.uninstallInProgress = false
                 }
             }
@@ -725,7 +734,10 @@ struct SettingsView: View {
     private func applyGeneralSettings() {
         controller.customNamespace = pendingNamespace
         controller.hfToken = pendingHFToken
-        controller.hfEndpoint = pendingHFEndpoint
+        // "hf-mirror.com" is saved as "https://hf-mirror.com", and the field
+        // shows what is saved.
+        controller.hfEndpoint = HuggingFaceEndpoint.normalized(pendingHFEndpoint)
+        pendingHFEndpoint = controller.hfEndpoint
         controller.offlineMode = pendingOfflineMode
         restartIfRunning()
     }
