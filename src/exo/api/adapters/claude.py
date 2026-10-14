@@ -128,6 +128,14 @@ async def claude_request_to_text_generation(
     input_messages: list[InputMessage] = []
     for msg in request.messages:
         if isinstance(msg.content, str):
+            # System messages in the messages array are appended to instructions
+            if msg.role == "system":
+                content = _strip_volatile_headers(msg.content)
+                instructions = f"{instructions}\n{content}" if instructions else content
+                chat_template_messages.append(
+                    {"role": "system", "content": InputMessageContent(content)}
+                )
+                continue
             input_messages.append(
                 InputMessage(role=msg.role, content=InputMessageContent(msg.content))
             )
@@ -176,6 +184,15 @@ async def claude_request_to_text_generation(
 
         content = "".join(text_parts)
         reasoning_content = "".join(thinking_parts) if thinking_parts else None
+
+        # Handle system messages with structured content in the messages array
+        if msg.role == "system":
+            stripped = _strip_volatile_headers(content)
+            instructions = f"{instructions}\n{stripped}" if instructions else stripped
+            chat_template_messages.append(
+                {"role": "system", "content": InputMessageContent(stripped)}
+            )
+            continue
 
         # Build InputMessage from text content
         if msg.role in ("user", "assistant"):
