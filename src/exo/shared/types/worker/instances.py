@@ -31,7 +31,10 @@ class MlxRingInstance(BaseInstance):
 
 
 class MlxJacclInstance(BaseInstance):
-    jaccl_devices: list[list[str | None]]
+    # jaccl_devices[i][j] lists the RDMA interface names on rank i that
+    # connect to rank j, one entry per physical link. Entry k of [i][j] and
+    # entry k of [j][i] are the two ends of the same link.
+    jaccl_devices: list[list[list[str]]]
     jaccl_coordinators: dict[NodeId, str]
 
 
