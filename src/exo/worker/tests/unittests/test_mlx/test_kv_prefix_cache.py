@@ -20,6 +20,7 @@ from exo.worker.engines.mlx.cache import (
 from exo.worker.engines.mlx.generator.generate import mlx_generate, prefill
 from exo.worker.engines.mlx.types import Model
 from exo.worker.engines.mlx.utils_mlx import apply_chat_template
+from exo.worker.engines.mlx.vision import MediaRegion
 from exo.worker.tests.unittests.test_mlx.conftest import (
     DEFAULT_GPT_OSS_CONFIG,
     DEFAULT_GPT_OSS_MODEL_ID,
@@ -75,6 +76,158 @@ class TestGetPrefixLength:
         a = mx.array([]).astype(mx.int32)
         b = mx.array([]).astype(mx.int32)
         assert get_prefix_length(a, b) == 0
+
+
+class TestValidateMediaMatch:
+    validate = staticmethod(KVPrefixCache._validate_media_match)
+
+    def test_matching_region_preserves_prefix(self):
+        cached = [MediaRegion(content_hash="hash-a", start_pos=10, end_pos=20)]
+        query = [MediaRegion(content_hash="hash-a", start_pos=10, end_pos=20)]
+
+        assert self.validate(30, cached, query) == 30
+
+    def test_different_media_truncates_at_region_start(self):
+        cached = [MediaRegion(content_hash="hash-a", start_pos=10, end_pos=20)]
+        query = [MediaRegion(content_hash="hash-b", start_pos=10, end_pos=20)]
+
+        assert self.validate(30, cached, query) == 10
+
+    def test_missing_query_region_fails_closed(self):
+        cached = [MediaRegion(content_hash="hash-a", start_pos=10, end_pos=20)]
+
+        assert self.validate(30, cached, []) == 10
+
+    def test_missing_cached_metadata_fails_closed(self):
+        query = [MediaRegion(content_hash="hash-a", start_pos=10, end_pos=20)]
+
+        assert self.validate(30, [], query) == 10
+
+    def test_shifted_query_region_fails_closed(self):
+        cached = [MediaRegion(content_hash="hash-a", start_pos=10, end_pos=20)]
+        query = [MediaRegion(content_hash="hash-a", start_pos=11, end_pos=21)]
+
+        assert self.validate(30, cached, query) == 10
+
+    def test_different_region_span_fails_closed(self):
+        cached = [MediaRegion(content_hash="hash-a", start_pos=10, end_pos=20)]
+        query = [MediaRegion(content_hash="hash-a", start_pos=10, end_pos=21)]
+
+        assert self.validate(30, cached, query) == 10
+
+    def test_empty_hash_fails_closed(self):
+        cached = [MediaRegion(content_hash="", start_pos=10, end_pos=20)]
+        query = [MediaRegion(content_hash="", start_pos=10, end_pos=20)]
+
+        assert self.validate(30, cached, query) == 10
+
+    def test_regions_after_prefix_do_not_truncate(self):
+        cached = [MediaRegion(content_hash="hash-a", start_pos=20, end_pos=30)]
+        query = [MediaRegion(content_hash="hash-b", start_pos=20, end_pos=30)]
+
+        assert self.validate(10, cached, query) == 10
+
+    def test_earliest_unvalidated_region_wins(self):
+        cached = [
+            MediaRegion(content_hash="hash-a", start_pos=10, end_pos=20),
+            MediaRegion(content_hash="hash-b", start_pos=30, end_pos=40),
+        ]
+        query = [
+            MediaRegion(content_hash="hash-a", start_pos=10, end_pos=20),
+            MediaRegion(content_hash="hash-c", start_pos=30, end_pos=40),
+        ]
+
+        assert self.validate(50, cached, query) == 30
+
+    def test_query_region_before_cached_region_truncates_at_query_start(self):
+        cached = [MediaRegion(content_hash="hash-a", start_pos=15, end_pos=25)]
+        query = [MediaRegion(content_hash="hash-a", start_pos=10, end_pos=20)]
+
+        assert self.validate(30, cached, query) == 10
+
+    def test_region_at_exact_prefix_boundary_does_not_truncate(self):
+        cached = [MediaRegion(content_hash="hash-a", start_pos=10, end_pos=20)]
+        query = [MediaRegion(content_hash="hash-b", start_pos=10, end_pos=20)]
+
+        assert self.validate(10, cached, query) == 10
+
+    def test_matching_region_straddling_prefix_preserves_prefix(self):
+        cached = [MediaRegion(content_hash="hash-a", start_pos=10, end_pos=50)]
+        query = [MediaRegion(content_hash="hash-a", start_pos=10, end_pos=50)]
+
+        assert self.validate(30, cached, query) == 30
+
+    def test_duplicate_region_start_fails_closed(self):
+        cached = [
+            MediaRegion(content_hash="hash-a", start_pos=10, end_pos=20),
+            MediaRegion(content_hash="hash-b", start_pos=10, end_pos=20),
+        ]
+        query = [MediaRegion(content_hash="hash-a", start_pos=10, end_pos=20)]
+
+        assert self.validate(30, cached, query) == 10
+
+    def test_no_regions_is_text_only_and_preserves_prefix(self):
+        assert self.validate(30, [], []) == 30
+
+    def test_lookup_truncates_token_identical_prompt_for_different_media(self):
+        tokens = mx.arange(30)
+        layer_cache = KVCache()
+        layer_cache.update_and_fetch(
+            mx.zeros((1, 1, 30, 1)), mx.zeros((1, 1, 30, 1))
+        )
+        cached_region = MediaRegion(
+            content_hash="hash-a", start_pos=10, end_pos=20
+        )
+        query_region = MediaRegion(
+            content_hash="hash-b", start_pos=10, end_pos=20
+        )
+        prefix_cache = KVPrefixCache(None)
+        prefix_cache.add_kv_cache(
+            tokens,
+            [layer_cache],
+            media_regions=[cached_region],
+        )
+
+        restored, remaining, matched_index, is_exact = prefix_cache.get_kv_cache(
+            cast(Model, object()),
+            tokens,
+            media_regions=[query_region],
+        )
+
+        assert matched_index == 0
+        assert not is_exact
+        assert cache_length(restored) == 10
+        assert mx.array_equal(remaining, tokens[10:])
+
+    def test_update_replaces_media_metadata_after_truncated_match(self):
+        tokens = mx.arange(30)
+        layer_cache = KVCache()
+        layer_cache.update_and_fetch(
+            mx.zeros((1, 1, 30, 1)), mx.zeros((1, 1, 30, 1))
+        )
+        cached_region = MediaRegion(
+            content_hash="hash-a", start_pos=10, end_pos=20
+        )
+        query_region = MediaRegion(
+            content_hash="hash-b", start_pos=10, end_pos=20
+        )
+        prefix_cache = KVPrefixCache(None)
+        prefix_cache.add_kv_cache(
+            tokens,
+            [layer_cache],
+            media_regions=[cached_region],
+        )
+
+        prefix_cache.update_kv_cache(
+            0,
+            tokens,
+            [layer_cache],
+            snapshots=None,
+            restore_pos=10,
+            media_regions=[query_region],
+        )
+
+        assert prefix_cache._media_regions[0] == [query_region]
 
 
 class TestKVPrefix:
