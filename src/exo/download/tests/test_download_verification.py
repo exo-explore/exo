@@ -3,6 +3,7 @@
 import time
 from datetime import timedelta
 from pathlib import Path
+from types import TracebackType
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiofiles
@@ -22,6 +23,53 @@ from exo.shared.types.worker.downloads import FileListEntry, RepoFileDownloadPro
 @pytest.fixture
 def model_id() -> ModelId:
     return ModelId("test-org/test-model")
+
+
+class _FakeResponseContent:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = [*chunks, b""]
+
+    async def read(self, _size: int) -> bytes:
+        return self._chunks.pop(0)
+
+
+class _FakeResponse:
+    def __init__(self, status: int, chunks: list[bytes]) -> None:
+        self.status = status
+        self.headers: dict[str, str] = {}
+        self.content = _FakeResponseContent(chunks)
+
+    async def __aenter__(self) -> "_FakeResponse":
+        return self
+
+    async def __aexit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc: BaseException | None,
+        _traceback: TracebackType | None,
+    ) -> None:
+        return None
+
+
+class _FakeSession:
+    def __init__(self, responses: list[_FakeResponse]) -> None:
+        self._responses = responses
+        self.requests: list[tuple[str, dict[str, str]]] = []
+
+    async def __aenter__(self) -> "_FakeSession":
+        return self
+
+    async def __aexit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc: BaseException | None,
+        _traceback: TracebackType | None,
+    ) -> None:
+        return None
+
+    def get(self, url: str, headers: dict[str, str]) -> _FakeResponse:
+        self.requests.append((url, headers.copy()))
+        return self._responses.pop(0)
 
 
 class TestFileVerification:
@@ -161,6 +209,284 @@ class TestFileVerification:
             # Should return local file without attempting download
             assert result == local_file
             mock_session_factory.assert_not_called()
+
+
+class TestPartialDownloadRecovery:
+    async def test_oversized_partial_restarts_without_range(
+        self, model_id: ModelId, tmp_path: Path
+    ) -> None:
+        from exo.download.download_utils import (
+            _download_file,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        target_dir = tmp_path / "downloads"
+        await aios.makedirs(target_dir, exist_ok=True)
+        partial = target_dir / "model.bin.partial"
+        async with aiofiles.open(partial, "wb") as f:
+            await f.write(b"stale-oversized")
+
+        session = _FakeSession([_FakeResponse(200, [b"fresh"])])
+        progress: list[tuple[int, int, bool]] = []
+        with (
+            patch(
+                "exo.download.download_utils.file_meta",
+                new_callable=AsyncMock,
+                return_value=(5, "expected"),
+            ),
+            patch(
+                "exo.download.download_utils.create_http_session",
+                return_value=session,
+            ),
+            patch(
+                "exo.download.download_utils.calc_hash",
+                new_callable=AsyncMock,
+                return_value="expected",
+            ),
+        ):
+            result = await _download_file(
+                model_id,
+                "main",
+                "model.bin",
+                target_dir,
+                on_progress=lambda current, total, done: progress.append(
+                    (current, total, done)
+                ),
+            )
+
+        request_headers = session.requests[0][1]
+        assert "Range" not in request_headers
+        assert progress[0] == (0, 5, False)
+        assert await aios.path.exists(result)
+        async with aiofiles.open(result, "rb") as f:
+            assert await f.read() == b"fresh"
+
+    async def test_http_416_on_resume_retries_once_without_range(
+        self, model_id: ModelId, tmp_path: Path
+    ) -> None:
+        from exo.download.download_utils import (
+            _download_file,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        target_dir = tmp_path / "downloads"
+        await aios.makedirs(target_dir, exist_ok=True)
+        partial = target_dir / "model.bin.partial"
+        async with aiofiles.open(partial, "wb") as f:
+            await f.write(b"old")
+
+        session = _FakeSession(
+            [_FakeResponse(416, []), _FakeResponse(200, [b"newdata"])]
+        )
+        progress: list[tuple[int, int, bool]] = []
+        with (
+            patch(
+                "exo.download.download_utils.file_meta",
+                new_callable=AsyncMock,
+                return_value=(7, "expected"),
+            ),
+            patch(
+                "exo.download.download_utils.create_http_session",
+                return_value=session,
+            ),
+            patch(
+                "exo.download.download_utils.calc_hash",
+                new_callable=AsyncMock,
+                return_value="expected",
+            ),
+        ):
+            result = await _download_file(
+                model_id,
+                "main",
+                "model.bin",
+                target_dir,
+                on_progress=lambda current, total, done: progress.append(
+                    (current, total, done)
+                ),
+            )
+
+        assert len(session.requests) == 2
+        first_headers = session.requests[0][1]
+        second_headers = session.requests[1][1]
+        assert first_headers["Range"] == "bytes=3-"
+        assert "Range" not in second_headers
+        assert progress[0] == (0, 7, False)
+        async with aiofiles.open(result, "rb") as f:
+            assert await f.read() == b"newdata"
+
+    async def test_valid_partial_still_appends_206_response(
+        self, model_id: ModelId, tmp_path: Path
+    ) -> None:
+        from exo.download.download_utils import (
+            _download_file,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        target_dir = tmp_path / "downloads"
+        await aios.makedirs(target_dir, exist_ok=True)
+        partial = target_dir / "model.bin.partial"
+        async with aiofiles.open(partial, "wb") as f:
+            await f.write(b"old")
+
+        session = _FakeSession([_FakeResponse(206, [b"data"])])
+        with (
+            patch(
+                "exo.download.download_utils.file_meta",
+                new_callable=AsyncMock,
+                return_value=(7, "expected"),
+            ),
+            patch(
+                "exo.download.download_utils.create_http_session",
+                return_value=session,
+            ),
+            patch(
+                "exo.download.download_utils.calc_hash",
+                new_callable=AsyncMock,
+                return_value="expected",
+            ),
+        ):
+            result = await _download_file(model_id, "main", "model.bin", target_dir)
+
+        assert session.requests[0][1]["Range"] == "bytes=3-"
+        async with aiofiles.open(result, "rb") as f:
+            assert await f.read() == b"olddata"
+
+    async def test_server_ignoring_range_replaces_partial_with_full_response(
+        self, model_id: ModelId, tmp_path: Path
+    ) -> None:
+        from exo.download.download_utils import (
+            _download_file,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        target_dir = tmp_path / "downloads"
+        await aios.makedirs(target_dir, exist_ok=True)
+        partial = target_dir / "model.bin.partial"
+        async with aiofiles.open(partial, "wb") as f:
+            await f.write(b"old")
+
+        session = _FakeSession([_FakeResponse(200, [b"newdata"])])
+        progress: list[tuple[int, int, bool]] = []
+        with (
+            patch(
+                "exo.download.download_utils.file_meta",
+                new_callable=AsyncMock,
+                return_value=(7, "expected"),
+            ),
+            patch(
+                "exo.download.download_utils.create_http_session",
+                return_value=session,
+            ),
+            patch(
+                "exo.download.download_utils.calc_hash",
+                new_callable=AsyncMock,
+                return_value="expected",
+            ),
+        ):
+            result = await _download_file(
+                model_id,
+                "main",
+                "model.bin",
+                target_dir,
+                on_progress=lambda current, total, done: progress.append(
+                    (current, total, done)
+                ),
+            )
+
+        assert session.requests[0][1]["Range"] == "bytes=3-"
+        assert progress[0] == (0, 7, False)
+        async with aiofiles.open(result, "rb") as f:
+            assert await f.read() == b"newdata"
+
+    async def test_http_416_without_range_is_not_retried_internally(
+        self, model_id: ModelId, tmp_path: Path
+    ) -> None:
+        from exo.download.download_utils import (
+            _download_file,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        target_dir = tmp_path / "downloads"
+        session = _FakeSession([_FakeResponse(416, [])])
+        with (
+            patch(
+                "exo.download.download_utils.file_meta",
+                new_callable=AsyncMock,
+                return_value=(7, "expected"),
+            ),
+            patch(
+                "exo.download.download_utils.create_http_session",
+                return_value=session,
+            ),
+            pytest.raises(AssertionError, match="416"),
+        ):
+            await _download_file(model_id, "main", "model.bin", target_dir)
+
+        assert len(session.requests) == 1
+
+    async def test_second_http_416_stops_clean_retry_loop(
+        self, model_id: ModelId, tmp_path: Path
+    ) -> None:
+        from exo.download.download_utils import (
+            _download_file,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        target_dir = tmp_path / "downloads"
+        await aios.makedirs(target_dir, exist_ok=True)
+        partial = target_dir / "model.bin.partial"
+        async with aiofiles.open(partial, "wb") as f:
+            await f.write(b"old")
+
+        session = _FakeSession([_FakeResponse(416, []), _FakeResponse(416, [])])
+        with (
+            patch(
+                "exo.download.download_utils.file_meta",
+                new_callable=AsyncMock,
+                return_value=(7, "expected"),
+            ),
+            patch(
+                "exo.download.download_utils.create_http_session",
+                return_value=session,
+            ),
+            pytest.raises(AssertionError, match="416"),
+        ):
+            await _download_file(model_id, "main", "model.bin", target_dir)
+
+        assert len(session.requests) == 2
+        assert session.requests[0][1]["Range"] == "bytes=3-"
+        assert "Range" not in session.requests[1][1]
+
+    async def test_hash_mismatch_after_clean_416_retry_removes_partial(
+        self, model_id: ModelId, tmp_path: Path
+    ) -> None:
+        from exo.download.download_utils import (
+            _download_file,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        target_dir = tmp_path / "downloads"
+        await aios.makedirs(target_dir, exist_ok=True)
+        partial = target_dir / "model.bin.partial"
+        async with aiofiles.open(partial, "wb") as f:
+            await f.write(b"old")
+
+        session = _FakeSession(
+            [_FakeResponse(416, []), _FakeResponse(200, [b"newdata"])]
+        )
+        with (
+            patch(
+                "exo.download.download_utils.file_meta",
+                new_callable=AsyncMock,
+                return_value=(7, "expected"),
+            ),
+            patch(
+                "exo.download.download_utils.create_http_session",
+                return_value=session,
+            ),
+            patch(
+                "exo.download.download_utils.calc_hash",
+                new_callable=AsyncMock,
+                return_value="wrong",
+            ),
+            pytest.raises(Exception, match="remote hash is expected"),
+        ):
+            await _download_file(model_id, "main", "model.bin", target_dir)
+
+        assert not await aios.path.exists(partial)
 
 
 class TestFileListCache:
