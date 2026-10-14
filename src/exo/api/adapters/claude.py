@@ -5,7 +5,10 @@ import re
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from exo.api.adapters.chat_completions import fetch_image_url
+from exo.api.adapters.chat_completions import (
+    ImageUrlRejectedError,
+    fetch_image_url,
+)
 from exo.api.types import FinishReason, Usage
 from exo.api.types.claude_api import (
     ClaudeContentBlock,
@@ -97,6 +100,8 @@ async def handle_image_block(block: ClaudeImageBlock) -> Base64Image | None:
     elif block.source.type == "url" and block.source.url:
         try:
             return await fetch_image_url(block.source.url)
+        except ImageUrlRejectedError:
+            raise  # the API answers with 400 rather than dropping the image
         except Exception:
             logger.opt(exception=True).warning(
                 f"Failed to fetch image at {block.source.url}"

@@ -16,6 +16,7 @@ import aiofiles
 import aiofiles.os as aios
 import aiohttp
 import certifi
+from aiohttp.abc import AbstractResolver
 from huggingface_hub import (
     snapshot_download,  # pyright: ignore[reportUnknownVariableType]
 )
@@ -540,6 +541,9 @@ async def get_download_headers() -> dict[str, str]:
 def create_http_session(
     auto_decompress: bool = False,
     timeout_profile: Literal["short", "long"] = "long",
+    *,
+    resolver: AbstractResolver | None = None,
+    use_env_proxy: bool = True,
 ) -> aiohttp.ClientSession:
     if timeout_profile == "short":
         total_timeout = 30
@@ -555,12 +559,16 @@ def create_http_session(
     ssl_context = ssl.create_default_context(
         cafile=os.getenv("SSL_CERT_FILE") or certifi.where()
     )
-    connector = aiohttp.TCPConnector(ssl=ssl_context)
+    connector = aiohttp.TCPConnector(ssl=ssl_context, resolver=resolver)
 
     return aiohttp.ClientSession(
         auto_decompress=auto_decompress,
         connector=connector,
-        proxy=os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY") or None,
+        # Untrusted image URLs must connect to locally validated addresses.
+        # A forward proxy could resolve the original hostname independently.
+        proxy=(os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY") or None)
+        if use_env_proxy
+        else None,
         timeout=aiohttp.ClientTimeout(
             total=total_timeout,
             connect=connect_timeout,

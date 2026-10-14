@@ -34,6 +34,7 @@ from hypercorn.utils import LifespanTimeoutError, ShutdownError
 from loguru import logger
 
 from exo.api.adapters.chat_completions import (
+    ImageUrlRejectedError,
     chat_request_to_text_generation,
     collect_chat_response,
     generate_chat_stream,
@@ -364,6 +365,9 @@ class API:
 
     def _setup_exception_handlers(self) -> None:
         self.app.exception_handler(HTTPException)(self.http_exception_handler)
+        self.app.exception_handler(ImageUrlRejectedError)(
+            self.image_url_rejected_handler
+        )
 
     async def http_exception_handler(
         self, _: Request, exc: HTTPException
@@ -376,6 +380,13 @@ class API:
             )
         )
         return JSONResponse(err.model_dump(), status_code=exc.status_code)
+
+    async def image_url_rejected_handler(
+        self, request: Request, exc: ImageUrlRejectedError
+    ) -> JSONResponse:
+        return await self.http_exception_handler(
+            request, HTTPException(status_code=400, detail=str(exc))
+        )
 
     def _setup_cors(self) -> None:
         self.app.add_middleware(
