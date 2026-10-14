@@ -18,6 +18,10 @@ uv run exo
 # Run with verbose logging
 uv run exo -v   # or -vv for more verbose
 
+# Install the workspace packages too - tests/conftest.py imports exo_tools
+# from the `tools` workspace member, which a plain `uv sync` does not install
+uv sync --all-packages --extra mlx
+
 # Run tests (excludes slow tests by default)
 uv run pytest
 

@@ -164,6 +164,18 @@ For detailed API documentation, see [docs/api.md](docs/api.md).
 
 ## Testing
 
+To run the test suite, install the workspace packages as well as the project
+itself - `tests/conftest.py` imports `exo_tools`, which lives in the `tools`
+workspace member and is not installed by a plain `uv sync`:
+
+```bash
+uv sync --all-packages --extra mlx   # or --extra mlx-cpu on Linux
+uv run pytest
+```
+
+Without `--all-packages`, `uv run pytest` fails at collection with
+`ModuleNotFoundError: No module named 'exo_tools'`.
+
 EXO relies heavily on manual testing at this point in the project, but this is evolving. Before submitting a change, test both before and after to demonstrate how your change improves behavior. Do the best you can with the hardware you have available - if you need help testing, ask and we'll do our best to assist. Add automated tests where possible - we're actively working to substantially improve our automated testing story.
 
 ## Submitting Changes
