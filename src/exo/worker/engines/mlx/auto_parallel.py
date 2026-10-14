@@ -190,6 +190,15 @@ class PipelineLastLayer(CustomMlxLayer):
                 -output.shape[0] :
             ]
             mx.eval(output)
+        elif output.shape[0] == 1:
+            # Prefill-final step (single token): also all_gather so every rank
+            # holds the last-rank logits and samples the SAME first token.
+            # Without this, ranks can argmax different tokens (>64-tok prompts)
+            # and diverge silently from decode step 0.
+            output = mx.distributed.all_gather(output, group=self.group)[
+                -output.shape[0] :
+            ]
+            mx.eval(output)
 
         return output
 
