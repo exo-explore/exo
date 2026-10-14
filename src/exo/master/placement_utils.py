@@ -47,7 +47,16 @@ def get_smallest_cycles(
 def allocate_layers_proportionally(
     total_layers: int,
     memory_fractions: list[float],
+    max_layers_per_node: list[int] | None = None,
 ) -> list[int]:
+    """Split layers across nodes proportionally to their memory fractions.
+
+    ``max_layers_per_node`` caps how many layers each node may receive (how
+    many fit in its available memory). Without caps, largest-remainder
+    rounding can hand a leftover layer to a node that has no memory slack
+    for it. Raises ValueError when allocation is impossible; handled by the
+    placement caller (``place_instance``) which surfaces it to the API.
+    """
     n = len(memory_fractions)
     if n == 0:
         raise ValueError("Cannot allocate layers to an empty node list")
@@ -56,13 +65,33 @@ def allocate_layers_proportionally(
             f"Cannot distribute {total_layers} layers across {n} nodes "
             "(need at least 1 layer per node)"
         )
+    caps = (
+        max_layers_per_node if max_layers_per_node is not None else [total_layers] * n
+    )
+    assert len(caps) == n
+    if any(cap < 1 for cap in caps):
+        raise ValueError(
+            "A selected pipeline node has insufficient memory to hold even one layer"
+        )
+    if sum(caps) < total_layers:
+        raise ValueError(
+            f"Selected nodes only have capacity for {sum(caps)} of "
+            f"{total_layers} layers"
+        )
 
-    # Largest remainder: floor each, then distribute remainder by fractional part
-    raw = [f * total_layers for f in memory_fractions]
-    result = [int(r) for r in raw]
-    by_remainder = sorted(range(n), key=lambda i: raw[i] - result[i], reverse=True)
-    for i in range(total_layers - sum(result)):
-        result[by_remainder[i]] += 1
+    # Largest remainder: floor each (capped), then hand out the remaining
+    # layers by fractional part, skipping nodes that are at capacity.
+    raw = [fraction * total_layers for fraction in memory_fractions]
+    result = [min(int(r), cap) for r, cap in zip(raw, caps, strict=True)]
+    by_remainder = sorted(range(n), key=lambda i: raw[i] - int(raw[i]), reverse=True)
+    remaining = total_layers - sum(result)
+    while remaining > 0:
+        for i in by_remainder:
+            if remaining == 0:
+                break
+            if result[i] < caps[i]:
+                result[i] += 1
+                remaining -= 1
 
     # Ensure minimum 1 per node by taking from the largest
     for i in range(n):
@@ -104,10 +133,16 @@ def _allocate_and_validate_layers(
         memory_fractions=[
             node_memory[node_id].ram_available / total_memory for node_id in node_ids
         ],
+        max_layers_per_node=[
+            (node_memory[node_id].ram_available.in_bytes * model_card.n_layers)
+            // model_card.storage_size.in_bytes
+            for node_id in node_ids
+        ],
     )
 
     total_storage = model_card.storage_size
     total_layers = model_card.n_layers
+
     for i, node_id in enumerate(node_ids):
         node_layers = layer_allocations[i]
         required_memory = (total_storage * node_layers) // total_layers
