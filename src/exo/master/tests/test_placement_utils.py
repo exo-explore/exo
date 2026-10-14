@@ -3,6 +3,7 @@ import pytest
 from exo.master.placement_utils import (
     allocate_layers_proportionally,
     filter_cycles_by_memory,
+    find_ip_prioritised,
     get_mlx_jaccl_coordinators,
     get_shard_assignments,
     get_shard_assignments_for_pipeline_parallel,
@@ -17,6 +18,7 @@ from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
 from exo.shared.types.common import NodeId
 from exo.shared.types.memory import Memory
+from exo.shared.types.multiaddr import Multiaddr
 from exo.shared.types.profiling import (
     NetworkInterfaceInfo,
     NodeNetworkInfo,
@@ -689,3 +691,135 @@ class TestCfgParallelPlacement:
         # First shard starts at 0, last shard ends at 57
         assert layer_ranges[0][0] == 0
         assert layer_ranges[-1][1] == 57
+
+
+def _socket_edge(ip_address: str, latency_ms: float | None = None) -> SocketConnection:
+    return SocketConnection(
+        sink_multiaddr=Multiaddr(address=f"/ip4/{ip_address}/tcp/1234"),
+        latency_ms=latency_ms,
+    )
+
+
+def _two_node_topology_with_edges(
+    node_a: NodeId, node_b: NodeId, edges: list[SocketConnection]
+) -> Topology:
+    topology = Topology()
+    topology.add_node(node_a)
+    topology.add_node(node_b)
+    for edge in edges:
+        topology.add_connection(Connection(source=node_a, sink=node_b, edge=edge))
+    return topology
+
+
+def test_find_ip_prioritised_ring_prefers_measured_low_latency():
+    """A link with low measured latency wins even over a thunderbolt-labelled one."""
+    node_a = NodeId()
+    node_b = NodeId()
+    topology = _two_node_topology_with_edges(
+        node_a,
+        node_b,
+        [
+            _socket_edge("100.64.0.2", latency_ms=55.0),
+            _socket_edge("192.168.4.2", latency_ms=0.8),
+        ],
+    )
+    node_network = {
+        node_b: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="utun3", ip_address="100.64.0.2", interface_type="unknown"
+                ),
+                NetworkInterfaceInfo(
+                    name="bridge0",
+                    ip_address="192.168.4.2",
+                    interface_type="thunderbolt",
+                ),
+            ]
+        )
+    }
+
+    ip = find_ip_prioritised(node_a, node_b, topology, node_network, ring=True)
+
+    assert ip == "192.168.4.2"
+
+
+def test_find_ip_prioritised_ring_latency_beats_interface_label():
+    """Measured latency outranks the interface-type heuristic entirely."""
+    node_a = NodeId()
+    node_b = NodeId()
+    topology = _two_node_topology_with_edges(
+        node_a,
+        node_b,
+        [
+            _socket_edge("192.168.4.2", latency_ms=55.0),
+            _socket_edge("10.0.0.2", latency_ms=1.2),
+        ],
+    )
+    node_network = {
+        node_b: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="bridge0",
+                    ip_address="192.168.4.2",
+                    interface_type="thunderbolt",
+                ),
+                NetworkInterfaceInfo(
+                    name="en0", ip_address="10.0.0.2", interface_type="wifi"
+                ),
+            ]
+        )
+    }
+
+    ip = find_ip_prioritised(node_a, node_b, topology, node_network, ring=True)
+
+    assert ip == "10.0.0.2"
+
+
+def test_find_ip_prioritised_ring_falls_back_to_interface_type():
+    """Without measurements, thunderbolt-labelled links keep their priority."""
+    node_a = NodeId()
+    node_b = NodeId()
+    topology = _two_node_topology_with_edges(
+        node_a,
+        node_b,
+        [
+            _socket_edge("10.0.0.2"),
+            _socket_edge("192.168.4.2"),
+        ],
+    )
+    node_network = {
+        node_b: NodeNetworkInfo(
+            interfaces=[
+                NetworkInterfaceInfo(
+                    name="en0", ip_address="10.0.0.2", interface_type="wifi"
+                ),
+                NetworkInterfaceInfo(
+                    name="bridge0",
+                    ip_address="192.168.4.2",
+                    interface_type="thunderbolt",
+                ),
+            ]
+        )
+    }
+
+    ip = find_ip_prioritised(node_a, node_b, topology, node_network, ring=True)
+
+    assert ip == "192.168.4.2"
+
+
+def test_find_ip_prioritised_measured_link_beats_unmeasured():
+    node_a = NodeId()
+    node_b = NodeId()
+    topology = _two_node_topology_with_edges(
+        node_a,
+        node_b,
+        [
+            _socket_edge("10.0.0.2", latency_ms=40.0),
+            _socket_edge("192.168.4.2"),
+        ],
+    )
+    node_network = {node_b: NodeNetworkInfo()}
+
+    ip = find_ip_prioritised(node_a, node_b, topology, node_network, ring=True)
+
+    assert ip == "10.0.0.2"
