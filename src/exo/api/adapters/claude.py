@@ -13,7 +13,9 @@ from exo.api.types.claude_api import (
     ClaudeContentBlockStartEvent,
     ClaudeContentBlockStopEvent,
     ClaudeImageBlock,
+    ClaudeInputContentBlock,
     ClaudeInputJsonDelta,
+    ClaudeMessage,
     ClaudeMessageDelta,
     ClaudeMessageDeltaEvent,
     ClaudeMessageDeltaUsage,
@@ -91,6 +93,14 @@ def _strip_volatile_headers(text: str) -> str:
     return _VOLATILE_HEADER_RE.sub("", text)
 
 
+def _message_text_content(content: str | list[ClaudeInputContentBlock]) -> str:
+    if isinstance(content, str):
+        return content
+    return "".join(
+        block.text for block in content if isinstance(block, ClaudeTextBlock)
+    )
+
+
 async def handle_image_block(block: ClaudeImageBlock) -> Base64Image | None:
     if block.source.type == "base64" and block.source.data:
         return Base64Image(block.source.data)
@@ -108,25 +118,37 @@ async def handle_image_block(block: ClaudeImageBlock) -> Base64Image | None:
 async def claude_request_to_text_generation(
     request: ClaudeMessagesRequest,
 ) -> TextGenerationTaskParams:
-    # Handle system message
+    # Handle the system prompt: the top-level `system` field, plus any
+    # system-role entries that Anthropic-format clients (notably Claude Code)
+    # send inside `messages` even though the official API keeps them separate.
     instructions: str | None = None
     chat_template_messages: list[dict[str, ChatTemplateValue]] = []
     images: list[Base64Image] = []
 
-    if request.system:
+    system_texts: list[str] = []
+    if request.system is not None:
         if isinstance(request.system, str):
-            instructions = request.system
+            system_texts.append(request.system)
         else:
-            instructions = "".join(block.text for block in request.system)
+            system_texts.append("".join(block.text for block in request.system))
 
-        instructions = _strip_volatile_headers(instructions)
+    conversation_messages: list[ClaudeMessage] = []
+    for msg in request.messages:
+        if msg.role == "system":
+            system_texts.append(_message_text_content(msg.content))
+        else:
+            conversation_messages.append(msg)
+
+    combined_system_text = "\n\n".join(text for text in system_texts if text)
+    if combined_system_text:
+        instructions = _strip_volatile_headers(combined_system_text)
         chat_template_messages.append(
             {"role": "system", "content": InputMessageContent(instructions)}
         )
 
     # Convert messages to input
     input_messages: list[InputMessage] = []
-    for msg in request.messages:
+    for msg in conversation_messages:
         if isinstance(msg.content, str):
             input_messages.append(
                 InputMessage(role=msg.role, content=InputMessageContent(msg.content))

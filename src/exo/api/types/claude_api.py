@@ -19,7 +19,7 @@ class ClaudeToolDefinition(BaseModel, frozen=True):
 
 
 # Type aliases
-ClaudeRole = Literal["user", "assistant"]
+ClaudeRole = Literal["user", "assistant", "system"]
 ClaudeStopReason = Literal["end_turn", "max_tokens", "stop_sequence", "tool_use"]
 
 
