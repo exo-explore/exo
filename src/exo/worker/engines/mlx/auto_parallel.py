@@ -186,9 +186,27 @@ class PipelineLastLayer(CustomMlxLayer):
                 mx.eval(_cache.keys)  # type: ignore
 
         if not self.is_prefill:
-            output = mx.distributed.all_gather(output, group=self.group)[
-                -output.shape[0] :
-            ]
+            # FIX (exo Issue #2108): run the decode all_gather on the CPU stream, NOT
+            # the current (thread-local generation) GPU stream. Two reasons:
+            #   1. mlx's AllGather has NO GPU implementation
+            #      ("[AllGather::eval_gpu] has no GPU implementation") — it MUST run
+            #      on CPU. On the GPU generation_stream it silently never executes,
+            #      so the original code hung (the eval never completed).
+            #   2. mlx_lm's stream_generate wraps the forward in
+            #      `with mx.stream(generation_stream)` where
+            #      `generation_stream = mx.new_thread_local_stream(...)`. Even if
+            #      all_gather had a GPU impl, collectives on the thread-local stream
+            #      do not block for the delayed peer — the leading rank races ahead
+            #      with stale data while the trailing rank deadlocks.
+            # The CPU stream's collectives DO block (matching mx_barrier in
+            # utils_mlx.py, which uses `stream=mx.default_stream(mx.Device(mx.cpu))`
+            # for the same reason). The `mx.eval(output)` above materializes the send
+            # result so mlx can move it to CPU for the gather.
+            output = mx.distributed.all_gather(
+                output,
+                group=self.group,
+                stream=mx.default_stream(mx.Device(mx.cpu)),
+            )[-output.shape[0] :]
             mx.eval(output)
 
         return output
