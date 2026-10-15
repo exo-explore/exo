@@ -93,6 +93,27 @@ class TestClaudeRequestToInternal:
         assert isinstance(params.input, list)
         assert len(params.input) == 1
 
+    async def test_system_role_inside_messages_array(self):
+        """OpenAI-compatible clients put the system prompt in messages[] rather
+        than the top-level `system` field. Accept it instead of rejecting the
+        request outright."""
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(role="system", content="You are a helpful assistant."),
+                ClaudeMessage(role="user", content="Hello"),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert isinstance(params.input, list)
+        assert len(params.input) == 2
+        assert params.input[0].role == "system"
+        assert params.input[0].content == "You are a helpful assistant."
+        assert params.input[1].role == "user"
+        assert params.input[1].content == "Hello"
+
     async def test_request_with_content_blocks(self):
         request = ClaudeMessagesRequest(
             model=ModelId("claude-3-opus"),
