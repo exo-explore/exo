@@ -1,0 +1,61 @@
+# exo — upstream distributed-inference runtime, containerized.
+#
+#   docker compose up -d
+#   open http://localhost:52415            # dashboard + OpenAI-compatible API
+#
+# The `exo` service runs a full node (master + worker + API) using the pinned
+# Python/Rust dependencies from `docker build`. Data (config, ledger-less
+# state, logs, model cache) lives on the `exo-data` volume under /data (XDG).
+#
+# Tune the backend at build time with EXO_EXTRAS (see Dockerfile):
+#   docker compose build --build-arg EXO_EXTRAS=mlx-cpu exo
+
+services:
+  exo:
+    build:
+      context: .
+      args:
+        # Base (no backend) by default. Set e.g. "mlx-cpu" or "mlx-cuda12".
+        EXO_EXTRAS: ""
+    image: exo:latest
+    container_name: exo-node
+    restart: unless-stopped
+    ports:
+      - "52415:52415"        # API + dashboard
+      # Peer/zenoh + discovery (enable when running a multi-node cluster)
+      # - "52414:52414/udp"
+      # - "52413:52413/udp"
+    volumes:
+      - exo-data:/data
+      # Optional persistent model store (mapped into EXO_MODELS_DIRS):
+      # - exo-models:/models
+    environment:
+      EXO_ZENOH_NAMESPACE: "my-cluster"               # must match across a cluster
+      # EXO_MODELS_DIRS: "/models"
+      # EXO_BOOTSTRAP_PEERS: "exo-peer-1:52413,exo-peer-2:52413"
+      # EXO_OFFLINE: "false"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:52415/node_id"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # Optional coordinator-only node: routes/coordinates inference across the
+  # cluster but runs no worker. Uncomment to add a lightweight second member.
+  # exo-coordinator:
+  #   image: exo:latest
+  #   container_name: exo-coordinator
+  #   command: ["uv", "run", "exo", "--no-worker"]
+  #   depends_on:
+  #     exo:
+  #       condition: service_healthy
+  #   volumes:
+  #     - exo-data-coord:/data
+  #   environment:
+  #     EXO_ZENOH_NAMESPACE: "my-cluster"
+  #     EXO_BOOTSTRAP_PEERS: "exo-node:52413"
+
+volumes:
+  exo-data:
+  # exo-models:
