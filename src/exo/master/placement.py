@@ -217,6 +217,20 @@ def place_instance(
             f"Needs {command.min_nodes} connected nodes, but at most {largest} are connected to each other"
         )
 
+    if command.node_layers is not None:
+        if command.sharding != Sharding.Pipeline:
+            raise ValueError("Manual layer allocation requires Pipeline sharding")
+        requested_nodes = set(command.node_layers)
+        candidate_cycles = [
+            cycle
+            for cycle in candidate_cycles
+            if set(cycle.node_ids) == requested_nodes
+        ]
+        if not candidate_cycles:
+            raise ValueError(
+                "No connected cycle exactly matches the manual layer allocation nodes"
+            )
+
     # Filter to cycles containing all required nodes (subset matching)
     if required_nodes:
         candidate_cycles = [
@@ -354,7 +368,11 @@ def place_instance(
         )
 
     shard_assignments = get_shard_assignments(
-        command.model_card, selected_cycle, command.sharding, node_memory
+        command.model_card,
+        selected_cycle,
+        command.sharding,
+        node_memory,
+        command.node_layers,
     )
 
     cycle_digraph: Topology = topology.get_subgraph_from_nodes(selected_cycle.node_ids)

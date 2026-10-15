@@ -122,19 +122,60 @@ def _allocate_and_validate_layers(
     return layer_allocations
 
 
+def _validate_manual_layer_allocations(
+    node_ids: list[NodeId],
+    node_memory: Mapping[NodeId, MemoryUsage],
+    model_card: ModelCard,
+    node_layers: Mapping[NodeId, int],
+) -> list[int]:
+    if set(node_layers) != set(node_ids):
+        raise ValueError(
+            "Manual layer allocation must specify exactly the selected pipeline nodes"
+        )
+    if any(layer_count < 1 for layer_count in node_layers.values()):
+        raise ValueError(
+            "Manual layer allocations must assign at least one layer per node"
+        )
+    if sum(node_layers.values()) != model_card.n_layers:
+        raise ValueError(
+            f"Manual layer allocations must sum to {model_card.n_layers} layers"
+        )
+
+    allocations = [node_layers[node_id] for node_id in node_ids]
+    for index, (node_id, layer_count) in enumerate(
+        zip(node_ids, allocations, strict=True)
+    ):
+        required_memory = (model_card.storage_size * layer_count) // model_card.n_layers
+        available_memory = node_memory[node_id].ram_available
+        if required_memory > available_memory:
+            raise ValueError(
+                f"Node {index} ({node_id}) has insufficient memory: "
+                f"requires {required_memory.in_gb:.2f} GB for {layer_count} layers, "
+                f"but only has {available_memory.in_gb:.2f} GB available"
+            )
+    return allocations
+
+
 def get_shard_assignments_for_pipeline_parallel(
     model_card: ModelCard,
     cycle: Cycle,
     node_memory: Mapping[NodeId, MemoryUsage],
+    node_layers: Mapping[NodeId, int] | None = None,
 ) -> ShardAssignments:
     """Create shard assignments for pipeline parallel execution."""
     world_size = len(cycle)
     use_cfg_parallel = model_card.uses_cfg and world_size >= 2 and world_size % 2 == 0
 
     if use_cfg_parallel:
+        if node_layers is not None:
+            raise ValueError(
+                "Manual layer allocation is not supported for CFG-parallel models"
+            )
         return _get_shard_assignments_for_cfg_parallel(model_card, cycle, node_memory)
     else:
-        return _get_shard_assignments_for_pure_pipeline(model_card, cycle, node_memory)
+        return _get_shard_assignments_for_pure_pipeline(
+            model_card, cycle, node_memory, node_layers
+        )
 
 
 def _get_shard_assignments_for_cfg_parallel(
@@ -204,13 +245,20 @@ def _get_shard_assignments_for_pure_pipeline(
     model_card: ModelCard,
     cycle: Cycle,
     node_memory: Mapping[NodeId, MemoryUsage],
+    node_layers: Mapping[NodeId, int] | None = None,
 ) -> ShardAssignments:
     """Create shard assignments for pure pipeline execution."""
     _validate_cycle(cycle)
     total_memory = _compute_total_memory(cycle.node_ids, node_memory)
 
-    layer_allocations = _allocate_and_validate_layers(
-        cycle.node_ids, node_memory, total_memory, model_card
+    layer_allocations = (
+        _allocate_and_validate_layers(
+            cycle.node_ids, node_memory, total_memory, model_card
+        )
+        if node_layers is None
+        else _validate_manual_layer_allocations(
+            cycle.node_ids, node_memory, model_card, node_layers
+        )
     )
 
     runner_to_shard: dict[RunnerId, ShardMetadata] = {}
@@ -218,14 +266,14 @@ def _get_shard_assignments_for_pure_pipeline(
 
     for pipeline_rank, node_id in enumerate(cycle.node_ids):
         layers_before = sum(layer_allocations[:pipeline_rank])
-        node_layers = layer_allocations[pipeline_rank]
+        layer_count = layer_allocations[pipeline_rank]
 
         shard = PipelineShardMetadata(
             model_card=model_card,
             device_rank=pipeline_rank,
             world_size=len(cycle),
             start_layer=layers_before,
-            end_layer=layers_before + node_layers,
+            end_layer=layers_before + layer_count,
             n_layers=model_card.n_layers,
         )
 
@@ -278,6 +326,7 @@ def get_shard_assignments(
     cycle: Cycle,
     sharding: Sharding,
     node_memory: Mapping[NodeId, MemoryUsage],
+    node_layers: Mapping[NodeId, int] | None = None,
 ) -> ShardAssignments:
     match sharding:
         case Sharding.Pipeline:
@@ -285,6 +334,7 @@ def get_shard_assignments(
                 model_card=model_card,
                 cycle=cycle,
                 node_memory=node_memory,
+                node_layers=node_layers,
             )
         case Sharding.Tensor:
             return get_shard_assignments_for_tensor_parallel(
