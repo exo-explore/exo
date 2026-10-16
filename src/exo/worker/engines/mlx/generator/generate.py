@@ -49,6 +49,7 @@ from exo.worker.engines.mlx.cache import (
     is_non_trimmable_cache_entry,
     make_kv_cache,
     snapshot_ssm_states,
+    thin_snapshots,
 )
 from exo.worker.engines.mlx.constants import (
     DEFAULT_TOP_LOGPROBS,
@@ -314,6 +315,7 @@ def prefill(
         )
         if has_ssm:
             snapshots.append(snapshot_ssm_states(cache))
+            snapshots[:] = thin_snapshots(snapshots)
 
         if on_prefill_progress is not None:
             on_prefill_progress(processed, total)
