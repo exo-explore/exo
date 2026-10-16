@@ -77,7 +77,8 @@ class CacheSnapshot:
 def _detached_copy(a: mx.array) -> mx.array:
     dtype = a.dtype
     if dtype == mx.bfloat16:
-        return mx.array(np.array(a.astype(mx.float32))).astype(mx.bfloat16)
+        # numpy has no bfloat16; move its bits as uint16 (no float32 copy).
+        return mx.array(np.array(a.view(mx.uint16))).view(mx.bfloat16)
     return mx.array(np.array(a))
 
 
@@ -212,6 +213,25 @@ def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
     return CacheSnapshot(states=states, token_count=token_count)
 
 
+def _thin_snapshots(snapshots: list[CacheSnapshot]) -> list[CacheSnapshot]:
+    """Bound the snapshots kept for one prefix cache entry.
+
+    Every prefill adds snapshots (one per prefill chunk and one at the end), so
+    a long agent session that keeps extending one conversation would otherwise
+    accumulate them without limit until the GPU runs out of memory. Keep the
+    two latest (resuming or re-asking the newest turn) and, below them, only
+    snapshots at least halving the position of the previous one kept. A
+    snapshot's size grows with its position, so the kept set stays within
+    about three times the latest snapshot.
+    """
+    kept: list[CacheSnapshot] = []
+    for snap in sorted(snapshots, key=lambda s: s.token_count, reverse=True):
+        if len(kept) < 2 or snap.token_count <= kept[-1].token_count // 2:
+            kept.append(snap)
+    kept.reverse()
+    return kept
+
+
 def _find_nearest_snapshot(
     snapshots: list[CacheSnapshot],
     target_token_count: int,
@@ -276,7 +296,7 @@ class KVPrefixCache:
         self._evict_if_needed(entry_bytes)
         self.prompts.append(prompt_tokens)
         self.caches.append(deepcopy(cache))
-        self._snapshots.append(ssm_snapshots)
+        self._snapshots.append(_thin_snapshots(ssm_snapshots or []) or None)
         self._media_regions.append(media_regions or [])
         self.prefill_tps.append(prefill_tps)
         self._access_counter += 1
@@ -304,7 +324,7 @@ class KVPrefixCache:
 
         self.prompts[index] = prompt_tokens
         self.caches[index] = deepcopy(cache)
-        self._snapshots[index] = merged or None
+        self._snapshots[index] = _thin_snapshots(merged) or None
         self._media_regions[index] = media_regions or []
         self.prefill_tps[index] = prefill_tps
         self._access_counter += 1
