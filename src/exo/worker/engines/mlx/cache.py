@@ -284,6 +284,19 @@ class KVPrefixCache:
         self._entry_bytes.append(entry_bytes)
         logger.info(f"KV cache added: {len(prompt_tokens)} tokens")
 
+    def continues_entry(self, index: int, prefix_hit_length: int) -> bool:
+        """Whether a prompt that restored ``prefix_hit_length`` tokens from
+        entry ``index`` continues it, rather than branching off part of it.
+
+        Agent sessions share a long system prompt, so a hit can cover most of
+        a short prompt while belonging to another session. Replacing that
+        session's entry made two concurrent sessions evict each other and
+        re-prefill their whole history on every turn.
+        """
+        # Prefill trims the last two prompt tokens, so a continuation
+        # restores from two tokens before the end of the stored prompt.
+        return prefix_hit_length >= len(self.prompts[index]) - 2
+
     def update_kv_cache(
         self,
         index: int,
@@ -328,6 +341,21 @@ class KVPrefixCache:
 
         return 0, None
 
+    def _restore_point(
+        self, index: int, match_length: int, is_exact: bool, max_length: int
+    ) -> tuple[int, CacheSnapshot | None]:
+        """Token position entry ``index`` can be restored to for a prompt that
+        shares ``match_length`` tokens with it, and the snapshot to use."""
+        # For exact match: trim to max_length-1 so remaining has the last token
+        # For partial match: trim to match_length, remaining has suffix to prefill
+        # This ensures stream_generate always has at least one token to start with
+        if has_non_kv_caches(self.caches[index]):
+            target = match_length
+        else:
+            desired = (max_length - 1) if is_exact else match_length
+            target = min(cache_length(self.caches[index]), desired)
+        return self._get_snapshot(index, target)
+
     def get_kv_cache(
         self,
         model: Model,
@@ -354,11 +382,13 @@ class KVPrefixCache:
         max_length = len(prompt_tokens)
         query_regions = media_regions or []
 
+        # Pick the entry that restores the most tokens, not the longest raw
+        # match: a stale longer entry (an earlier run of the same agent task)
+        # can share more tokens but only restore to a snapshot far back,
+        # while this session's own entry restores to its end.
         best_index: int | None = None
-        best_length = 0
+        best_restore: tuple[int, CacheSnapshot | None] = (0, None)
         is_exact = False
-
-        # Find best cache match
         for i, cached_prompt in enumerate(self.prompts):
             length = get_prefix_length(prompt_tokens, cached_prompt)
             if length > 0:
@@ -367,27 +397,19 @@ class KVPrefixCache:
                     self._media_regions[i],
                     query_regions,
                 )
-            if length >= max_length - 1:
-                best_index, best_length = i, length
-                is_exact = True
-                break
-            if length > best_length:
-                best_index, best_length = i, length
+            if length <= 0:
+                continue
+            exact = length >= max_length - 1
+            restore = self._restore_point(i, length, exact, max_length)
+            if restore[0] > best_restore[0] or best_index is None:
+                best_index, best_restore, is_exact = i, restore, exact
 
         if best_index is None:
             return make_kv_cache(model), prompt_tokens, None, False
 
-        # For exact match: trim to max_length-1 so remaining has the last token
-        # For partial match: trim to best_length, remaining has suffix to prefill
-        # This ensures stream_generate always has at least one token to start with
         has_ssm = has_non_kv_caches(self.caches[best_index])
         cached_length = cache_length(self.caches[best_index])
-        if has_ssm:
-            target = best_length
-        else:
-            desired = (max_length - 1) if is_exact else best_length
-            target = min(cached_length, desired)
-        restore_pos, restore_snap = self._get_snapshot(best_index, target)
+        restore_pos, restore_snap = best_restore
 
         # No usable snapshot — need fresh cache
         if restore_snap is None and has_ssm:
