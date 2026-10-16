@@ -31,17 +31,15 @@ if TYPE_CHECKING:
     from exo.worker.engines.mlx.vision import MediaRegion
 
 
-# Fraction of device memory above which LRU eviction kicks in.
-# Smaller machines need more aggressive eviction.
+# Fraction of device memory above which LRU eviction kicks in: when less than
+# 4GB is left. A large model sharded over a cluster leaves each node above a
+# fixed fraction such as 80% at all times (DeepSeek V4 Flash on 4x 64GB uses
+# ~87% with nothing cached), so every entry was evicted as soon as it was
+# stored and two agent sessions re-prefilled their whole context on every turn.
+# _MAX_BYTES bounds what the entries themselves hold.
 def _default_memory_threshold() -> float:
-    total_gb = Memory.from_bytes(psutil.virtual_memory().total).in_gb
-    if total_gb >= 128:
-        return 0.85
-    if total_gb >= 64:
-        return 0.80
-    if total_gb >= 32:
-        return 0.75
-    return 0.70
+    total = Memory.from_bytes(psutil.virtual_memory().total)
+    return min(0.94, 1 - Memory.from_gb(4).in_bytes / total.in_bytes)
 
 
 _MEMORY_THRESHOLD = float(
@@ -311,6 +309,8 @@ class KVPrefixCache:
         self._last_used[index] = self._access_counter
         self._entry_bytes[index] = _entry_nbytes(cache, self._snapshots[index])
         logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens")
+        # An update can grow an entry past the limits too.
+        self._evict_if_needed(incoming_entries=0)
 
     def _get_snapshot(
         self, entry_index: int, target_token_count: int
@@ -443,15 +443,20 @@ class KVPrefixCache:
 
         return match_length
 
-    def _evict_if_needed(self, incoming_bytes: int = 0):
+    def _evict_if_needed(self, incoming_bytes: int = 0, incoming_entries: int = 1):
         """Evict least recently used entries while memory usage is high, or while adding
-        an entry of incoming_bytes would take the cache over its size limits."""
+        incoming_entries entries of incoming_bytes would take the cache over its size
+        limits. After an update (incoming_entries=0) the updated, most recently used
+        entry is kept."""
         if len(self.caches) == 0:
             return
 
+        entries_kept = 1 if incoming_entries == 0 else 0
         evicted_any = False
         # Evict LRU entries until below the limits
-        while len(self.caches) > 0 and self._over_limit(incoming_bytes):
+        while len(self.caches) > entries_kept and self._over_limit(
+            incoming_bytes, incoming_entries
+        ):
             lru_index = self._last_used.index(min(self._last_used))
             evicted_tokens = len(self.prompts[lru_index])
             self.prompts.pop(lru_index)
@@ -469,9 +474,9 @@ class KVPrefixCache:
             gc.collect()
             mx.clear_cache()
 
-    def _over_limit(self, incoming_bytes: int) -> bool:
+    def _over_limit(self, incoming_bytes: int, incoming_entries: int) -> bool:
         # The same on every rank: they all hold the same entries
-        if len(self.caches) >= _MAX_ENTRIES:
+        if len(self.caches) + incoming_entries > _MAX_ENTRIES:
             return True
 
         over_budget = sum(self._entry_bytes) + incoming_bytes > _MAX_BYTES

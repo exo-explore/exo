@@ -88,6 +88,21 @@ class HostList(RootModel[list[str]]):
         return cls(root=[str(host) for host in hosts])
 
 
+# MLX keeps freed buffers for reuse up to its GC limit (95% of the GPU working
+# set), so during decoding the buffer cache grows until MLX and macOS together
+# fill physical memory. On 4x M5 Pro 64GB with DeepSeek-V4-Flash, free memory
+# fell to ~1GB when a prefill started and Metal aborted with
+# kIOGPUCommandBufferCallbackErrorOutOfMemory although active memory was ~45GB.
+BUFFER_CACHE_LIMIT = Memory.from_gb(1)
+
+
+def limit_buffer_cache() -> None:
+    if not mx.metal.is_available():
+        return
+    mx.set_cache_limit(BUFFER_CACHE_LIMIT.in_bytes)
+    logger.info(f"MLX buffer cache limited to {BUFFER_CACHE_LIMIT.in_gb:.0f}GB.")
+
+
 def mlx_distributed_init(
     bound_instance: BoundInstance,
 ) -> mx.distributed.Group:
@@ -168,6 +183,7 @@ def load_mlx_items(
     ModelLoadingResponse, None, tuple[Model, TokenizerWrapper, "VisionProcessor | None"]
 ]:
     set_wired_limit_for_model(get_weights_size(bound_instance.bound_shard))
+    limit_buffer_cache()
 
     if group is None:
         logger.info(f"Single device used for {bound_instance.instance}")

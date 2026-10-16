@@ -568,7 +568,7 @@ class TestKVPrefixCacheWithModel:
         kv_prefix_cache._last_used[2] = 100.0
         # Entry 0 (_last_used=0.0) is LRU, entry 1 (_last_used=1.0) is next
 
-        # Simulate memory pressure: return usage above _MEMORY_THRESHOLD (0.9)
+        # Simulate memory pressure: return usage above _MEMORY_THRESHOLD (at most 0.94)
         with patch(
             "exo.worker.engines.mlx.cache.get_memory_used_percentage",
             return_value=0.95,
