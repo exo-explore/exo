@@ -32,6 +32,8 @@ _original_call = Indexer.__call__
 # Decode and short speculative-verification steps.
 _MAX_SHORTCUT_SEQUENCE = 4
 _THREADGROUP = 256
+# Upper bound on one slice of the prefill score tensor.
+_SCORE_BYTES_PER_SLICE = 1 << 30
 
 # out[row, t] = sum_h weights[row, h] * max(scores[row, h, t], 0), accumulated
 # in float32 like the matmul it replaces.
@@ -96,6 +98,38 @@ def _patched_call(
     return _score_and_select(self, x, qr, idx_kv, offset)
 
 
+def _sliced_relu_weighted_scores(
+    q: mx.array, idx_kv: mx.array, per_head_weights: mx.array
+) -> mx.array:
+    """``relu_weighted_sum`` of the ``[B, S, n_heads, pool]`` score tensor,
+    which grows with the context (7 GB for a 4096-token chunk at 54K tokens).
+
+    Past ``_SCORE_BYTES_PER_SLICE`` it is scored a few query rows at a time;
+    rows are independent, so the result is bit-identical. Each slice is
+    evaluated before the next is built: buffers are only recycled once their
+    command buffer completes, so lazily queued slices would all be resident
+    at once.
+    """
+    batch, sequence, heads, _ = q.shape
+    rows = max(1, _SCORE_BYTES_PER_SLICE // (batch * heads * idx_kv.shape[1] * 2))
+    if rows >= sequence:
+        return relu_weighted_sum(
+            mx.einsum("bshd,btd->bsht", q, idx_kv),  # pyright: ignore[reportUnknownMemberType]
+            per_head_weights,
+        )
+    slices: list[mx.array] = []
+    for start in range(0, sequence, rows):
+        scores = relu_weighted_sum(
+            mx.einsum(  # pyright: ignore[reportUnknownMemberType]
+                "bshd,btd->bsht", q[:, start : start + rows], idx_kv
+            ),
+            per_head_weights[:, start : start + rows],
+        )
+        mx.eval(scores)
+        slices.append(scores)
+    return mx.concatenate(slices, axis=1)
+
+
 def _score_and_select(
     self: Indexer,
     x: mx.array,
@@ -114,12 +148,13 @@ def _score_and_select(
     per_head_weights = mx.multiply(
         self.weights_proj(x), self.softmax_scale * math.pow(self.n_heads, -0.5)
     )
-    score = mx.einsum(  # pyright: ignore[reportUnknownMemberType]
-        "bshd,btd->bsht", q.astype(idx_kv.dtype), idx_kv
-    )
+    q = q.astype(idx_kv.dtype)
     if fused:
-        score = relu_weighted_sum(score, per_head_weights)
+        score = _sliced_relu_weighted_scores(q, idx_kv, per_head_weights)
     else:
+        score = mx.einsum(  # pyright: ignore[reportUnknownMemberType]
+            "bshd,btd->bsht", q, idx_kv
+        )
         score = mx.maximum(score, 0)
         score = mx.matmul(per_head_weights[:, :, None, :], score).squeeze(2)
     k = min(self.index_topk, idx_kv.shape[1])

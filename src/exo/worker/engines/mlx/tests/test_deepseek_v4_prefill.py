@@ -133,6 +133,24 @@ def test_hc_mix_many_rows_matches_float64() -> None:
     assert np.allclose(np.array(fused), exact, rtol=1e-4, atol=1e-5)
 
 
+def test_indexer_scores_query_slices_identically(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = tiny_model()
+    indexer = model.model.layers[1].attn.indexer
+    mx.random.seed(14)
+    x = (mx.random.normal((1, 70, 256)) * 0.5).astype(mx.bfloat16)
+    qr = (mx.random.normal((1, 70, model.args.q_lora_rank)) * 0.5).astype(mx.bfloat16)
+    idx_kv = (mx.random.normal((1, 90, indexer.head_dim)) * 0.5).astype(mx.bfloat16)
+    whole = indexer_patch._score_and_select(indexer, x, qr, idx_kv, 300, fused=True)
+    # A few query rows per slice, including a ragged last slice.
+    monkeypatch.setattr(
+        indexer_patch, "_SCORE_BYTES_PER_SLICE", indexer.n_heads * 90 * 2 * 16
+    )
+    sliced = indexer_patch._score_and_select(indexer, x, qr, idx_kv, 300, fused=True)
+    assert mx.array_equal(mx.sort(whole, -1), mx.sort(sliced, -1)).item()
+
+
 def _chunked_attention(attention: dv4.V4Attention, x: mx.array, chunk: int) -> mx.array:
     cache = dv4.DeepseekV4Cache(16)
     outputs: list[mx.array] = []
