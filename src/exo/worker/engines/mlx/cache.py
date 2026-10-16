@@ -122,8 +122,9 @@ def _copy_cache_list(cl: CacheList) -> CacheList:
 
 def _detached_copies(arrays: list[mx.array | None]) -> list[mx.array | None]:
     """Batched `_detached_copy`: two GPU syncs in total instead of one per array."""
+    # numpy has no bfloat16; move its bits as uint16 (no float32 copy).
     staged = [
-        None if a is None else a.astype(mx.float32) if a.dtype == mx.bfloat16 else a
+        None if a is None else a.view(mx.uint16) if a.dtype == mx.bfloat16 else a
         for a in arrays
     ]
     mx.eval([s for s in staged if s is not None])
@@ -133,9 +134,7 @@ def _detached_copies(arrays: list[mx.array | None]) -> list[mx.array | None]:
             copies.append(None)
             continue
         copy = mx.array(np.array(host))
-        copies.append(
-            copy.astype(mx.bfloat16) if original.dtype == mx.bfloat16 else copy
-        )
+        copies.append(copy.view(mx.bfloat16) if original.dtype == mx.bfloat16 else copy)
     mx.eval([c for c in copies if c is not None])
     return copies
 
