@@ -719,6 +719,81 @@ def _build_three_node_rdma_topology() -> tuple[
     return topology, node_a, node_b, node_c, node_network
 
 
+def test_place_mlx_jaccl_skips_rdma_cycle_without_full_mesh(
+    model_card: ModelCard,
+) -> None:
+    topology, node_a, node_b, node_c, node_network = _build_three_node_rdma_topology()
+    node_d = NodeId()
+    topology.add_node(node_d)
+    node_network[node_d] = create_node_network()
+    for source, sink in [(node_b, node_d), (node_d, node_a)]:
+        topology.add_connection(
+            Connection(source=source, sink=sink, edge=create_socket_connection(1))
+        )
+        topology.add_connection(
+            Connection(source=source, sink=sink, edge=create_rdma_connection(6))
+        )
+    node_memory = {
+        node_a: create_node_memory(500),
+        node_b: create_node_memory(500),
+        node_c: create_node_memory(500),
+        node_d: create_node_memory(600),
+    }
+    command = PlaceInstance(
+        command_id=CommandId(),
+        model_card=model_card.model_copy(
+            update={"storage_size": Memory.from_bytes(1500)}
+        ),
+        sharding=Sharding.Tensor,
+        instance_meta=InstanceMeta.MlxJaccl,
+        min_nodes=3,
+    )
+
+    placements = place_instance(
+        command,
+        topology,
+        {},
+        node_memory,
+        node_network,
+        _metal_only(node_memory),
+        node_rdma_ctl={node: NodeRdmaCtlStatus(enabled=True) for node in node_memory},
+    )
+
+    instance = next(iter(placements.values()))
+    assert set(instance.shard_assignments.node_to_runner) == {node_a, node_b, node_c}
+
+
+def test_place_mlx_jaccl_rejects_rdma_cycle_with_missing_pair(
+    model_card: ModelCard,
+) -> None:
+    topology, node_a, node_b, node_c, node_network = _build_three_node_rdma_topology()
+    for edge in list(topology.get_all_connections_between(node_b, node_c)):
+        topology.remove_connection(Connection(source=node_b, sink=node_c, edge=edge))
+    node_memory = {node: create_node_memory(500) for node in [node_a, node_b, node_c]}
+    command = PlaceInstance(
+        command_id=CommandId(),
+        model_card=model_card.model_copy(
+            update={"storage_size": Memory.from_bytes(1500)}
+        ),
+        sharding=Sharding.Tensor,
+        instance_meta=InstanceMeta.MlxJaccl,
+        min_nodes=3,
+    )
+
+    with pytest.raises(ValueError, match="no RDMA-connected cycles available"):
+        place_instance(
+            command,
+            topology,
+            {},
+            node_memory,
+            node_network,
+            _metal_only(node_memory),
+            node_rdma_ctl={
+                node: NodeRdmaCtlStatus(enabled=True) for node in node_memory
+            },
+        )
+
+
 def test_place_mlx_jaccl_rejects_when_a_node_has_rdma_ctl_disabled(
     model_card: ModelCard,
 ):

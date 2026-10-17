@@ -32,6 +32,7 @@ from exo.shared.types.events import (
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo, NodeRdmaCtlStatus
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
+from exo.shared.types.topology import RDMAConnection
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadFailed,
@@ -307,13 +308,24 @@ def place_instance(
             for node_id in cycle
         )
 
-    smallest_rdma_cycles = [
-        cycle
-        for cycle in smallest_cycles
-        if topology.is_rdma_cycle(cycle) and _all_rdma_ctl_enabled(cycle)
-    ]
+    def _all_rdma_connected(cycle: Cycle) -> bool:
+        # JACCL's device matrix requires a direct RDMA link for every ordered pair.
+        return all(
+            any(
+                isinstance(connection, RDMAConnection)
+                for connection in topology.get_all_connections_between(source, sink)
+            )
+            for source in cycle
+            for sink in cycle
+            if source != sink
+        )
 
     if command.instance_meta == InstanceMeta.MlxJaccl:
+        smallest_rdma_cycles = [
+            cycle
+            for cycle in smallest_cycles
+            if _all_rdma_ctl_enabled(cycle) and _all_rdma_connected(cycle)
+        ]
         if not smallest_rdma_cycles:
             raise ValueError(
                 "Requested RDMA (MlxJaccl) but no RDMA-connected cycles available"
