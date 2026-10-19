@@ -98,6 +98,9 @@ from exo.api.types import (
     ImageSize,
     InstanceLinkBody,
     InstanceLinkResponse,
+    LogFileListItem,
+    LogFileListResponse,
+    LogTailResponse,
     ModelList,
     ModelListModel,
     PlaceInstanceParams,
@@ -146,7 +149,10 @@ from exo.shared.constants import (
     EXO_CACHE_HOME,
     EXO_EVENT_LOG_DIR,
     EXO_IMAGE_CACHE_DIR,
+    EXO_LOG,
     EXO_MAX_CHUNK_SIZE,
+    EXO_RUNNER_STDERR_LOG,
+    EXO_RUNNER_STDOUT_LOG,
     EXO_TRACING_CACHE_DIR,
     dashboard_dir,
 )
@@ -235,6 +241,28 @@ _GENERATION_INTERRUPTED_MESSAGE = (
 # with an error instead of waiting forever.
 REQUEST_RESEND_WAITS = (10.0, 15.0, 30.0)
 _NOT_ACCEPTED_MESSAGE = "The cluster didn't accept the request. Please check that the model is running and try again."
+
+_LOG_FILES: dict[str, Path] = {
+    "main": EXO_LOG,
+    "runner_stdout": EXO_RUNNER_STDOUT_LOG,
+    "runner_stderr": EXO_RUNNER_STDERR_LOG,
+}
+_LOG_TAIL_MAX_BYTES = 2 * 1024 * 1024
+
+
+def _tail_file(path: Path, max_lines: int) -> tuple[str, bool]:
+    """Return up to the last `max_lines` lines of `path`, reading at most
+    `_LOG_TAIL_MAX_BYTES` from the end so large logs don't get loaded in full."""
+    size = path.stat().st_size
+    read_size = min(size, _LOG_TAIL_MAX_BYTES)
+    with open(path, "rb") as f:
+        f.seek(size - read_size)
+        data = f.read(read_size)
+    lines = data.decode("utf-8", errors="replace").splitlines()
+    max_lines = max(max_lines, 0)
+    truncated = read_size < size or len(lines) > max_lines
+    tail_lines = lines[-max_lines:] if max_lines > 0 else []
+    return "\n".join(tail_lines), truncated
 
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
@@ -451,6 +479,9 @@ class API:
         self.app.get("/v1/traces/{task_id}")(self.get_trace)
         self.app.get("/v1/traces/{task_id}/stats")(self.get_trace_stats)
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
+        self.app.get("/v1/logs")(self.list_logs)
+        self.app.get("/v1/logs/{name}")(self.get_log_tail)
+        self.app.get("/v1/logs/{name}/raw")(self.get_log_raw)
         self.app.get("/onboarding")(self.get_onboarding)
         self.app.post("/onboarding")(self.complete_onboarding)
 
@@ -2402,6 +2433,42 @@ class API:
             else:
                 not_found.append(task_id)
         return DeleteTracesResponse(deleted=deleted, not_found=not_found)
+
+    async def list_logs(self) -> LogFileListResponse:
+        logs: list[LogFileListItem] = []
+        for name, path in _LOG_FILES.items():
+            if not path.exists():
+                continue
+            stat = path.stat()
+            logs.append(
+                LogFileListItem(
+                    name=name,
+                    file_size=stat.st_size,
+                    modified_at=datetime.fromtimestamp(
+                        stat.st_mtime, tz=timezone.utc
+                    ).isoformat(),
+                )
+            )
+        return LogFileListResponse(logs=logs)
+
+    async def get_log_tail(self, name: str, lines: int = 1000) -> LogTailResponse:
+        path = _LOG_FILES.get(name)
+        if path is None:
+            raise HTTPException(status_code=404, detail=f"Unknown log: {name}")
+        if not path.exists():
+            raise HTTPException(status_code=404, detail=f"Log file not found: {name}")
+
+        content, truncated = _tail_file(path, max_lines=lines)
+        return LogTailResponse(name=name, content=content, truncated=truncated)
+
+    async def get_log_raw(self, name: str) -> FileResponse:
+        path = _LOG_FILES.get(name)
+        if path is None:
+            raise HTTPException(status_code=404, detail=f"Unknown log: {name}")
+        if not path.exists():
+            raise HTTPException(status_code=404, detail=f"Log file not found: {name}")
+
+        return FileResponse(path=path, media_type="text/plain", filename=path.name)
 
     async def get_onboarding(self) -> JSONResponse:
         return JSONResponse({"completed": ONBOARDING_COMPLETE_FILE.exists()})

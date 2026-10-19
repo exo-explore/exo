@@ -38,8 +38,11 @@ from .api import ImageListResponse as ImageListResponse
 from .api import ImageSize as ImageSize
 from .api import InstanceLinkBody as InstanceLinkBody
 from .api import InstanceLinkResponse as InstanceLinkResponse
+from .api import LogFileListItem as LogFileListItem
+from .api import LogFileListResponse as LogFileListResponse
 from .api import Logprobs as Logprobs
 from .api import LogprobsContentItem as LogprobsContentItem
+from .api import LogTailResponse as LogTailResponse
 from .api import ModelList as ModelList
 from .api import ModelListModel as ModelListModel
 from .api import NodePowerStats as NodePowerStats
