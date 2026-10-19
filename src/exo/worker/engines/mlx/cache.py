@@ -508,14 +508,15 @@ def trim_cache(
     snapshot: CacheSnapshot | None = None,
 ) -> None:
     for i, c in enumerate(cache):
-        non_trimmable = isinstance(c, (ArraysCache, RotatingKVCache)) or (
-            isinstance(c, CacheList) and not bool(c.is_trimmable())  # type: ignore[reportUnknownMemberType]
-        )
-        if non_trimmable:
+        if is_non_trimmable_cache_entry(c):
             if snapshot is not None and snapshot.states[i] is not None:
                 restored = copy_snapshot_entry(snapshot.states[i])
                 if restored is not None:
                     cache[i] = restored  # type: ignore
+            elif isinstance(c, DeepseekV4Cache):
+                # trim() is a no-op for DeepseekV4Cache (its compressor pool
+                # can't be rolled back), so without a snapshot start empty.
+                cache[i] = DeepseekV4Cache(c.local.max_size)  # type: ignore
             elif isinstance(c, (ArraysCache, RotatingKVCache)):
                 c.state = [None] * len(c.state)
                 if isinstance(c, RotatingKVCache):
