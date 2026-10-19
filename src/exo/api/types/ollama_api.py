@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from exo.shared.models.model_cards import ModelId
+from exo.utils.extra_fields_warner import WarnExtraModel
 
 # https://github.com/ollama/ollama/blob/main/docs/api.md
 
@@ -54,7 +55,7 @@ class OllamaOptions(BaseModel, frozen=True):
     seed: int | None = None
 
 
-class OllamaChatRequest(BaseModel, frozen=True):
+class OllamaChatRequest(WarnExtraModel, frozen=True):
     model: ModelId
     messages: list[OllamaMessage]
     stream: bool = True
@@ -65,7 +66,7 @@ class OllamaChatRequest(BaseModel, frozen=True):
     think: bool | None = None
 
 
-class OllamaGenerateRequest(BaseModel, frozen=True):
+class OllamaGenerateRequest(WarnExtraModel, frozen=True):
     model: ModelId
     prompt: str = ""
     system: str | None = None
@@ -95,7 +96,7 @@ class OllamaGenerateResponse(BaseModel, frozen=True, strict=True):
     eval_duration: int | None = None
 
 
-class OllamaShowRequest(BaseModel, frozen=True):
+class OllamaShowRequest(WarnExtraModel, frozen=True):
     name: str | None = None
     model: str | None = None
     verbose: bool | None = None
