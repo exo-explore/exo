@@ -486,10 +486,13 @@ class KVPrefixCache:
             mx.array([local_pressure, float(over_budget)], dtype=mx.float32),
             group=self._group,
         ).reshape(-1, 2)
-        # .tolist() evals.
-        worst_pressure, any_over_budget = cast(
-            list[float], mx.max(flags, axis=0).tolist()
-        )
+        # Read the flags on the CPU. A GPU op on them (mx.max) waits for the
+        # slowest rank in a Metal fence, which hits the GPU timeout (or, with
+        # MLX builds whose fence gives up, reads stale flags, so ranks evict
+        # different entries and their collectives go out of step).
+        rows = cast(list[list[float]], flags.tolist())
+        worst_pressure = max(pressure for pressure, _ in rows)
+        any_over_budget = max(over for _, over in rows)
         return worst_pressure > _MEMORY_THRESHOLD or any_over_budget > 0
 
 
