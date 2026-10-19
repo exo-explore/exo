@@ -32,6 +32,20 @@ pub fn cfg(identity: &str, listen_port: u16) -> Result<zenoh::Config> {
     cfg.insert_json5("scouting/multicast/enabled", "false")?;
     cfg.insert_json5("scouting/multicast/autoconnect", "[]")?;
     cfg.insert_json5("scouting/gossip/multihop", "true")?;
+    // Peer discovery relies on IPv6 link-local multicast, which some networks
+    // (notably Wi-Fi access points isolating wireless clients) do not forward.
+    // EXO_ZENOH_CONNECT lets the operator dial known peers over unicast instead,
+    // as a comma-separated list of zenoh endpoints, e.g. "tcp/192.168.1.2:52414".
+    if let Ok(peers) = std::env::var("EXO_ZENOH_CONNECT") {
+        let endpoints: Vec<String> = peers
+            .split(',')
+            .filter(|peer| !peer.is_empty())
+            .map(|peer| format!("\"{peer}\""))
+            .collect();
+        if !endpoints.is_empty() {
+            cfg.insert_json5("connect/endpoints", &format!("[{}]", endpoints.join(",")))?;
+        }
+    }
     cfg.insert_json5("adminspace/enabled", "true")?;
     //cfg.insert_json5("transport/link/tx/batch_size", "9216")?;
     cfg.insert_json5("transport/link/rx/buffer_size", "16777216")?;
