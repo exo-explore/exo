@@ -29,6 +29,9 @@ class TokenChunk(BaseChunk):
     logprob: float | None = None
     top_logprobs: list[TopLogprobItem] | None = None
     is_thinking: bool = False
+    # Set to the matched stop sequence when generation stopped because a
+    # user-supplied stop sequence was hit (distinguishes it from a natural EOS).
+    matched_stop_sequence: str | None = None
 
 
 class ErrorChunk(BaseChunk):
