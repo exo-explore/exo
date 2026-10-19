@@ -353,7 +353,17 @@ async def collect_chat_response(
                 finish_reason = chunk.finish_reason
 
     if error_message is not None:
-        raise ValueError(error_message)
+        # The endpoint wraps this generator in a StreamingResponse, so the 200
+        # status is already on the wire; raising here only truncates the body
+        # to nothing. Emit the same error object the SSE path sends instead.
+        yield ErrorResponse(
+            error=ErrorInfo(
+                message=error_message,
+                type="InternalServerError",
+                code=500,
+            )
+        ).model_dump_json(exclude_none=True)
+        return
 
     combined_text = "".join(text_parts)
     combined_thinking = "".join(thinking_parts) if thinking_parts else None

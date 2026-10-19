@@ -30,7 +30,10 @@ from exo.worker.engines.base import Engine
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.disaggregated.adapter import write_cache_to_wire
 from exo.worker.engines.mlx.disaggregated.serve import run_prefill_for_request
-from exo.worker.engines.mlx.generator.batch_generate import ExoBatchGenerator
+from exo.worker.engines.mlx.generator.batch_generate import (
+    ExoBatchGenerator,
+    UnsupportedRequestError,
+)
 from exo.worker.engines.mlx.generator.generate import (
     PrefillCancelled,
     mlx_generate,
@@ -406,11 +409,20 @@ class BatchGenerator(Engine):
             self.agree_on_tasks()
 
         # Submit any queued tasks to the engine
+        rejected: list[tuple[TaskId, FinishedResponse]] = []
         while self._queue and len(self._active_tasks) < EXO_MAX_CONCURRENT_REQUESTS:
             task = self._queue.popleft()
             try:
                 uid = self._start_task(task)
             except PrefillCancelled:
+                continue
+            except UnsupportedRequestError as e:
+                # A request this runner cannot serve (e.g. images without a
+                # vision processor). Tell the client, then retire the task so
+                # the runner returns to idle -- without a terminal result the
+                # task would stay in active_tasks and step() would spin.
+                self._send_error(task, e)
+                rejected.append((task.task_id, FinishedResponse()))
                 continue
             except Exception as e:
                 self._send_error(task, e)
@@ -434,7 +446,7 @@ class BatchGenerator(Engine):
             self._active_tasks[uid] = (task, queue, output_generator)
 
         if not self._gen.has_work:
-            return self._apply_cancellations()
+            return itertools.chain(rejected, self._apply_cancellations())
 
         results = self._gen.step()
 
@@ -462,7 +474,7 @@ class BatchGenerator(Engine):
             lambda chunk: (
                 not isinstance(chunk[1], GenerationChunk) or self.device_rank == 0
             ),
-            itertools.chain(output, self._apply_cancellations()),
+            itertools.chain(rejected, output, self._apply_cancellations()),
         )
 
     def _apply_cancellations(
