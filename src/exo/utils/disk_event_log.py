@@ -1,5 +1,6 @@
 import contextlib
 import json
+import os
 from collections import OrderedDict
 from collections.abc import Iterator
 from datetime import datetime, timezone
@@ -81,6 +82,8 @@ class DiskEventLog:
             self._rotate(self._active_path, self._directory)
 
         self._file: BufferedRandom = open(self._active_path, "w+b")  # noqa: SIM115
+        file_stat = os.fstat(self._file.fileno())
+        self._active_file_id = (file_stat.st_dev, file_stat.st_ino)
 
     def _cache_offset(self, idx: int, offset: int) -> None:
         self._offset_cache[idx] = offset
@@ -150,14 +153,33 @@ class DiskEventLog:
     def __len__(self) -> int:
         return self._count
 
+    def _owns_active_path(self) -> bool:
+        """Whether the active path still refers to the file this log opened.
+
+        A successor process (re)creating the log at the same path replaces
+        the file; a stale close must not rotate or unlink the successor's
+        active file.
+        """
+        try:
+            path_stat = self._active_path.stat()
+        except OSError:
+            return False
+        return (path_stat.st_dev, path_stat.st_ino) == self._active_file_id
+
     def close(self) -> None:
         """Close the file and rotate active file to compressed archive."""
         if self._file.closed:
             return
         self._file.close()
-        if self._active_path.exists() and self._count > 0:
+        if not self._owns_active_path():
+            logger.warning(
+                f"Not rotating event log {self._active_path}: it no longer refers "
+                "to the file this log opened (likely replaced by a newer process)"
+            )
+            return
+        if self._count > 0:
             self._rotate(self._active_path, self._directory)
-        elif self._active_path.exists():
+        else:
             self._active_path.unlink()
 
     @staticmethod
