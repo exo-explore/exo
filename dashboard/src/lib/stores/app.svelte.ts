@@ -305,6 +305,9 @@ export interface Message {
   attachments?: MessageAttachment[];
   ttftMs?: number; // Time to first token in ms (for assistant messages)
   tps?: number; // Tokens per second (for assistant messages)
+  promptTps?: number; // Prompt (prefill) tokens per second
+  peakMemoryBytes?: number; // Peak memory usage during generation
+  prefixCacheHit?: "none" | "partial" | "exact";
   requestType?: "chat" | "image-generation" | "image-editing";
   sourceImageDataUrl?: string; // For image editing regeneration
   tokens?: TokenData[];
@@ -542,6 +545,9 @@ class AppStore {
   // Performance metrics
   ttftMs = $state<number | null>(null); // Time to first token in ms
   tps = $state<number | null>(null); // Tokens per second
+  promptTps = $state<number | null>(null); // Prompt (prefill) tokens per second
+  peakMemoryBytes = $state<number | null>(null); // Peak memory usage during generation
+  prefixCacheHit = $state<"none" | "partial" | "exact" | null>(null);
   totalTokens = $state<number>(0); // Total tokens in current response
   prefillProgress = $state<PrefillProgress | null>(null);
 
@@ -1678,6 +1684,9 @@ class AppStore {
     this.currentResponse = prefixText;
     this.ttftMs = null;
     this.tps = null;
+    this.promptTps = null;
+    this.peakMemoryBytes = null;
+    this.prefixCacheHit = null;
     this.totalTokens = tokensToKeep.length;
 
     try {
@@ -1832,10 +1841,7 @@ class AppStore {
         },
         {
           generation_stats: (data) => {
-            const stats = data as { generation_tps: number };
-            if (stats.generation_tps > 0) {
-              this.tps = stats.generation_tps;
-            }
+            this.applyGenerationStats(data);
           },
         },
       );
@@ -1853,6 +1859,11 @@ class AppStore {
           m.tokens = [...collectedTokens];
           if (this.ttftMs !== null) m.ttftMs = this.ttftMs;
           if (this.tps !== null) m.tps = this.tps;
+          if (this.promptTps !== null) m.promptTps = this.promptTps;
+          if (this.peakMemoryBytes !== null)
+            m.peakMemoryBytes = this.peakMemoryBytes;
+          if (this.prefixCacheHit !== null)
+            m.prefixCacheHit = this.prefixCacheHit;
         });
         this.syncActiveMessagesIfNeeded(targetConversationId);
         this.persistConversation(targetConversationId);
@@ -2044,10 +2055,7 @@ class AppStore {
         },
         {
           generation_stats: (data) => {
-            const stats = data as { generation_tps: number };
-            if (stats.generation_tps > 0) {
-              this.tps = stats.generation_tps;
-            }
+            this.applyGenerationStats(data);
           },
         },
       );
@@ -2103,6 +2111,41 @@ class AppStore {
     // Clear stats when model changes
     this.ttftMs = null;
     this.tps = null;
+    this.promptTps = null;
+    this.peakMemoryBytes = null;
+    this.prefixCacheHit = null;
+  }
+
+  /**
+   * Parse a `generation_stats` SSE comment payload (snake_case, since it's
+   * emitted via plain model_dump_json() with no by_alias) and update the
+   * live performance-metric state fields. Returns the parsed stats so
+   * callers can persist them onto a specific message if needed.
+   */
+  private applyGenerationStats(raw: unknown): {
+    generationTps: number;
+    promptTps: number;
+    peakMemoryBytes: number | null;
+    prefixCacheHit: "none" | "partial" | "exact" | null;
+  } {
+    const stats = (raw ?? {}) as {
+      generation_tps?: number;
+      prompt_tps?: number;
+      peak_memory_usage?: { in_bytes?: number };
+      prefix_cache_hit?: "none" | "partial" | "exact";
+    };
+
+    const generationTps = stats.generation_tps ?? 0;
+    const promptTps = stats.prompt_tps ?? 0;
+    const peakMemoryBytes = stats.peak_memory_usage?.in_bytes ?? null;
+    const prefixCacheHit = stats.prefix_cache_hit ?? null;
+
+    if (generationTps > 0) this.tps = generationTps;
+    if (promptTps > 0) this.promptTps = promptTps;
+    if (peakMemoryBytes !== null) this.peakMemoryBytes = peakMemoryBytes;
+    if (prefixCacheHit !== null) this.prefixCacheHit = prefixCacheHit;
+
+    return { generationTps, promptTps, peakMemoryBytes, prefixCacheHit };
   }
 
   /**
@@ -2319,6 +2362,9 @@ class AppStore {
     this.currentResponse = "";
     this.ttftMs = null;
     this.tps = null;
+    this.promptTps = null;
+    this.peakMemoryBytes = null;
+    this.prefixCacheHit = null;
     this.totalTokens = 0;
 
     // Build attachments from files
@@ -2668,10 +2714,8 @@ class AppStore {
             };
           },
           generation_stats: (data) => {
-            const stats = data as { generation_tps: number };
-
-            if (stats.generation_tps > 0) {
-              this.tps = stats.generation_tps;
+            const { generationTps } = this.applyGenerationStats(data);
+            if (generationTps > 0) {
               serverTpsReceived = true;
             }
           },
@@ -2707,6 +2751,15 @@ class AppStore {
             }
             if (this.tps !== null) {
               msg.tps = this.tps;
+            }
+            if (this.promptTps !== null) {
+              msg.promptTps = this.promptTps;
+            }
+            if (this.peakMemoryBytes !== null) {
+              msg.peakMemoryBytes = this.peakMemoryBytes;
+            }
+            if (this.prefixCacheHit !== null) {
+              msg.prefixCacheHit = this.prefixCacheHit;
             }
           },
         );
@@ -3271,6 +3324,9 @@ class AppStore {
     // Clear performance stats
     this.ttftMs = null;
     this.tps = null;
+    this.promptTps = null;
+    this.peakMemoryBytes = null;
+    this.prefixCacheHit = null;
   }
 
   /**
@@ -3489,6 +3545,9 @@ export const currentResponse = () => appStore.currentResponse;
 export const isLoading = () => appStore.isLoading;
 export const ttftMs = () => appStore.ttftMs;
 export const tps = () => appStore.tps;
+export const promptTps = () => appStore.promptTps;
+export const peakMemoryBytes = () => appStore.peakMemoryBytes;
+export const prefixCacheHit = () => appStore.prefixCacheHit;
 export const totalTokens = () => appStore.totalTokens;
 export const prefillProgress = () => appStore.prefillProgress;
 export const topologyData = () => appStore.topologyData;
