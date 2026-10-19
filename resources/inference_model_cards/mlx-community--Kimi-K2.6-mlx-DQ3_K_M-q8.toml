@@ -18,7 +18,7 @@ in_bytes = 470628683776
 image_token_id = 163605
 model_type = "kimi_vl"
 weights_repo = "exolabs/Kimi-K2.6-vision"
-processor_repo = "moonshotai/Kimi-K2.6"
+processor_repo = "exolabs/Kimi-K2.6-vision"
 
 # Source: https://huggingface.co/moonshotai/Kimi-K2.6
 [sampling_defaults]
