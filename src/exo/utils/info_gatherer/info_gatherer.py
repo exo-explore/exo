@@ -369,6 +369,38 @@ def _has_nvml_cuda() -> bool:
         return False
 
 
+def _has_apple_ane() -> bool:
+    if not IS_DARWIN:
+        return False
+    try:
+        import platform
+
+        return platform.machine().lower() in ("arm64", "aarch64")
+    except (OSError, ValueError):
+        return False
+
+
+def _has_pc_npu() -> bool:
+    try:
+        if os.environ.get("EXO_ENABLE_NPU", "").strip().lower() in ("1", "true"):
+            return True
+        try:
+            import onnxruntime as ort  # pyright: ignore[reportMissingImports]
+
+            providers = ort.get_available_providers()
+            if any(
+                keyword in provider.upper()
+                for provider in providers
+                for keyword in ("NPU", "DIRECTML", "OPENVINO", "QNN")
+            ):
+                return True
+        except (ImportError, OSError, RuntimeError, ValueError):
+            pass
+        return False
+    except (OSError, ValueError):
+        return False
+
+
 class NodeBackends(TaggedModel):
     backends: list[Backend]
 
@@ -380,6 +412,10 @@ class NodeBackends(TaggedModel):
         if await to_thread.run_sync(_has_nvml_cuda):
             backends.append(Backend.MlxCuda)
             backends.append(Backend.Vllm)
+        if await to_thread.run_sync(_has_apple_ane):
+            backends.append(Backend.AppleAne)
+        if await to_thread.run_sync(_has_pc_npu):
+            backends.append(Backend.PcNpu)
         return cls(backends=backends)
 
 

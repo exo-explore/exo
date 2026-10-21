@@ -1,11 +1,16 @@
 import os
-import resource
+
+try:
+    import resource
+except ImportError:
+    resource = None
 import traceback
 from dataclasses import dataclass
 from typing import Self, cast
 
 import loguru
 
+from exo.shared.types.backends import Backend
 from exo.shared.types.events import Event
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.instances import (
@@ -67,8 +72,9 @@ def entrypoint(
     global logger
     logger = _logger
 
-    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
+    if resource is not None:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
 
     fast_synch = use_fast_synch(
         bound_instance.instance, os.environ.get("EXO_FAST_SYNCH")
@@ -89,6 +95,17 @@ def entrypoint(
 
             builder = MfluxBuilder(
                 event_sender_downcast, cancel_receiver, bound_instance.bound_shard
+            )
+        elif any(
+            backend in (Backend.AppleAne, Backend.PcNpu)
+            for backend in bound_instance.bound_shard.model_card.backends
+        ):
+            from exo.worker.engines.npu.builder import NpuBuilder
+
+            builder = NpuBuilder(
+                model_id=bound_instance.bound_shard.model_card.model_id,
+                event_sender=event_sender_downcast,
+                cancel_receiver=cancel_receiver,
             )
         else:
             from exo.worker.engines.mlx.patches import apply_mlx_patches
