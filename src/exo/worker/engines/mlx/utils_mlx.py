@@ -55,6 +55,7 @@ from exo.shared.types.worker.instances import (
 from exo.shared.types.worker.runner_response import ModelLoadingResponse
 from exo.shared.types.worker.shards import (
     CfgShardMetadata,
+    ExpertShardMetadata,
     PipelineShardMetadata,
     ShardMetadata,
     TensorShardMetadata,
@@ -65,6 +66,7 @@ from exo.worker.engines.mlx.auto_parallel import (
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
+from exo.worker.engines.mlx.expert_parallel import expert_auto_parallel
 from exo.worker.engines.mlx.types import Model
 from exo.worker.runner.bootstrap import logger
 
@@ -268,6 +270,13 @@ def shard_and_load(
         case PipelineShardMetadata():
             logger.info(f"loading model from {model_path} with pipeline parallelism")
             model = yield from pipeline_auto_parallel(model, group, shard_metadata)
+            mx.eval(model.parameters())
+        case ExpertShardMetadata():
+            logger.info(
+                f"loading model from {model_path} with expert parallelism "
+                f"(hosted experts: {shard_metadata.expert_indices})"
+            )
+            model = yield from expert_auto_parallel(model, group, shard_metadata)
             mx.eval(model.parameters())
         case CfgShardMetadata():
             raise ValueError(
