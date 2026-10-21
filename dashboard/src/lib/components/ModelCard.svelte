@@ -53,16 +53,36 @@
     const combined = `${modelId} ${modelName || ""}`.toLowerCase();
 
     // Detect quantization level - affects memory by roughly 2x between levels
+    const is2bit =
+      combined.includes("2bit") ||
+      combined.includes("2-bit") ||
+      combined.includes(":2bit");
+    const is3bit =
+      combined.includes("3bit") ||
+      combined.includes("3-bit") ||
+      combined.includes(":3bit");
     const is4bit =
       combined.includes("4bit") ||
       combined.includes("4-bit") ||
       combined.includes(":4bit");
+    const is6bit =
+      combined.includes("6bit") ||
+      combined.includes("6-bit") ||
+      combined.includes(":6bit");
     const is8bit =
       combined.includes("8bit") ||
       combined.includes("8-bit") ||
       combined.includes(":8bit");
-    // 4-bit = 0.5 bytes/param, 8-bit = 1 byte/param, fp16 = 2 bytes/param
-    const quantMultiplier = is4bit ? 0.5 : is8bit ? 1 : 2;
+    // bytes/param: 2/3/4/6/8-bit quant, else assume fp16. Measured 2-bit
+    // checkpoints on the hub (Qwen2.5-0.5B, Llama-3-8B, Llama-3-70B-Gradient)
+    // land at ~2.3-2.8 bits/param on disk, so 2-bit uses 0.3 (not the
+    // theoretical 0.25) to stay within ~20% of real storage_size.
+    let quantMultiplier = 2;
+    if (is2bit) quantMultiplier = 0.3;
+    else if (is3bit) quantMultiplier = 0.375;
+    else if (is4bit) quantMultiplier = 0.5;
+    else if (is6bit) quantMultiplier = 0.75;
+    else if (is8bit) quantMultiplier = 1;
     const id = modelId.toLowerCase();
 
     // Known large models that don't follow the standard naming pattern
@@ -83,7 +103,11 @@
     const paramMatch = id.match(/(\d+(?:\.\d+)?)\s*b(?![a-z])/i);
     if (paramMatch) {
       const params = parseFloat(paramMatch[1]);
-      return Math.max(4, Math.round(params * quantMultiplier));
+      // Keep one decimal below 10 GB so low-bit small models are not
+      // rounded to 0, and drop the old 4 GB floor: it overstated low-bit
+      // cards (e.g. a 0.5B 2-bit model is ~0.2 GB on disk, not 4 GB).
+      const gb = params * quantMultiplier;
+      return gb < 10 ? Math.round(gb * 10) / 10 : Math.round(gb);
     }
 
     // Fallback patterns for explicit size markers (assume fp16 baseline, adjust for quant)
