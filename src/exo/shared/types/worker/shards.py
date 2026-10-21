@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import TypeAlias, final
+from typing import final
 
 from pydantic import Field
 
@@ -10,6 +10,7 @@ from exo.utils.pydantic_ext import TaggedModel
 class Sharding(str, Enum):
     Tensor = "Tensor"
     Pipeline = "Pipeline"
+    Expert = "Expert"
 
 
 class BaseShardMetadata(TaggedModel):
@@ -79,6 +80,27 @@ class TensorShardMetadata(BaseShardMetadata):
     pass
 
 
-ShardMetadata: TypeAlias = (
-    PipelineShardMetadata | CfgShardMetadata | TensorShardMetadata
+@final
+class ExpertShardMetadata(BaseShardMetadata):
+    """
+    Expert parallelism shard metadata for Mixture of Experts (MoE) models.
+
+    Allows nodes to load and execute a designated subset of experts rather
+    than requiring the entire layer's expert pool in memory.
+    """
+
+    expert_indices: list[int] = Field(default_factory=list)
+    total_experts: int = Field(ge=1, default=8)
+    top_k_experts: int = Field(ge=1, default=2)
+
+    def is_expert_assigned(self, expert_index: int) -> bool:
+        """Check if a given expert index is hosted on this device."""
+        return expert_index in self.expert_indices
+
+
+type ShardMetadata = (
+    PipelineShardMetadata
+    | CfgShardMetadata
+    | TensorShardMetadata
+    | ExpertShardMetadata
 )
