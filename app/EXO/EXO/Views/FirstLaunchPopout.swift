@@ -192,9 +192,8 @@ private struct WelcomeCalloutView: View {
         timerTask = Task {
             while countdown > 0 {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
-                if !Task.isCancelled {
-                    countdown -= 1
-                }
+                guard !Task.isCancelled else { return }
+                countdown -= 1
             }
         }
     }
