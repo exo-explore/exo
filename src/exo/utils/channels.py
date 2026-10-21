@@ -1,5 +1,6 @@
 import contextlib
 import multiprocessing as mp
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import wraps
 from inspect import iscoroutinefunction
@@ -7,7 +8,7 @@ from math import inf
 from multiprocessing.synchronize import Event
 from queue import Empty, Full
 from types import CoroutineType, TracebackType
-from typing import Any, Callable, NoReturn, Self, cast, overload, override
+from typing import Any, NoReturn, Self, cast, overload, override
 
 from anyio import (
     BrokenResourceError,
@@ -23,12 +24,17 @@ from anyio.streams.memory import (
 from anyio.streams.memory import (
     MemoryObjectSendStream as AnyioSender,
 )
-from anyio.streams.memory import (
-    MemoryObjectStreamState,
-)
-from anyio.streams.memory import (
-    MemoryObjectStreamState as AnyioState,
-)
+
+try:
+    from anyio.streams.memory import (
+        MemoryObjectStreamState,
+    )
+except ImportError:
+    from anyio.streams.memory import (  # type: ignore[attr-defined]
+        _MemoryObjectStreamState as MemoryObjectStreamState,
+    )
+
+AnyioState = MemoryObjectStreamState
 
 
 @dataclass(eq=False)
