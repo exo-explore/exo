@@ -47,6 +47,7 @@ from .api import PlaceInstanceParams as PlaceInstanceParams
 from .api import PlacementPreview as PlacementPreview
 from .api import PlacementPreviewResponse as PlacementPreviewResponse
 from .api import PowerUsage as PowerUsage
+from .api import PromoteMasterResponse as PromoteMasterResponse
 from .api import PromptTokensDetails as PromptTokensDetails
 from .api import StartDownloadParams as StartDownloadParams
 from .api import StartDownloadResponse as StartDownloadResponse
