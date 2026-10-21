@@ -166,6 +166,7 @@ class ModelCard(FrozenModel):
     hidden_size: PositiveInt
     supports_tensor: bool
     num_key_value_heads: PositiveInt | None = None
+    head_dim: PositiveInt | None = None
     tasks: list[ModelTask]
     components: list[ComponentInfo] | None = None
     family: str = ""
@@ -256,6 +257,7 @@ class ModelCard(FrozenModel):
             hidden_size=config_data.hidden_size or 0,
             supports_tensor=config_data.supports_tensor,
             num_key_value_heads=config_data.num_key_value_heads,
+            head_dim=config_data.head_dim,
             context_length=config_data.max_position_embeddings,
             tasks=[ModelTask.TextGeneration],
             trust_remote_code=False,
@@ -273,6 +275,7 @@ class ConfigData(BaseModel):
     architectures: list[str] | None = None
     hidden_size: Annotated[int, Field(ge=0)] | None = None
     num_key_value_heads: PositiveInt | None = None
+    head_dim: PositiveInt | None = None
     layer_count: int = Field(
         validation_alias=AliasChoices(
             "num_hidden_layers",
@@ -316,6 +319,7 @@ class ConfigData(BaseModel):
                 "architectures",
                 "hidden_size",
                 "num_key_value_heads",
+                "head_dim",
                 "max_position_embeddings",
                 "num_hidden_layers",
                 "num_layers",
