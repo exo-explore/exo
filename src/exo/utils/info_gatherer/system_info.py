@@ -56,6 +56,84 @@ async def get_friendly_name() -> str:
     return process.stdout.decode("utf-8", errors="replace").strip() or hostname
 
 
+def get_heuristic_interface_type(ifname: str) -> InterfaceType:
+    """Heuristic identification of interface type based on interface name prefix.
+
+    Provides cross-platform support for Linux, Windows, and macOS fallback,
+    referencing old exo helpers.py#L283.
+    """
+    ifname_lower = ifname.lower()
+    if ifname_lower.startswith(("tb5", "thunderbolt5")):
+        return "tb5"
+    if ifname_lower.startswith(("tb", "thunderbolt", "ten", "nx")):
+        return "thunderbolt"
+    if ifname_lower.startswith(("ib", "mlx")):
+        return "rdma"
+    if (
+        ifname_lower.startswith(
+            (
+                "docker",
+                "br-",
+                "veth",
+                "cni",
+                "flannel",
+                "calico",
+                "weave",
+                "tun",
+                "tap",
+                "vtun",
+                "utun",
+                "gif",
+                "stf",
+                "awdl",
+                "llw",
+                "lo",
+            )
+        )
+        or "bridge" in ifname_lower
+    ):
+        return "virtual"
+    if ifname_lower.startswith(("wlan", "wifi", "wl")):
+        return "wifi"
+    if ifname_lower.startswith(("eth", "en", "eno", "ens", "enp")):
+        return "ethernet"
+    return "unknown"
+
+
+def _parse_networksetup_ports(output: str) -> dict[str, InterfaceType]:
+    """Parse text output of networksetup -listallhardwareports."""
+    types: dict[str, InterfaceType] = {}
+    current_type: InterfaceType = "unknown"
+
+    for line in output.splitlines():
+        if line.startswith("Hardware Port:"):
+            port_name = line.split(":", 1)[1].strip()
+            port_lower = port_name.lower()
+            if "thunderbolt 5" in port_lower or "tb5" in port_lower:
+                current_type = "tb5"
+            elif "thunderbolt" in port_lower:
+                current_type = "thunderbolt"
+            elif "wi-fi" in port_lower or "airport" in port_lower:
+                current_type = "wifi"
+            elif "ethernet" in port_lower or "lan" in port_lower:
+                current_type = "ethernet"
+            else:
+                current_type = "unknown"
+        elif line.startswith("Device:"):
+            device = line.split(":", 1)[1].strip()
+            # If current_type is unknown and device is non-default enX, mark maybe_ethernet
+            if (
+                current_type == "unknown"
+                and device.startswith("en")
+                and device not in ["en0", "en1"]
+            ):
+                types[device] = "maybe_ethernet"
+            else:
+                types[device] = current_type
+
+    return types
+
+
 async def _get_interface_types_from_networksetup() -> dict[str, InterfaceType]:
     """Parse networksetup -listallhardwareports to get interface types."""
     if sys.platform != "darwin":
@@ -66,41 +144,24 @@ async def _get_interface_types_from_networksetup() -> dict[str, InterfaceType]:
     except CalledProcessError:
         return {}
 
-    types: dict[str, InterfaceType] = {}
-    current_type: InterfaceType = "unknown"
-
-    for line in result.stdout.decode().splitlines():
-        if line.startswith("Hardware Port:"):
-            port_name = line.split(":", 1)[1].strip()
-            if "Wi-Fi" in port_name:
-                current_type = "wifi"
-            elif "Ethernet" in port_name or "LAN" in port_name:
-                current_type = "ethernet"
-            elif port_name.startswith("Thunderbolt"):
-                current_type = "thunderbolt"
-            else:
-                current_type = "unknown"
-        elif line.startswith("Device:"):
-            device = line.split(":", 1)[1].strip()
-            # enX is ethernet adapters or thunderbolt - these must be deprioritised
-            if device.startswith("en") and device not in ["en0", "en1"]:
-                current_type = "maybe_ethernet"
-            types[device] = current_type
-
-    return types
+    return _parse_networksetup_ports(result.stdout.decode())
 
 
 async def get_network_interfaces() -> list[NetworkInterfaceInfo]:
-    """
-    Retrieves detailed network interface information on macOS.
-    Parses output from 'networksetup -listallhardwareports' and 'ifconfig'
-    to determine interface names, IP addresses, and types (ethernet, wifi, vpn, other).
-    Returns a list of NetworkInterfaceInfo objects.
+    """Retrieves detailed network interface information.
+
+    Parses hardware ports on macOS or uses heuristic name inspection across
+    Linux/Windows to determine interface names, IP addresses, and types (TB5,
+    Thunderbolt, Ethernet, WiFi, RDMA, Virtual).
     """
     interfaces_info: list[NetworkInterfaceInfo] = []
     interface_types = await _get_interface_types_from_networksetup()
 
     for iface, services in psutil.net_if_addrs().items():
+        detected_type = interface_types.get(iface, "unknown")
+        if detected_type == "unknown":
+            detected_type = get_heuristic_interface_type(iface)
+
         for service in services:
             match service.family:
                 case socket.AF_INET | socket.AF_INET6:
@@ -108,7 +169,7 @@ async def get_network_interfaces() -> list[NetworkInterfaceInfo]:
                         NetworkInterfaceInfo(
                             name=iface,
                             ip_address=service.address,
-                            interface_type=interface_types.get(iface, "unknown"),
+                            interface_type=detected_type,
                         )
                     )
                 case _:

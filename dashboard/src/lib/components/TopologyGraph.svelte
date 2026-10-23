@@ -59,7 +59,10 @@
         (iface.addresses || []).some((addr) => addr === cleanIp || addr === ip),
       );
       if (matchFromInterfaces?.name) {
-        return matchFromInterfaces.name;
+        const typeTag = matchFromInterfaces.type
+          ? ` [${matchFromInterfaces.type}]`
+          : "";
+        return `${matchFromInterfaces.name}${typeTag}`;
       }
 
       if (node.ip_to_interface) {
@@ -67,7 +70,11 @@
           node.ip_to_interface[cleanIp] ||
           (ip ? node.ip_to_interface[ip] : undefined);
         if (mapped && mapped.trim().length > 0) {
-          return mapped;
+          const type =
+            node.ip_to_interface_type?.[cleanIp] ||
+            (ip ? node.ip_to_interface_type?.[ip] : undefined);
+          const typeTag = type ? ` [${type}]` : "";
+          return `${mapped}${typeTag}`;
         }
       }
       return null;
@@ -294,6 +301,7 @@
     // Draw edges
     const linksGroup = svg.append("g").attr("class", "links-group");
     const arrowsGroup = svg.append("g").attr("class", "arrows-group");
+    const badgesGroup = svg.append("g").attr("class", "connection-badges-group");
     const debugLabelsGroup = svg.append("g").attr("class", "debug-edge-labels");
 
     type ConnectionInfo = {
@@ -302,6 +310,15 @@
       ip: string;
       ifaceLabel: string;
       missingIface: boolean;
+      connectionType?: string;
+      connectionCategory?:
+        | "tb5"
+        | "tb"
+        | "ethernet"
+        | "wifi"
+        | "rdma"
+        | "virtual"
+        | "unknown";
     };
     type PairEntry = {
       a: string;
@@ -309,6 +326,15 @@
       aToB: boolean;
       bToA: boolean;
       connections: ConnectionInfo[];
+      primaryType: string;
+      primaryCategory:
+        | "tb5"
+        | "tb"
+        | "ethernet"
+        | "wifi"
+        | "rdma"
+        | "virtual"
+        | "unknown";
     };
     type DebugEdgeLabelEntry = {
       connections: ConnectionInfo[];
@@ -332,6 +358,8 @@
         aToB: false,
         bToA: false,
         connections: [],
+        primaryType: edge.connectionType || "Ethernet",
+        primaryCategory: edge.connectionCategory || "ethernet",
       };
 
       if (edge.source === a) entry.aToB = true;
@@ -352,31 +380,84 @@
         missingIface = ifaceInfo.missing;
       }
 
+      const connType = edge.connectionType || "Ethernet";
+      const connCat = edge.connectionCategory || "ethernet";
+
       entry.connections.push({
         from: edge.source,
         to: edge.target,
         ip,
         ifaceLabel,
         missingIface,
+        connectionType: connType,
+        connectionCategory: connCat,
       });
+
+      // Update primary connection type based on hardware hierarchy:
+      // TB5 > TB > RDMA > Ethernet > WiFi > Virtual > Unknown
+      const priorityOrder = [
+        "tb5",
+        "tb",
+        "rdma",
+        "ethernet",
+        "wifi",
+        "virtual",
+        "unknown",
+      ];
+      const currentRank = priorityOrder.indexOf(entry.primaryCategory);
+      const newRank = priorityOrder.indexOf(connCat);
+      if (newRank !== -1 && (currentRank === -1 || newRank < currentRank)) {
+        entry.primaryType = connType;
+        entry.primaryCategory = connCat;
+      }
+
       pairMap.set(key, entry);
     });
+
+    // Theme color dictionary for hardware connection types
+    const themeColors: Record<
+      string,
+      { stroke: string; text: string; icon: string }
+    > = {
+      tb5: { stroke: "#F59E0B", text: "#FDE68A", icon: "⚡" },
+      tb: { stroke: "#06B6D4", text: "#A5F3FC", icon: "⚡" },
+      rdma: { stroke: "#EC4899", text: "#FBCFE8", icon: "🚀" },
+      ethernet: { stroke: "#10B981", text: "#A7F3D0", icon: "🌐" },
+      wifi: { stroke: "#8B5CF6", text: "#DDD6FE", icon: "📶" },
+      virtual: { stroke: "#6B7280", text: "#E5E7EB", icon: "🔗" },
+      unknown: {
+        stroke: "var(--exo-light-gray, #B3B3B3)",
+        text: "#F3F4F6",
+        icon: "•",
+      },
+    };
 
     pairMap.forEach((entry) => {
       const posA = positionById[entry.a];
       const posB = positionById[entry.b];
       if (!posA || !posB) return;
 
-      // Base dashed line
+      const theme = themeColors[entry.primaryCategory] || themeColors.unknown;
+      const isHighSpeed =
+        entry.primaryCategory === "tb5" ||
+        entry.primaryCategory === "tb" ||
+        entry.primaryCategory === "rdma";
+      const isWireless = entry.primaryCategory === "wifi";
+
+      // Styled connection link
       linksGroup
         .append("line")
         .attr("x1", posA.x)
         .attr("y1", posA.y)
         .attr("x2", posB.x)
         .attr("y2", posB.y)
-        .attr("class", "graph-link");
+        .attr("class", `graph-link link-${entry.primaryCategory}`)
+        .attr("stroke", theme.stroke)
+        .attr("stroke-width", isHighSpeed ? "2.2" : "1.4")
+        .attr("stroke-dasharray", isWireless ? "2,4" : isHighSpeed ? "6,3" : "4,4")
+        .attr("stroke-opacity", isHighSpeed ? "0.85" : "0.55");
 
-      // Calculate midpoint and direction for arrows
+      // Calculate midpoint and direction for arrows and badges
       const dx = posB.x - posA.x;
       const dy = posB.y - posA.y;
       const len = Math.hypot(dx, dy) || 1;
@@ -384,7 +465,7 @@
       const uy = dy / len;
       const mx = (posA.x + posB.x) / 2;
       const my = (posA.y + posB.y) / 2;
-      const tipOffset = 16; // Distance from center for arrow tips
+      const tipOffset = 18; // Distance from center for arrow tips
       const carrier = 2; // Short segment length for arrow orientation
 
       // Arrow A -> B (if connection exists in that direction)
@@ -416,6 +497,52 @@
           .attr("fill", "none")
           .attr("marker-end", "url(#arrowhead)");
       }
+
+      // Render Hardware Connection Type Badge Pill at midpoint (Official TODO #14)
+      const badgeText = `${theme.icon} ${entry.primaryType}`;
+      const badgeFontSize = isMinimized ? 9 : 10;
+      const textWidth = badgeText.length * (badgeFontSize * 0.62) + 14;
+      const badgeHeight = isMinimized ? 16 : 18;
+
+      const badge = badgesGroup
+        .append("g")
+        .attr("class", "connection-badge")
+        .attr("transform", `translate(${mx}, ${my})`)
+        .style("cursor", "pointer");
+
+      badge
+        .append("rect")
+        .attr("x", -textWidth / 2)
+        .attr("y", -badgeHeight / 2)
+        .attr("width", textWidth)
+        .attr("height", badgeHeight)
+        .attr("rx", badgeHeight / 2)
+        .attr("fill", "rgba(18, 18, 24, 0.88)")
+        .attr("stroke", theme.stroke)
+        .attr("stroke-width", "1.2");
+
+      badge
+        .append("text")
+        .attr("x", 0)
+        .attr("y", 1)
+        .attr("text-anchor", "middle")
+        .attr("dominant-baseline", "middle")
+        .attr("fill", theme.text)
+        .attr("font-size", badgeFontSize)
+        .attr("font-family", "SF Mono, Monaco, monospace")
+        .attr("font-weight", "600")
+        .text(badgeText);
+
+      // Detailed tooltip via SVG title
+      const tooltipInfo = entry.connections
+        .map(
+          (c) =>
+            `${c.from.slice(0, 8)} \u2192 ${c.to.slice(0, 8)}: ${c.connectionType || entry.primaryType} (${c.ip} ${c.ifaceLabel})`,
+        )
+        .join("\n");
+      badge
+        .append("title")
+        .text(`Connection: ${entry.primaryType}\n${tooltipInfo}`);
 
       // Collect debug labels for later positioning at edges
       if (debugEnabled && entry.connections.length > 0) {
