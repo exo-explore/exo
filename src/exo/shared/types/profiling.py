@@ -5,6 +5,7 @@ from typing import Literal, Self
 
 import psutil
 
+from exo.shared.types.common import NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.thunderbolt import ThunderboltIdentifier
 from exo.utils.pydantic_ext import FrozenModel
@@ -109,3 +110,22 @@ class ThunderboltBridgeStatus(FrozenModel):
     enabled: bool
     exists: bool
     service_name: str | None = None
+
+
+class LinkTelemetry(FrozenModel):
+    """Profiled network latency, capacity, and real-time bandwidth usage for a link."""
+
+    source: NodeId
+    target: NodeId
+    target_ip: str
+    interface_name: str = ""
+    latency_ms: float = 0.0  # Profiled RTT latency in milliseconds (TODO #4)
+    bandwidth_capacity_mbps: float = 0.0  # Profiled link bandwidth capacity in MB/s (TODO #4)
+    used_bandwidth_mbps: float = 0.0  # Real-time link bandwidth usage in MB/s (TODO #5)
+    last_updated: float = 0.0
+
+
+class NodeLinkTelemetry(FrozenModel):
+    """Collection of outbound link telemetry originating from a node."""
+
+    links: Sequence[LinkTelemetry] = []
