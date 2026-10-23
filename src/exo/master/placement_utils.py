@@ -1,3 +1,4 @@
+import contextlib
 from collections.abc import Generator, Mapping
 
 from loguru import logger
@@ -8,6 +9,12 @@ from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
 from exo.shared.types.topology import Cycle, RDMAConnection, SocketConnection
+from exo.shared.types.worker.instances import (
+    Instance,
+    InstanceId,
+    MlxJacclInstance,
+    MlxRingInstance,
+)
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments
 from exo.shared.types.worker.shards import (
     CfgShardMetadata,
@@ -329,7 +336,7 @@ def _find_connection_ip(
     node_i: NodeId,
     node_j: NodeId,
     cycle_digraph: Topology,
-) -> Generator[str, None, None]:
+) -> Generator[str]:
     """Find all IP addresses that connect node i to node j."""
     for connection in cycle_digraph.get_all_connections_between(node_i, node_j):
         if isinstance(connection, SocketConnection):
@@ -459,3 +466,153 @@ def get_mlx_jaccl_coordinators(
         n: f"{get_ip_for_node(n)}:{coordinator_port}"
         for n in cycle_digraph.list_nodes()
     }
+
+
+def get_connection_priority_score(
+    ip: str,
+    node_id: NodeId,
+    node_network: Mapping[NodeId, NodeNetworkInfo],
+    ring: bool = True,
+) -> int:
+    """Calculate the connection priority score (lower number = higher priority)."""
+    other_network = node_network.get(node_id, NodeNetworkInfo())
+    ip_to_type = {
+        iface.ip_address: iface.interface_type for iface in other_network.interfaces
+    }
+    if ring:
+        priority = {
+            "thunderbolt": 0,
+            "maybe_ethernet": 1,
+            "ethernet": 2,
+            "wifi": 3,
+            "unknown": 4,
+        }
+    else:
+        priority = {
+            "ethernet": 0,
+            "wifi": 1,
+            "unknown": 2,
+            "maybe_ethernet": 3,
+            "thunderbolt": 4,
+        }
+    return priority.get(ip_to_type.get(ip, "unknown"), 2)
+
+
+def check_higher_priority_connection_upgrade(
+    instance: Instance,
+    topology: Topology,
+    node_network: Mapping[NodeId, NodeNetworkInfo],
+) -> Instance | None:
+    """Check if any connections in the instance can be upgraded to a higher-priority interface.
+
+    For example, if nodes were initially connected over WiFi and a Thunderbolt or
+    high-speed Ethernet link is subsequently plugged in and discovered in the topology.
+    Returns the upgraded Instance with a new InstanceId if an upgrade is available, else None.
+    """
+    if isinstance(instance, MlxRingInstance):
+        cycle_nodes = list(instance.hosts_by_node.keys())
+        if len(cycle_nodes) <= 1:
+            return None
+        cycle = Cycle(node_ids=cycle_nodes)
+        try:
+            candidate_hosts = get_mlx_ring_hosts_by_node(
+                selected_cycle=cycle,
+                cycle_digraph=topology,
+                ephemeral_port=instance.ephemeral_port,
+                node_network=node_network,
+            )
+        except ValueError:
+            return None
+
+        if candidate_hosts == instance.hosts_by_node:
+            return None
+
+        # Verify that candidate_hosts provides a strictly superior priority without regressing
+        improved = False
+        regressed = False
+        world_size = len(cycle_nodes)
+
+        for rank, node_id in enumerate(cycle_nodes):
+            left_rank = (rank - 1) % world_size
+            right_rank = (rank + 1) % world_size
+            curr_hosts = instance.hosts_by_node.get(node_id, [])
+            cand_hosts = candidate_hosts.get(node_id, [])
+            if len(curr_hosts) != len(cand_hosts):
+                return None
+
+            for other_idx, other_node_id in enumerate(cycle_nodes):
+                if other_idx in (left_rank, right_rank) and other_idx != rank:
+                    curr_ip = curr_hosts[other_idx].ip
+                    cand_ip = cand_hosts[other_idx].ip
+                    if curr_ip != cand_ip:
+                        curr_score = get_connection_priority_score(
+                            curr_ip, other_node_id, node_network, ring=True
+                        )
+                        cand_score = get_connection_priority_score(
+                            cand_ip, other_node_id, node_network, ring=True
+                        )
+                        if cand_score < curr_score:
+                            improved = True
+                        elif cand_score > curr_score:
+                            regressed = True
+
+        if improved and not regressed:
+            return instance.model_copy(
+                update={
+                    "instance_id": InstanceId(),
+                    "hosts_by_node": candidate_hosts,
+                }
+            )
+
+    elif isinstance(instance, MlxJacclInstance):
+        cycle_nodes = list(instance.jaccl_coordinators.keys())
+        if len(cycle_nodes) <= 1:
+            return None
+        coordinator = cycle_nodes[0]
+        sample_addr = instance.jaccl_coordinators.get(coordinator, "")
+        coord_port = 5000
+        if ":" in sample_addr:
+            with contextlib.suppress(ValueError):
+                coord_port = int(sample_addr.split(":")[-1])
+
+        subgraph = topology.get_subgraph_from_nodes(cycle_nodes)
+        try:
+            candidate_coords = get_mlx_jaccl_coordinators(
+                coordinator=coordinator,
+                coordinator_port=coord_port,
+                cycle_digraph=subgraph,
+                node_network=node_network,
+            )
+        except ValueError:
+            return None
+
+        if candidate_coords == instance.jaccl_coordinators:
+            return None
+
+        improved = False
+        regressed = False
+        for node_id, cand_addr in candidate_coords.items():
+            curr_addr = instance.jaccl_coordinators.get(node_id, "")
+            if curr_addr != cand_addr:
+                curr_ip = curr_addr.split(":")[0] if ":" in curr_addr else curr_addr
+                cand_ip = cand_addr.split(":")[0] if ":" in cand_addr else cand_addr
+                curr_score = get_connection_priority_score(
+                    curr_ip, coordinator, node_network, ring=False
+                )
+                cand_score = get_connection_priority_score(
+                    cand_ip, coordinator, node_network, ring=False
+                )
+                if cand_score < curr_score:
+                    improved = True
+                elif cand_score > curr_score:
+                    regressed = True
+
+        if improved and not regressed:
+            return instance.model_copy(
+                update={
+                    "instance_id": InstanceId(),
+                    "jaccl_coordinators": candidate_coords,
+                }
+            )
+
+    return None

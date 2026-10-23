@@ -1,6 +1,6 @@
 import time
 from collections import deque
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from itertools import islice
 
 import anyio
@@ -13,7 +13,10 @@ from exo.master.placement import (
     get_transition_events,
     place_instance,
 )
-from exo.master.placement_utils import find_ip_prioritised
+from exo.master.placement_utils import (
+    check_higher_priority_connection_upgrade,
+    find_ip_prioritised,
+)
 from exo.routing.event_router import (
     EventRouterBrokenResourceError,
     EventRouterClosedResourceError,
@@ -53,6 +56,7 @@ from exo.shared.types.events import (
     InstanceDeleted,
     InstanceLinkCreated,
     InstanceLinkDeleted,
+    InstanceReplacedAtomically,
     LocalForwarderEvent,
     NodeGatheredInfo,
     NodeTimedOut,
@@ -60,6 +64,7 @@ from exo.shared.types.events import (
     TaskCreated,
     TaskDeleted,
     TaskStatusUpdated,
+    TopologyEdgeCreated,
     TraceEventData,
     TracesCollected,
     TracesMerged,
@@ -615,7 +620,24 @@ class Master:
     async def _plan(self) -> None:
         while True:
             await self._remove_silent_nodes_and_broken_instances()
+            await self._check_and_upgrade_instance_connections()
             await anyio.sleep(PLAN_INTERVAL)
+
+    async def _check_and_upgrade_instance_connections(self) -> None:
+        for instance_id, instance in list(self.state.instances.items()):
+            upgraded = check_higher_priority_connection_upgrade(
+                instance, self.state.topology, self.state.node_network
+            )
+            if upgraded is not None:
+                logger.info(
+                    f"Dynamically migrating instance {instance_id} to higher priority connection: {upgraded.instance_id}"
+                )
+                await self.event_sender.send(
+                    InstanceReplacedAtomically(
+                        old_instance_id=instance_id,
+                        new_instance=upgraded,
+                    )
+                )
 
     async def _remove_silent_nodes_and_broken_instances(self) -> None:
         check = time.monotonic()
@@ -628,7 +650,7 @@ class Master:
         self._last_check = check
         # A node is silent only if the master was listening and didn't hear from it
         listened = timedelta(seconds=check - self._listening_since)
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         silent = {
             node_id: now - seen
             for node_id, seen in self.state.last_seen.items()
@@ -691,11 +713,11 @@ class Master:
                     logger.debug(f"Master indexing event: {str(event)[:100]}")
 
                     event = event.model_copy(
-                        update={"_master_time_stamp": datetime.now(tz=timezone.utc)}
+                        update={"_master_time_stamp": datetime.now(tz=UTC)}
                     )
                     if isinstance(event, NodeGatheredInfo):
                         event = event.model_copy(
-                            update={"when": str(datetime.now(tz=timezone.utc))}
+                            update={"when": str(datetime.now(tz=UTC))}
                         )
 
                     indexed = IndexedEvent(
@@ -705,6 +727,9 @@ class Master:
 
                     self._remember(event)
                     await self._send_indexed_event(indexed)
+
+                    if isinstance(event, (TopologyEdgeCreated, NodeGatheredInfo)):
+                        await self._check_and_upgrade_instance_connections()
 
     def _remember(self, event: Event) -> None:
         self._recent_events.append(event)
