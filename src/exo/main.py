@@ -1,6 +1,7 @@
 import argparse
 import multiprocessing as mp
 import os
+import re
 import resource
 import shutil
 import signal
@@ -16,15 +17,15 @@ from anyio.lowlevel import checkpoint as anyio_checkpoint
 from daemon import DaemonContext  # pyright: ignore[reportMissingTypeStubs]
 from exo_rs import Pidfile, PidfileError
 from loguru import logger
-from pydantic import PositiveInt
+from pydantic import Field, PositiveInt
 
-import exo.routing.topics as topics
 from exo import __version__
 from exo.api.listening_socket import ApiPortInUseError, listen_on_api_port
 from exo.api.main import API
 from exo.download.coordinator import DownloadCoordinator
 from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
+from exo.routing import topics
 from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_zid
 from exo.shared.constants import (
@@ -371,7 +372,20 @@ def main_inner(args: "Args"):
         logger.info("Running in OFFLINE mode — no internet checks, local models only")
 
     if args.bootstrap_peers:
-        raise ValueError("Bootstrap peers has been temporarily removed")
+        from exo.routing.bootstrap_connector import BootstrapConnector
+        from exo.routing.peer_resolver import BootstrapPeerResolver
+
+        resolved_peers = BootstrapPeerResolver.parse_peer_list(
+            args.bootstrap_peers, default_port=args.zenoh_port
+        )
+        if resolved_peers:
+            logger.info(
+                f"Configured {len(resolved_peers)} bootstrap peer(s): "
+                f"{[p.zenoh_locator for p in resolved_peers]}"
+            )
+            BootstrapConnector.apply_zenoh_env(resolved_peers)
+        else:
+            logger.warning("No valid bootstrap peer addresses found in configuration")
 
     if args.no_batch:
         os.environ["EXO_NO_BATCH"] = "1"
@@ -429,7 +443,7 @@ class Args(FrozenModel):
     no_batch: bool = False
     fast_synch: bool | None = None  # None = auto, True = force on, False = force off
     legacy_daemon: bool = False
-    bootstrap_peers: list[str] = []
+    bootstrap_peers: list[str] = Field(default_factory=list)
     namespace: str
     zenoh_port: int
     discovery_port: int
@@ -512,13 +526,18 @@ class Args(FrozenModel):
         )
         parser.add_argument(
             "--bootstrap-peers",
-            type=lambda s: [p for p in s.split(",") if p],
-            default=os.getenv("EXO_BOOTSTRAP_PEERS", "").split(",")
+            type=lambda s: [p.strip() for p in re.split(r"[,;\s]+", s) if p.strip()],
+            default=[
+                p.strip()
+                for p in re.split(r"[,;\s]+", os.getenv("EXO_BOOTSTRAP_PEERS", ""))
+                if p.strip()
+            ]
             if os.getenv("EXO_BOOTSTRAP_PEERS")
             else [],
             dest="bootstrap_peers",
-            # Temporarily removed: exo refuses to start when bootstrap peers are given
-            help=argparse.SUPPRESS,
+            help="Comma-separated list of bootstrap peers to connect across subnets or public IPs "
+            "(e.g. 192.168.1.100:52414, /ip4/10.0.0.5/tcp/52414, or node.example.com). "
+            "(env: EXO_BOOTSTRAP_PEERS)",
         )
         parser.add_argument(
             "--namespace",
