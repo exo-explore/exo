@@ -49,6 +49,19 @@ class MacmonMetrics(TaggedModel):
 
     @classmethod
     def from_raw(cls, raw: RawMacmonMetrics) -> Self:
+        from exo.utils.info_gatherer.memory_pressure import probe_memory_pressure
+
+        naive_avail = max(0, raw.memory.ram_total - raw.memory.ram_usage)
+        pressure_info = probe_memory_pressure(
+            ram_total=raw.memory.ram_total,
+            psutil_available=naive_avail,
+        )
+        effective_avail = (
+            pressure_info.effective_available_bytes
+            if pressure_info.effective_available_bytes is not None
+            else naive_avail
+        )
+
         return cls(
             system_profile=SystemPerformanceProfile(
                 gpu_usage=raw.gpu_usage[1],
@@ -59,9 +72,11 @@ class MacmonMetrics(TaggedModel):
             ),
             memory=MemoryUsage.from_bytes(
                 ram_total=raw.memory.ram_total,
-                ram_available=(raw.memory.ram_total - raw.memory.ram_usage),
+                ram_available=effective_avail,
                 swap_total=raw.memory.swap_total,
                 swap_available=(raw.memory.swap_total - raw.memory.swap_usage),
+                pressure_level=pressure_info.level,
+                pressure_pct=pressure_info.pressure_pct,
             ),
         )
 

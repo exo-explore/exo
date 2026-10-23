@@ -23,12 +23,16 @@ from anyio.streams.memory import (
 from anyio.streams.memory import (
     MemoryObjectSendStream as AnyioSender,
 )
-from anyio.streams.memory import (
-    MemoryObjectStreamState,
-)
-from anyio.streams.memory import (
-    MemoryObjectStreamState as AnyioState,
-)
+try:
+    from anyio.streams.memory import (
+        MemoryObjectStreamState,
+    )
+except ImportError:
+    from anyio.streams.memory import (
+        _MemoryObjectStreamState as MemoryObjectStreamState,  # type: ignore[attr-defined]
+    )
+
+AnyioState = MemoryObjectStreamState
 
 
 @dataclass(eq=False)
