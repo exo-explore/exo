@@ -66,7 +66,16 @@ class SystemPerformanceProfile(FrozenModel):
     ecpu_usage: float = 0.0
 
 
-InterfaceType = Literal["wifi", "ethernet", "maybe_ethernet", "thunderbolt", "unknown"]
+InterfaceType = Literal[
+    "wifi",
+    "ethernet",
+    "maybe_ethernet",
+    "thunderbolt",
+    "tb5",
+    "rdma",
+    "virtual",
+    "unknown",
+]
 
 
 class NetworkInterfaceInfo(FrozenModel):
