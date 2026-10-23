@@ -518,10 +518,30 @@ class InfoGatherer:
             if override_memory_env
             else None
         )
+        from .memory_pressure import probe_memory_pressure
+
         while True:
             try:
+                vm = psutil.virtual_memory()
+                pressure_info = probe_memory_pressure(
+                    ram_total=vm.total,
+                    psutil_available=vm.available,
+                )
+                avail = (
+                    override_memory
+                    if override_memory is not None
+                    else (
+                        pressure_info.effective_available_bytes
+                        if pressure_info.effective_available_bytes is not None
+                        else vm.available
+                    )
+                )
                 await self.info_sender.send(
-                    MemoryUsage.from_psutil(override_memory=override_memory)
+                    MemoryUsage.from_psutil(
+                        override_memory=avail,
+                        pressure_level=pressure_info.level,
+                        pressure_pct=pressure_info.pressure_pct,
+                    )
                 )
             except Exception as e:
                 logger.opt(exception=e).warning("Error gathering memory usage")

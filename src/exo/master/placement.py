@@ -1,7 +1,6 @@
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from typing import Sequence
 
 from exo.master.placement_utils import (
     Cycle,
@@ -30,7 +29,12 @@ from exo.shared.types.events import (
     TaskStatusUpdated,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo, NodeRdmaCtlStatus
+from exo.shared.types.profiling import (
+    MemoryPressureLevel,
+    MemoryUsage,
+    NodeNetworkInfo,
+    NodeRdmaCtlStatus,
+)
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
@@ -130,10 +134,22 @@ def _not_enough_memory(
         sum((node_memory[node].ram_available for node in cycle), start=Memory())
         for cycle in reported
     )
+    critical_nodes = [
+        str(node_id)
+        for cycle in cycles
+        for node_id in cycle.node_ids
+        if node_id in node_memory
+        and node_memory[node_id].pressure_level == MemoryPressureLevel.CRITICAL
+    ]
+    crit_msg = (
+        f" (nodes under critical memory pressure: {', '.join(sorted(set(critical_nodes)))})"
+        if critical_nodes
+        else ""
+    )
     return (
         f"Not enough memory: {command.model_card.model_id} needs "
         f"{command.model_card.storage_size.in_gb:.1f} GB, but connected nodes have at most "
-        f"{most_free.in_gb:.1f} GB free between them"
+        f"{most_free.in_gb:.1f} GB free between them{crit_msg}"
     )
 
 
@@ -475,14 +491,14 @@ def cancel_unnecessary_downloads(
         for v in vs
         if isinstance(v, (DownloadOngoing))
     ]
-    active_models = set(
+    active_models = {
         (
             node_id,
             instance.shard_assignments.runner_to_shard[runner_id].model_card.model_id,
         )
         for instance in instances.values()
         for node_id, runner_id in instance.shard_assignments.node_to_runner.items()
-    )
+    }
     for pair in currently_downloading:
         if pair not in active_models:
             commands.append(CancelDownload(target_node_id=pair[0], model_id=pair[1]))

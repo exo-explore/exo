@@ -530,6 +530,8 @@
       let ramUsed = 0;
       let gpuUsagePercent = 0;
       let sysPower: number | null = null;
+      let memoryPressureLevel: string | undefined;
+      let memoryPressurePct: number | undefined;
 
       if (macmon) {
         if (macmon.memory && macmon.memory.ram_total > 0) {
@@ -537,6 +539,8 @@
             (macmon.memory.ram_usage / macmon.memory.ram_total) * 100;
           ramTotal = macmon.memory.ram_total;
           ramUsed = macmon.memory.ram_usage;
+          memoryPressureLevel = macmon.memory.pressure_level;
+          memoryPressurePct = macmon.memory.pressure_pct;
         }
         if (macmon.temp && typeof macmon.temp.gpu_temp_avg === "number") {
           gpuTemp = Math.max(30, macmon.temp.gpu_temp_avg);
@@ -617,10 +621,14 @@
         });
 
       // Add tooltip
+      const pressureStr = memoryPressureLevel
+        ? `\nMemory Pressure: ${memoryPressureLevel.toUpperCase()}${memoryPressurePct !== undefined ? ` (${memoryPressurePct.toFixed(0)}%)` : ""}`
+        : "";
+
       nodeG
         .append("title")
         .text(
-          `${friendlyName}\nID: ${nodeInfo.id.slice(-8)}\nMemory: ${formatBytes(ramUsed)}/${formatBytes(ramTotal)}`,
+          `${friendlyName}\nID: ${nodeInfo.id.slice(-8)}\nMemory: ${formatBytes(ramUsed)}/${formatBytes(ramTotal)}${pressureStr}`,
         );
 
       if (modelLower === "mac studio") {

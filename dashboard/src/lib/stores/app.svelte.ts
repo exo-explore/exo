@@ -44,6 +44,8 @@ export interface NodeInfo {
     memory?: {
       ram_usage: number;
       ram_total: number;
+      pressure_level?: "normal" | "warning" | "critical" | "unknown";
+      pressure_pct?: number;
     };
     temp?: {
       gpu_temp_avg: number;
@@ -98,6 +100,8 @@ interface RawMemoryUsage {
   ramAvailable?: { inBytes: number };
   swapTotal?: { inBytes: number };
   swapAvailable?: { inBytes: number };
+  pressureLevel?: "normal" | "warning" | "critical" | "unknown";
+  pressurePct?: number;
 }
 
 interface RawSystemPerformanceProfile {
@@ -457,6 +461,8 @@ function transformTopology(
         memory: {
           ram_usage: ramUsage,
           ram_total: ramTotal,
+          pressure_level: memory?.pressureLevel,
+          pressure_pct: memory?.pressurePct,
         },
         temp:
           system?.temp !== undefined

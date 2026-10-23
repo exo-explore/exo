@@ -6,7 +6,11 @@ from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Topology
 from exo.shared.types.common import Host, NodeId
 from exo.shared.types.memory import Memory
-from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo
+from exo.shared.types.profiling import (
+    MemoryPressureLevel,
+    MemoryUsage,
+    NodeNetworkInfo,
+)
 from exo.shared.types.topology import Cycle, RDMAConnection, SocketConnection
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments
 from exo.shared.types.worker.shards import (
@@ -26,6 +30,13 @@ def filter_cycles_by_memory(
     filtered_cycles: list[Cycle] = []
     for cycle in cycles:
         if not all(node in node_memory for node in cycle):
+            continue
+
+        # Reject cycles containing nodes under Critical memory pressure (TODO #13)
+        if any(
+            node_memory[node_id].pressure_level == MemoryPressureLevel.CRITICAL
+            for node_id in cycle.node_ids
+        ):
             continue
 
         total_mem = sum(
@@ -99,11 +110,25 @@ def _allocate_and_validate_layers(
     total_memory: Memory,
     model_card: ModelCard,
 ) -> list[int]:
+    # Memory pressure weighting: WARNING nodes get derated (0.6x)
+    # to naturally steer layer distribution toward healthier NORMAL nodes (TODO #13)
+    weighted_capacities: list[float] = []
+    for node_id in node_ids:
+        mem = node_memory[node_id]
+        cap = float(mem.ram_available.in_bytes)
+        if mem.pressure_level == MemoryPressureLevel.WARNING:
+            cap *= 0.6
+        weighted_capacities.append(cap)
+
+    total_weighted = sum(weighted_capacities)
+    if total_weighted <= 0:
+        memory_fractions = [1.0 / len(node_ids) for _ in node_ids]
+    else:
+        memory_fractions = [c / total_weighted for c in weighted_capacities]
+
     layer_allocations = allocate_layers_proportionally(
         total_layers=model_card.n_layers,
-        memory_fractions=[
-            node_memory[node_id].ram_available / total_memory for node_id in node_ids
-        ],
+        memory_fractions=memory_fractions,
     )
 
     total_storage = model_card.storage_size
@@ -116,7 +141,8 @@ def _allocate_and_validate_layers(
             raise ValueError(
                 f"Node {i} ({node_id}) has insufficient memory: "
                 f"requires {required_memory.in_gb:.2f} GB for {node_layers} layers, "
-                f"but only has {available_memory.in_gb:.2f} GB available"
+                f"but only has {available_memory.in_gb:.2f} GB available "
+                f"(pressure level: {node_memory[node_id].pressure_level.value})"
             )
 
     return layer_allocations
@@ -329,7 +355,7 @@ def _find_connection_ip(
     node_i: NodeId,
     node_j: NodeId,
     cycle_digraph: Topology,
-) -> Generator[str, None, None]:
+) -> Generator[str]:
     """Find all IP addresses that connect node i to node j."""
     for connection in cycle_digraph.get_all_connections_between(node_i, node_j):
         if isinstance(connection, SocketConnection):

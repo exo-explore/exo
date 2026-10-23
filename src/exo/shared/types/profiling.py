@@ -1,5 +1,6 @@
 import shutil
 from collections.abc import Sequence
+from enum import Enum
 from pathlib import Path
 from typing import Literal, Self
 
@@ -10,25 +11,54 @@ from exo.shared.types.thunderbolt import ThunderboltIdentifier
 from exo.utils.pydantic_ext import FrozenModel
 
 
+class MemoryPressureLevel(str, Enum):
+    """Memory pressure levels for adaptive placement.
+
+    Implements official TODO.md #13: Memory pressure instead of memory used.
+    """
+
+    NORMAL = "normal"      # Comfortable, file caches purgeable (macOS level 1)
+    WARNING = "warning"    # Elevated pressure, compression/swapping started (macOS level 2)
+    CRITICAL = "critical"  # Severe pressure, thrashing or imminent OOM (macOS level 4)
+    UNKNOWN = "unknown"
+
+
 class MemoryUsage(FrozenModel):
     ram_total: Memory
     ram_available: Memory
     swap_total: Memory
     swap_available: Memory
+    pressure_level: MemoryPressureLevel = MemoryPressureLevel.NORMAL
+    pressure_pct: float = 0.0
 
     @classmethod
     def from_bytes(
-        cls, *, ram_total: int, ram_available: int, swap_total: int, swap_available: int
+        cls,
+        *,
+        ram_total: int,
+        ram_available: int,
+        swap_total: int,
+        swap_available: int,
+        pressure_level: MemoryPressureLevel = MemoryPressureLevel.NORMAL,
+        pressure_pct: float = 0.0,
     ) -> Self:
         return cls(
             ram_total=Memory.from_bytes(ram_total),
             ram_available=Memory.from_bytes(ram_available),
             swap_total=Memory.from_bytes(swap_total),
             swap_available=Memory.from_bytes(swap_available),
+            pressure_level=pressure_level,
+            pressure_pct=pressure_pct,
         )
 
     @classmethod
-    def from_psutil(cls, *, override_memory: int | None) -> Self:
+    def from_psutil(
+        cls,
+        *,
+        override_memory: int | None,
+        pressure_level: MemoryPressureLevel = MemoryPressureLevel.NORMAL,
+        pressure_pct: float = 0.0,
+    ) -> Self:
         vm = psutil.virtual_memory()
         sm = psutil.swap_memory()
 
@@ -37,6 +67,8 @@ class MemoryUsage(FrozenModel):
             ram_available=vm.available if override_memory is None else override_memory,
             swap_total=sm.total,
             swap_available=sm.free,
+            pressure_level=pressure_level,
+            pressure_pct=pressure_pct,
         )
 
 
