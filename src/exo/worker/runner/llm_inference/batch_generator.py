@@ -3,7 +3,7 @@ import time
 from collections import deque
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 import mlx.core as mx
 from mlx_lm.tokenizer_utils import TokenizerWrapper
@@ -330,6 +330,7 @@ class BatchGenerator(Engine):
     event_sender: MpSender[Event]
     check_for_cancel_every: int = 50
     vision_processor: VisionProcessor | None = None
+    prefill_chunk_size: int = 512
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
     _maybe_queue: list[TextGeneration] = field(default_factory=list, init=False)
@@ -337,6 +338,15 @@ class BatchGenerator(Engine):
     _all_tasks: dict[TaskId, TextGeneration] = field(default_factory=dict, init=False)
     _queue: deque[TextGeneration] = field(default_factory=deque, init=False)
     _gen: ExoBatchGenerator = field(init=False)
+    _prefilling_task: (
+        tuple[
+            TextGeneration,
+            Any,
+            GeneratorQueue[GenerationResponse],
+            Iterator[GenerationChunk | None],
+        ]
+        | None
+    ) = field(default=None, init=False)
     _active_tasks: dict[
         int,
         tuple[
@@ -405,38 +415,85 @@ class BatchGenerator(Engine):
         if not self._queue:
             self.agree_on_tasks()
 
-        # Submit any queued tasks to the engine
-        while self._queue and len(self._active_tasks) < EXO_MAX_CONCURRENT_REQUESTS:
-            task = self._queue.popleft()
+        use_chunked = hasattr(self._gen, "prepare_prefill") and hasattr(
+            self._gen, "step_prefill"
+        )
+
+        if use_chunked:
+            if (
+                self._prefilling_task is None
+                and self._queue
+                and len(self._active_tasks) < EXO_MAX_CONCURRENT_REQUESTS
+            ):
+                task = self._queue.popleft()
+                try:
+                    (
+                        session,
+                        queue,
+                        output_generator,
+                    ) = self._init_prefill_task(task)
+                    self._prefilling_task = (
+                        task,
+                        session,
+                        queue,
+                        output_generator,
+                    )
+                except PrefillCancelled:
+                    pass
+                except Exception as e:
+                    self._send_error(task, e)
+                    raise
+        else:
+            # Fallback to synchronous prefill for legacy/test engines
+            while self._queue and len(self._active_tasks) < EXO_MAX_CONCURRENT_REQUESTS:
+                task = self._queue.popleft()
+                try:
+                    uid = self._start_task(task)
+                except PrefillCancelled:
+                    continue
+                except Exception as e:
+                    self._send_error(task, e)
+                    raise
+
+                queue = GeneratorQueue[GenerationResponse]()
+                if task.task_params.bench:
+                    output_generator: Iterator[GenerationChunk | None] = (
+                        map_responses_to_chunks(r, self.model_id) for r in queue.gen()
+                    )
+                else:
+                    output_generator = apply_all_parsers(
+                        queue.gen(),
+                        apply_chat_template(self.tokenizer, task.task_params),
+                        self.tool_parser,
+                        self.tokenizer,
+                        type(self.model),
+                        self.model_id,
+                        task.task_params.tools,
+                    )
+                self._active_tasks[uid] = (task, queue, output_generator)
+
+        # Step chunked prefill if active
+        if self._prefilling_task is not None:
+            task, session, queue, output_generator = self._prefilling_task
+            budget = self.prefill_chunk_size if self._active_tasks else 4096
             try:
-                uid = self._start_task(task)
+                is_done, uid = self._gen.step_prefill(session, chunk_size=budget)
+                if is_done:
+                    assert uid is not None
+                    self._active_tasks[uid] = (task, queue, output_generator)
+                    self._prefilling_task = None
             except PrefillCancelled:
-                continue
+                self._prefilling_task = None
             except Exception as e:
                 self._send_error(task, e)
+                self._prefilling_task = None
                 raise
 
-            queue = GeneratorQueue[GenerationResponse]()
-            if task.task_params.bench:
-                output_generator: Iterator[GenerationChunk | None] = map(
-                    lambda r: map_responses_to_chunks(r, self.model_id), queue.gen()
-                )
-            else:
-                output_generator = apply_all_parsers(
-                    queue.gen(),
-                    apply_chat_template(self.tokenizer, task.task_params),
-                    self.tool_parser,
-                    self.tokenizer,
-                    type(self.model),
-                    self.model_id,
-                    task.task_params.tools,
-                )
-            self._active_tasks[uid] = (task, queue, output_generator)
-
-        if not self._gen.has_work:
+        has_work = self._gen.has_work or (self._prefilling_task is not None)
+        if not has_work:
             return self._apply_cancellations()
 
-        results = self._gen.step()
+        results = self._gen.step() if self._gen.has_work else []
 
         output: list[
             tuple[TaskId, GenerationChunk | CancelledResponse | FinishedResponse]
@@ -473,9 +530,15 @@ class BatchGenerator(Engine):
 
         cancel_all = CANCEL_ALL_TASKS in self._cancelled_tasks
 
-        uids_to_cancel: list[int] = []
         results: list[tuple[TaskId, CancelledResponse]] = []
 
+        if self._prefilling_task is not None:
+            prefill_task = self._prefilling_task[0]
+            if prefill_task.task_id in self._cancelled_tasks or cancel_all:
+                results.append((prefill_task.task_id, CancelledResponse()))
+                self._prefilling_task = None
+
+        uids_to_cancel: list[int] = []
         for uid, (task, _, _) in list(self._active_tasks.items()):
             if task.task_id in self._cancelled_tasks or cancel_all:
                 uids_to_cancel.append(uid)
@@ -517,6 +580,75 @@ class BatchGenerator(Engine):
                     ),
                 )
             )
+
+    def _init_prefill_task(
+        self, task: TextGeneration
+    ) -> tuple[
+        Any,
+        GeneratorQueue[GenerationResponse],
+        Iterator[GenerationChunk | None],
+    ]:
+        _check_for_debug_prompts(task.task_params)
+        prompt = apply_chat_template(self.tokenizer, task.task_params)
+
+        def on_prefill_progress(processed: int, total: int) -> None:
+            if self.device_rank == 0:
+                self.event_sender.send(
+                    ChunkGenerated(
+                        command_id=task.command_id,
+                        chunk=PrefillProgressChunk(
+                            model=self.model_id,
+                            processed_tokens=processed,
+                            total_tokens=total,
+                        ),
+                    )
+                )
+
+        def distributed_prompt_progress_callback() -> None:
+            self.agree_on_cancellations()
+            if self.should_cancel(task.task_id):
+                raise PrefillCancelled()
+
+            self.agree_on_tasks()
+
+        tokens_since_cancel_check = self.check_for_cancel_every
+
+        def on_generation_token() -> None:
+            nonlocal tokens_since_cancel_check
+            tokens_since_cancel_check += 1
+            if tokens_since_cancel_check >= self.check_for_cancel_every:
+                tokens_since_cancel_check = 0
+                self.agree_on_cancellations()
+                if self.should_cancel(task.task_id):
+                    self._cancelled_tasks.add(task.task_id)
+
+                self.agree_on_tasks()
+
+        session = self._gen.prepare_prefill(
+            task_params=task.task_params,
+            prompt=prompt,
+            on_prefill_progress=on_prefill_progress,
+            distributed_prompt_progress_callback=distributed_prompt_progress_callback,
+            on_generation_token=on_generation_token,
+        )
+
+        queue = GeneratorQueue[GenerationResponse]()
+        if task.task_params.bench:
+            output_generator: Iterator[GenerationChunk | None] = (
+                map_responses_to_chunks(r, self.model_id) for r in queue.gen()
+            )
+        else:
+            output_generator = apply_all_parsers(
+                queue.gen(),
+                apply_chat_template(self.tokenizer, task.task_params),
+                self.tool_parser,
+                self.tokenizer,
+                type(self.model),
+                self.model_id,
+                task.task_params.tools,
+            )
+
+        return session, queue, output_generator
 
     def _start_task(self, task: TextGeneration) -> int:
         _check_for_debug_prompts(task.task_params)
@@ -564,6 +696,7 @@ class BatchGenerator(Engine):
         )
 
     def close(self) -> None:
+        self._prefilling_task = None
         self._gen.close()
         del self.model, self.tokenizer, self.group
 

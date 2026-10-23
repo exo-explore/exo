@@ -1,8 +1,10 @@
 import contextlib
+import os
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Literal, cast
+from typing import Literal, cast
 
 import mlx.core as mx
 from mlx_lm.generate import (
@@ -38,7 +40,6 @@ from exo.worker.engines.mlx.generator.generate import (
     eos_ids_from_tokenizer,
     extract_top_logprobs,
     patch_embed_tokens,
-    prefill,
 )
 from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
 from exo.worker.engines.mlx.patches.opt_batch_gen import (
@@ -60,6 +61,7 @@ from exo.worker.runner.bootstrap import logger
 
 _MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
 REMOTE_PREFILL_MIN_TOKENS = 1000
+DEFAULT_PREFILL_CHUNK_SIZE = int(os.environ.get("EXO_PREFILL_CHUNK_SIZE", "512"))
 
 
 def _stop_sequences(task_params: TextGenerationTaskParams) -> list[str]:
@@ -68,6 +70,30 @@ def _stop_sequences(task_params: TextGenerationTaskParams) -> list[str]:
     if isinstance(task_params.stop, str):
         return [task_params.stop]
     return task_params.stop
+
+
+@dataclass
+class PrefillSession:
+    task_params: TextGenerationTaskParams
+    all_prompt_tokens: mx.array
+    prompt_tokens: mx.array
+    tokens_to_prefill: mx.array
+    cache: KVCacheType
+    prefix_hit_length: int
+    matched_index: int | None
+    is_exact_hit: bool
+    vision_ctx: contextlib.AbstractContextManager[None]
+    media_regions: list[MediaRegion]
+    sampler: Callable[[mx.array], mx.array]
+    on_prefill_progress: Callable[[int, int], None] | None = None
+    distributed_prompt_progress_callback: Callable[[], None] | None = None
+    on_generation_token: Callable[[], None] | None = None
+    processed: int = 0
+    total_tokens: int = 0
+    start_time: float = 0.0
+    remote_prefilled: bool = False
+    prefill_tps: float = 0.0
+    cache_snapshots: list[CacheSnapshot] = field(default_factory=list)
 
 
 @dataclass
@@ -120,14 +146,14 @@ class ExoBatchGenerator:
             or len(self._mlx_gen._generation_batch) > 0
         )
 
-    def submit(
+    def prepare_prefill(
         self,
         task_params: TextGenerationTaskParams,
         prompt: str,
         on_prefill_progress: Callable[[int, int], None] | None = None,
         distributed_prompt_progress_callback: Callable[[], None] | None = None,
         on_generation_token: Callable[[], None] | None = None,
-    ) -> int:
+    ) -> PrefillSession:
         all_prompt_tokens = encode_prompt(self.tokenizer, prompt)
         all_prompt_tokens = fix_unmatched_think_end_tokens(
             all_prompt_tokens, self.tokenizer
@@ -214,8 +240,8 @@ class ExoBatchGenerator:
         _prefill_tokens: int = 0
         cache_snapshots: list[CacheSnapshot] = []
         remote_prefilled = False
-        with vision_ctx:
-            if use_remote and task_params.prefill_endpoint is not None:
+        if use_remote and task_params.prefill_endpoint is not None:
+            with vision_ctx:
                 try:
                     _prefill_tps, _prefill_tokens, cache_snapshots = remote_prefill(
                         prompt_tokens[:-1],
@@ -232,101 +258,182 @@ class ExoBatchGenerator:
                         "Remote prefill failed, falling back to local prefill"
                     )
 
-            if not remote_prefilled:
-                _prefill_tps, _prefill_tokens, cache_snapshots = prefill(
-                    self.model,
-                    self.tokenizer,
-                    sampler,
-                    prompt_tokens[:-1],
-                    cache,
-                    self.group,
-                    on_prefill_progress,
-                    distributed_prompt_progress_callback,
-                )
+        if remote_prefilled or len(prompt_tokens) <= 2:
+            tokens_to_prefill = mx.array([], dtype=mx.int32)
+        else:
+            tokens_to_prefill = prompt_tokens[:-2]
 
-        prefix_cache_hit: Literal["none", "partial", "exact"] = "none"
-        if matched_index is not None and prefix_hit_length > 0:
-            assert self.kv_prefix_cache is not None
-            if is_exact_hit:
-                prefix_cache_hit = "exact"
-                _prefill_tps = self.kv_prefix_cache.prefill_tps[matched_index]
-            else:
-                prefix_cache_hit = "partial"
-
-        # We need to clamp rotating kv caches to max size so that mlx lm's _merge_caches behaves
-        for c in cache:
-            if (
-                isinstance(c, RotatingKVCache)
-                and c.keys is not None
-                and c.values is not None
-                and c.keys.shape[2] > c.max_size
-            ):
-                trim_size = c.keys.shape[2] - c.max_size
-                c.keys = c._trim(trim_size, c.keys)
-                c.values = c._trim(trim_size, c.values)
-                c._idx = c.max_size
-
-        if not is_bench or task_params.use_prefix_cache:
-            min_prefix_hit_length = max(
-                1000, system_prompt_token_count(task_params, self.tokenizer)
-            )
-            self._save_prefix_cache(
-                all_prompt_tokens,
-                list(cache),
-                cache_snapshots,
-                prefix_hit_length,
-                matched_index,
-                min_prefix_hit_length,
-                media_regions,
-                prefill_tps=_prefill_tps,
-            )
-
-        last_tokens = prompt_tokens[-2:]
-
-        logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = (
-            make_logits_processors(
-                repetition_penalty=task_params.repetition_penalty,
-                repetition_context_size=task_params.repetition_context_size
-                if task_params.repetition_context_size is not None
-                else 20,
-                presence_penalty=task_params.presence_penalty,
-                frequency_penalty=task_params.frequency_penalty,
-            )
-        )
-        if is_bench:
-            # Only sample length eos tokens
-            eos_ids = eos_ids_from_tokenizer(self.tokenizer)
-            logits_processors = [ban_token_ids(eos_ids)] + logits_processors
-
-        max_tokens = task_params.max_output_tokens or MAX_TOKENS
-
-        uids = self._mlx_gen.insert(
-            prompts=[cast(list[int], last_tokens.tolist())],
-            max_tokens=[max_tokens],
-            caches=[list(cache)],
-            samplers=[sampler],
-            logits_processors=[logits_processors],
-        )
-
-        assert len(uids) == 1
-
-        uid = uids[0]
-
-        self._active_tasks[uid] = _EngineTask(
-            uid=uid,
+        return PrefillSession(
             task_params=task_params,
             all_prompt_tokens=all_prompt_tokens,
+            prompt_tokens=prompt_tokens,
+            tokens_to_prefill=tokens_to_prefill,
+            cache=cache,
             prefix_hit_length=prefix_hit_length,
             matched_index=matched_index,
-            detokenizer=self.tokenizer.detokenizer,
-            on_generation_token=on_generation_token,
-            generation_start_time=time.perf_counter(),
-            prefill_tps=_prefill_tps,
-            prefix_cache_hit=prefix_cache_hit,
+            is_exact_hit=is_exact_hit,
+            vision_ctx=vision_ctx,
             media_regions=media_regions,
+            sampler=sampler,
+            on_prefill_progress=on_prefill_progress,
+            distributed_prompt_progress_callback=distributed_prompt_progress_callback,
+            on_generation_token=on_generation_token,
+            processed=0,
+            total_tokens=len(tokens_to_prefill),
+            start_time=time.perf_counter(),
+            remote_prefilled=remote_prefilled,
+            prefill_tps=_prefill_tps,
+            cache_snapshots=cache_snapshots,
         )
 
-        return uid
+    def step_prefill(
+        self,
+        session: PrefillSession,
+        chunk_size: int = DEFAULT_PREFILL_CHUNK_SIZE,
+    ) -> tuple[bool, int | None]:
+        """Process one chunk of prefill for the session.
+
+        Returns:
+            (is_done, uid): If prefill completed, returns (True, uid). Otherwise (False, None).
+        """
+        if not session.remote_prefilled and session.processed < session.total_tokens:
+            chunk_end = min(session.processed + chunk_size, session.total_tokens)
+            chunk = session.tokens_to_prefill[session.processed : chunk_end]
+
+            with session.vision_ctx, mx.stream(generation_stream):
+                self.model(chunk[None], cache=session.cache)
+                cache_states = [c.state for c in session.cache if hasattr(c, "state")]
+                if cache_states:
+                    mx.async_eval(*cache_states)
+
+            session.processed = chunk_end
+
+            if session.on_prefill_progress is not None:
+                session.on_prefill_progress(session.processed, session.total_tokens)
+
+            if session.distributed_prompt_progress_callback is not None:
+                session.distributed_prompt_progress_callback()
+
+        if session.processed >= session.total_tokens or session.remote_prefilled:
+            # Prefill complete: finalize and register sequence into _mlx_gen
+            if not session.remote_prefilled and session.prefill_tps == 0.0:
+                elapsed = time.perf_counter() - session.start_time
+                session.prefill_tps = (
+                    session.total_tokens / elapsed if elapsed > 0 else 0.0
+                )
+
+            prefix_cache_hit: Literal["none", "partial", "exact"] = "none"
+            if session.matched_index is not None and session.prefix_hit_length > 0:
+                assert self.kv_prefix_cache is not None
+                if session.is_exact_hit:
+                    prefix_cache_hit = "exact"
+                    session.prefill_tps = self.kv_prefix_cache.prefill_tps[
+                        session.matched_index
+                    ]
+                else:
+                    prefix_cache_hit = "partial"
+
+            # Clamp rotating kv caches to max size so that mlx lm's _merge_caches behaves
+            for c in session.cache:
+                if (
+                    isinstance(c, RotatingKVCache)
+                    and c.keys is not None
+                    and c.values is not None
+                    and c.keys.shape[2] > c.max_size
+                ):
+                    trim_size = c.keys.shape[2] - c.max_size
+                    c.keys = c._trim(trim_size, c.keys)
+                    c.values = c._trim(trim_size, c.values)
+                    c._idx = c.max_size
+
+            is_bench = session.task_params.bench
+            if not is_bench or session.task_params.use_prefix_cache:
+                min_prefix_hit_length = max(
+                    1000,
+                    system_prompt_token_count(session.task_params, self.tokenizer),
+                )
+                self._save_prefix_cache(
+                    session.all_prompt_tokens,
+                    list(session.cache),
+                    session.cache_snapshots,
+                    session.prefix_hit_length,
+                    session.matched_index,
+                    min_prefix_hit_length,
+                    session.media_regions,
+                    prefill_tps=session.prefill_tps,
+                )
+
+            last_tokens = (
+                session.prompt_tokens[-2:]
+                if len(session.prompt_tokens) >= 2
+                else session.prompt_tokens
+            )
+
+            logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = (
+                make_logits_processors(
+                    repetition_penalty=session.task_params.repetition_penalty,
+                    repetition_context_size=session.task_params.repetition_context_size
+                    if session.task_params.repetition_context_size is not None
+                    else 20,
+                    presence_penalty=session.task_params.presence_penalty,
+                    frequency_penalty=session.task_params.frequency_penalty,
+                )
+            )
+            if is_bench:
+                eos_ids = eos_ids_from_tokenizer(self.tokenizer)
+                logits_processors = [ban_token_ids(eos_ids)] + logits_processors
+
+            max_tokens = session.task_params.max_output_tokens or MAX_TOKENS
+
+            uids = self._mlx_gen.insert(
+                prompts=[cast(list[int], last_tokens.tolist())],
+                max_tokens=[max_tokens],
+                caches=[list(session.cache)],
+                samplers=[session.sampler],
+                logits_processors=[logits_processors],
+            )
+
+            assert len(uids) == 1
+            uid = uids[0]
+
+            self._active_tasks[uid] = _EngineTask(
+                uid=uid,
+                task_params=session.task_params,
+                all_prompt_tokens=session.all_prompt_tokens,
+                prefix_hit_length=session.prefix_hit_length,
+                matched_index=session.matched_index,
+                detokenizer=self.tokenizer.detokenizer,
+                on_generation_token=session.on_generation_token,
+                generation_start_time=time.perf_counter(),
+                prefill_tps=session.prefill_tps,
+                prefix_cache_hit=prefix_cache_hit,
+                media_regions=session.media_regions,
+            )
+
+            return True, uid
+
+        return False, None
+
+    def submit(
+        self,
+        task_params: TextGenerationTaskParams,
+        prompt: str,
+        on_prefill_progress: Callable[[int, int], None] | None = None,
+        distributed_prompt_progress_callback: Callable[[], None] | None = None,
+        on_generation_token: Callable[[], None] | None = None,
+    ) -> int:
+        session = self.prepare_prefill(
+            task_params=task_params,
+            prompt=prompt,
+            on_prefill_progress=on_prefill_progress,
+            distributed_prompt_progress_callback=distributed_prompt_progress_callback,
+            on_generation_token=on_generation_token,
+        )
+        while True:
+            is_done, uid = self.step_prefill(session, chunk_size=4096)
+            if is_done:
+                assert uid is not None
+                return uid
 
     def step(self) -> list[tuple[int, GenerationResponse]]:
         if not self.has_work:
@@ -549,5 +656,5 @@ class ExoBatchGenerator:
                     media_regions=media_regions,
                     prefill_tps=prefill_tps,
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001
             logger.warning("Failed to save prefix cache", exc_info=True)
