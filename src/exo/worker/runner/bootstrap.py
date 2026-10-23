@@ -1,5 +1,9 @@
 import os
-import resource
+
+try:
+    import resource
+except ImportError:
+    resource = None  # type: ignore
 import traceback
 from dataclasses import dataclass
 from typing import Self, cast
@@ -67,8 +71,9 @@ def entrypoint(
     global logger
     logger = _logger
 
-    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
+    if resource is not None:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
 
     fast_synch = use_fast_synch(
         bound_instance.instance, os.environ.get("EXO_FAST_SYNCH")
