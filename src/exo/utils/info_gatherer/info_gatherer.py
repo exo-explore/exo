@@ -20,6 +20,7 @@ from exo.shared.types.profiling import (
     DiskUsage,
     MemoryUsage,
     NetworkInterfaceInfo,
+    RdmaDeviceInfo,
     ThunderboltBridgeStatus,
 )
 from exo.shared.types.thunderbolt import (
@@ -32,6 +33,7 @@ from exo.utils.pydantic_ext import TaggedModel
 from exo.utils.task_group import TaskGroup
 
 from .macmon import MacmonMetrics
+from .rdma_info import gather_ibv_devinfo
 from .system_info import (
     get_friendly_name,
     get_model_and_chip,
@@ -212,10 +214,17 @@ class MacThunderboltConnections(TaggedModel):
 
 class RdmaCtlStatus(TaggedModel):
     enabled: bool
+    devices: Sequence[RdmaDeviceInfo] = []
 
     @classmethod
     async def gather(cls) -> Self | None:
-        if not IS_DARWIN or shutil.which("rdma_ctl") is None:
+        if IS_DARWIN:
+            return await cls._gather_darwin()
+        return await cls._gather_linux()
+
+    @classmethod
+    async def _gather_darwin(cls) -> Self | None:
+        if shutil.which("rdma_ctl") is None:
             return None
         try:
             with anyio.fail_after(5):
@@ -230,6 +239,13 @@ class RdmaCtlStatus(TaggedModel):
         if "disabled" in output:
             return cls(enabled=False)
         return None
+
+    @classmethod
+    async def _gather_linux(cls) -> Self | None:
+        if shutil.which("ibv_devinfo") is None:
+            return None
+        is_active, devices = await gather_ibv_devinfo()
+        return cls(enabled=is_active, devices=devices)
 
 
 class ThunderboltBridgeInfo(TaggedModel):
@@ -447,9 +463,9 @@ class InfoGatherer:
                 tg.start_soon(self._monitor_macmon, 1)
                 tg.start_soon(self._monitor_system_profiler_thunderbolt_data, 5)
                 tg.start_soon(self._monitor_thunderbolt_bridge_status, 10)
-                tg.start_soon(self._monitor_rdma_ctl_status, 10)
             if not IS_DARWIN:
                 tg.start_soon(self._monitor_memory_usage, 1)
+            tg.start_soon(self._monitor_rdma_ctl_status, 10)
             tg.start_soon(self._watch_system_info, 10)
             tg.start_soon(self._monitor_misc, 60)
             tg.start_soon(self._monitor_static_info, 60)

@@ -97,10 +97,32 @@ class NodeThunderboltInfo(FrozenModel):
     interfaces: Sequence[ThunderboltIdentifier] = []
 
 
+class RdmaPortInfo(FrozenModel):
+    """Information about a physical RDMA port from ibv_devinfo."""
+
+    port: int
+    state: str = "PORT_DOWN"  # e.g. "PORT_ACTIVE", "PORT_DOWN", "PORT_INIT"
+    physical_state: str = "Disabled"  # e.g. "LinkUp", "Disabled", "Polling"
+    link_layer: str = ""  # e.g. "InfiniBand", "Ethernet"
+    active_speed: str = ""  # e.g. "25.0 Gbps (EDR)", "50.0 Gbps (HDR)"
+    active_width: str = ""  # e.g. "4X", "1X"
+
+
+class RdmaDeviceInfo(FrozenModel):
+    """Information about an RDMA HCA device from ibv_devinfo."""
+
+    hca_id: str
+    transport: str = ""  # e.g. "InfiniBand (IB)", "Ethernet (RoCE)"
+    fw_ver: str = ""
+    node_guid: str = ""
+    ports: Sequence[RdmaPortInfo] = []
+
+
 class NodeRdmaCtlStatus(FrozenModel):
-    """Whether RDMA is enabled on this node (via rdma_ctl)."""
+    """Whether RDMA is enabled on this node (via rdma_ctl on macOS or ibv_devinfo on Linux)."""
 
     enabled: bool
+    devices: Sequence[RdmaDeviceInfo] = []
 
 
 class ThunderboltBridgeStatus(FrozenModel):
