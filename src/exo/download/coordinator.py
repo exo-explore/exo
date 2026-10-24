@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from itertools import count
 from pathlib import Path
@@ -65,6 +66,7 @@ class DownloadCoordinator:
     download_command_receiver: Receiver[ForwarderDownloadCommand]
     event_sender: Sender[Event]
     offline: bool = False
+    peer_source_provider: Callable[[ModelId], list[str]] | None = None
 
     # Local state
     download_status: dict[ModelId, DownloadProgress] = field(default_factory=dict)
@@ -278,14 +280,19 @@ class DownloadCoordinator:
             )
             return
 
-        if self.offline:
+        peer_sources = (
+            self.peer_source_provider(model_id)
+            if self.peer_source_provider is not None
+            else None
+        )
+        if self.offline and not peer_sources:
             logger.warning(
-                f"Offline mode: model {model_id} is not fully available locally, cannot download"
+                f"Offline mode: model {model_id} is not fully available locally or in cluster peers, cannot download"
             )
             failed = DownloadFailed(
                 shard_metadata=shard,
                 node_id=self.node_id,
-                error_message=f"Model files not found locally in offline mode: {model_id}",
+                error_message=f"Model files not found locally or in cluster peers in offline mode: {model_id}",
                 model_directory=self._default_model_dir(model_id),
             )
             self.download_status[model_id] = failed
@@ -293,10 +300,13 @@ class DownloadCoordinator:
             return
 
         # Start actual download
-        self._start_download_task(shard, initial_progress)
+        self._start_download_task(shard, initial_progress, peer_sources=peer_sources)
 
     def _start_download_task(
-        self, shard: ShardMetadata, initial_progress: RepoDownloadProgress
+        self,
+        shard: ShardMetadata,
+        initial_progress: RepoDownloadProgress,
+        peer_sources: list[str] | None = None,
     ) -> None:
         model_id = shard.model_card.model_id
 
@@ -315,7 +325,15 @@ class DownloadCoordinator:
         async def download_wrapper(cancel_scope: anyio.CancelScope) -> None:
             try:
                 with cancel_scope:
-                    await self.shard_downloader.ensure_shard(shard)
+                    try:
+                        await self.shard_downloader.ensure_shard(
+                            shard, peer_sources=peer_sources
+                        )
+                    except TypeError as te:
+                        if "peer_sources" in str(te):
+                            await self.shard_downloader.ensure_shard(shard)
+                        else:
+                            raise
             except Exception as e:
                 logger.error(f"Download failed for {model_id}: {e}")
                 failed = DownloadFailed(

@@ -68,6 +68,7 @@ class SlowShardDownloader(ShardDownloader):
         self,
         shard: ShardMetadata,
         config_only: bool = False,  # noqa: ARG002
+        peer_sources: list[str] | None = None,  # noqa: ARG002
     ) -> Path:
         # Fire an in-progress callback, then block forever (until cancelled)
         progress = RepoDownloadProgress(

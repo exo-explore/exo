@@ -8,13 +8,14 @@ import shutil
 import socket
 import time
 from collections.abc import AsyncGenerator, Iterable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import partial
 from http import HTTPStatus
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
+import aiofiles
 import anyio
 import httpx
 from anyio import BrokenResourceError, ClosedResourceError, to_thread
@@ -137,6 +138,7 @@ from exo.api.types.openai_responses import (
     ResponsesRequest,
     ResponsesResponse,
 )
+from exo.download.download_utils import resolve_existing_model
 from exo.master.image_store import ImageStore
 from exo.master.placement import place_instance as get_instance_placements
 from exo.routing.event_router import NodeEventReceiver
@@ -144,6 +146,7 @@ from exo.shared.apply import apply
 from exo.shared.constants import (
     ENABLE_DISAGGREGATION,
     EXO_CACHE_HOME,
+    EXO_DEFAULT_MODELS_DIR,
     EXO_EVENT_LOG_DIR,
     EXO_IMAGE_CACHE_DIR,
     EXO_MAX_CHUNK_SIZE,
@@ -446,6 +449,10 @@ class API:
         self.app.post("/download/start")(self.start_download)
         self.app.delete("/download/{node_id}/{model_id:path}")(self.delete_download)
         self.app.post("/download/cancel")(self.cancel_download)
+        self.app.get("/models/stream/{model_id:path}/{file_path:path}")(
+            self.stream_model_file
+        )
+        self.app.get("/models/files/{model_id:path}")(self.get_model_files)
         self.app.get("/v1/traces")(self.list_traces)
         self.app.post("/v1/traces/delete")(self.delete_traces)
         self.app.get("/v1/traces/{task_id}")(self.get_trace)
@@ -699,7 +706,7 @@ class API:
     ) -> StreamingResponse:
         _sleep = 0.1
 
-        async def _stream() -> AsyncGenerator[str, None]:
+        async def _stream() -> AsyncGenerator[str]:
             deadline = (
                 None if timeout_seconds == 0 else anyio.current_time() + timeout_seconds
             )
@@ -813,9 +820,7 @@ class API:
 
     async def _token_chunk_stream(
         self, text_generation: TextGeneration
-    ) -> AsyncGenerator[
-        TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk, None
-    ]:
+    ) -> AsyncGenerator[TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk]:
         """Yield chunks for a given command until completion.
 
         This is the internal low-level stream used by all API adapters.
@@ -1151,7 +1156,7 @@ class API:
         command_id: CommandId,
         num_images: int,
         response_format: str,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str]:
         """Generate SSE stream of partial and final images."""
         # Track chunks: {(image_index, is_partial): {chunk_index: data}}
         image_chunks: dict[tuple[int, bool], dict[int, str]] = {}
@@ -2287,6 +2292,127 @@ class API:
         await self._send_download(command)
         return CancelDownloadResponse(command_id=command.command_id)
 
+    async def get_model_files(self, model_id: str) -> JSONResponse:
+        try:
+            mid = ModelId(model_id)
+        except Exception as e:
+            raise HTTPException(
+                status_code=HTTPStatus.BAD_REQUEST, detail=str(e)
+            ) from e
+
+        model_dir = resolve_existing_model(mid)
+        if model_dir is None:
+            default_dir = EXO_DEFAULT_MODELS_DIR / mid.normalize()
+            if default_dir.is_dir():
+                model_dir = default_dir
+        if model_dir is None or not model_dir.exists():
+            raise HTTPException(
+                status_code=HTTPStatus.NOT_FOUND,
+                detail=f"Model {model_id} not found locally",
+            )
+
+        files: list[dict[str, Any]] = []
+        for p in model_dir.rglob("*"):
+            if p.is_file() and not p.name.endswith(".partial"):
+                rel_path = str(p.relative_to(model_dir)).replace("\\", "/")
+                files.append(
+                    {
+                        "path": rel_path,
+                        "size": p.stat().st_size,
+                    }
+                )
+        return JSONResponse({"model_id": model_id, "files": files})
+
+    async def stream_model_file(
+        self, model_id: str, file_path: str, request: Request
+    ) -> Response:
+        try:
+            mid = ModelId(model_id)
+        except Exception as e:
+            raise HTTPException(
+                status_code=HTTPStatus.BAD_REQUEST, detail=str(e)
+            ) from e
+
+        model_dir = resolve_existing_model(mid)
+        if model_dir is None:
+            default_dir = EXO_DEFAULT_MODELS_DIR / mid.normalize()
+            if default_dir.is_dir():
+                model_dir = default_dir
+        if model_dir is None or not model_dir.exists():
+            raise HTTPException(
+                status_code=HTTPStatus.NOT_FOUND,
+                detail=f"Model {model_id} not found",
+            )
+
+        resolved_model_dir = model_dir.resolve()
+        target_file = (model_dir / file_path).resolve()
+
+        if not target_file.is_relative_to(resolved_model_dir):
+            raise HTTPException(
+                status_code=HTTPStatus.FORBIDDEN,
+                detail="Access denied: path traversal detected",
+            )
+        if not target_file.is_file():
+            raise HTTPException(
+                status_code=HTTPStatus.NOT_FOUND,
+                detail=f"File {file_path} not found",
+            )
+
+        file_size = target_file.stat().st_size
+        range_header = request.headers.get("range") or request.headers.get("Range")
+
+        if range_header:
+            try:
+                unit, _, spec = range_header.partition("=")
+                if unit.strip().lower() == "bytes":
+                    start_str, _, end_str = spec.partition("-")
+                    start = int(start_str) if start_str.strip() else 0
+                    end = int(end_str) if end_str.strip() else file_size - 1
+                    if start < file_size and end < file_size and start <= end:
+                        content_length = end - start + 1
+
+                        async def range_stream():
+                            async with aiofiles.open(target_file, "rb") as f:
+                                await f.seek(start)
+                                remaining = content_length
+                                chunk_size = 8 * 1024 * 1024
+                                while remaining > 0:
+                                    to_read = min(chunk_size, remaining)
+                                    chunk = await f.read(to_read)
+                                    if not chunk:
+                                        break
+                                    remaining -= len(chunk)
+                                    yield chunk
+
+                        return StreamingResponse(
+                            range_stream(),
+                            status_code=HTTPStatus.PARTIAL_CONTENT,
+                            headers={
+                                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                                "Accept-Ranges": "bytes",
+                                "Content-Length": str(content_length),
+                                "Content-Type": "application/octet-stream",
+                            },
+                        )
+            except ValueError:
+                pass
+
+        async def full_stream():
+            async with aiofiles.open(target_file, "rb") as f:
+                chunk_size = 8 * 1024 * 1024
+                while chunk := await f.read(chunk_size):
+                    yield chunk
+
+        return StreamingResponse(
+            full_stream(),
+            status_code=HTTPStatus.OK,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(file_size),
+                "Content-Type": "application/octet-stream",
+            },
+        )
+
     @staticmethod
     def _get_trace_path(task_id: str) -> Path:
         trace_path = EXO_TRACING_CACHE_DIR / f"trace_{task_id}.json"
@@ -2305,9 +2431,7 @@ class API:
             # Extract task_id from filename (trace_{task_id}.json)
             task_id = trace_file.stem.removeprefix("trace_")
             stat = trace_file.stat()
-            created_at = datetime.fromtimestamp(
-                stat.st_mtime, tz=timezone.utc
-            ).isoformat()
+            created_at = datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()
             traces.append(
                 TraceListItem(
                     task_id=task_id,

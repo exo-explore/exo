@@ -1,8 +1,7 @@
 import asyncio
 from asyncio import create_task
-from collections.abc import Awaitable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
-from typing import AsyncIterator, Callable
 
 from loguru import logger
 
@@ -68,11 +67,16 @@ class SingletonShardDownloader(ShardDownloader):
         self.shard_downloader.on_progress(callback)
 
     async def ensure_shard(
-        self, shard: ShardMetadata, config_only: bool = False
+        self,
+        shard: ShardMetadata,
+        config_only: bool = False,
+        peer_sources: list[str] | None = None,
     ) -> Path:
         if shard not in self.active_downloads:
             self.active_downloads[shard] = asyncio.create_task(
-                self.shard_downloader.ensure_shard(shard, config_only)
+                self.shard_downloader.ensure_shard(
+                    shard, config_only, peer_sources=peer_sources
+                )
             )
         try:
             return await self.active_downloads[shard]
@@ -113,7 +117,10 @@ class ResumableShardDownloader(ShardDownloader):
         self.on_progress_callbacks.append(callback)
 
     async def ensure_shard(
-        self, shard: ShardMetadata, config_only: bool = False
+        self,
+        shard: ShardMetadata,
+        config_only: bool = False,
+        peer_sources: list[str] | None = None,
     ) -> Path:
         allow_patterns = ["config.json"] if config_only else None
 
@@ -137,6 +144,7 @@ class ResumableShardDownloader(ShardDownloader):
             max_parallel_downloads=self.max_parallel_downloads,
             allow_patterns=allow_patterns,
             skip_internet=self.offline,
+            peer_sources=peer_sources,
         )
 
         if has_vision_sibling:
