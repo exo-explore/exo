@@ -6,10 +6,10 @@ import shutil
 import ssl
 import time
 import traceback
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import timedelta
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Literal
 from urllib.parse import urljoin
 
 import aiofiles
@@ -37,9 +37,11 @@ from exo.shared.constants import (
     EXO_MODELS_READ_ONLY_DIRS,
 )
 from exo.shared.models.model_cards import ModelCard, ModelTask
-from exo.shared.types.common import ModelId
+from exo.shared.types.common import ModelId, NodeId
 from exo.shared.types.memory import Memory
+from exo.shared.types.state import State
 from exo.shared.types.worker.downloads import (
+    DownloadCompleted,
     DownloadProgressData,
     FileListEntry,
     ModelSafetensorsIndex,
@@ -335,7 +337,8 @@ def _scan_model_directory(
                         path=rel_path,
                         size=None,
                     )
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Error reading index file {index_file}: {e}")
             continue
 
     return list(entries_by_path.values())
@@ -623,6 +626,114 @@ async def file_meta(
         return content_length, etag
 
 
+async def fetch_file_list_from_peer(
+    model_id: ModelId,
+    peer_sources: list[str],
+) -> list[FileListEntry] | None:
+    """Fetch file list for a model from cluster peer devices."""
+    for base_url in peer_sources:
+        url = f"{base_url.rstrip('/')}/models/files/{model_id}"
+        try:
+            async with (
+                create_http_session(timeout_profile="short") as session,
+                session.get(url) as r,
+            ):
+                if r.status == 200:
+                    data = await r.json()
+                    raw_files = data.get("files", [])
+                    return [
+                        FileListEntry(
+                            path=f["path"],
+                            size=f.get("size"),
+                            type="file",
+                        )
+                        for f in raw_files
+                    ]
+        except Exception as e:
+            logger.debug(f"Failed to fetch file list from peer {url}: {e}")
+    return None
+
+
+def get_cluster_model_peer_urls(
+    model_id: ModelId,
+    state: State,
+    current_node_id: NodeId | None = None,
+) -> list[str]:
+    """Find base URLs (e.g. 'http://192.168.1.50:52415') of peer nodes in the cluster
+    that have completed the download for the given model_id.
+    Candidate IPs are prioritized by connection type (Thunderbolt > Ethernet > WiFi).
+    """
+    candidate_nodes: set[NodeId] = set()
+    for nid, dps in state.downloads.items():
+        if current_node_id is not None and nid == current_node_id:
+            continue
+        for dp in dps:
+            if (
+                isinstance(dp, DownloadCompleted)
+                and dp.shard_metadata.model_card.model_id == model_id
+            ):
+                candidate_nodes.add(nid)
+                break
+
+    if not candidate_nodes:
+        return []
+
+    peer_urls: list[str] = []
+    for peer_id in candidate_nodes:
+        peer_port = 52415
+        if current_node_id is not None:
+            for conn in state.topology.get_all_connections_between(
+                current_node_id, peer_id
+            ):
+                if hasattr(conn, "sink_multiaddr") and conn.sink_multiaddr:
+                    peer_port = conn.sink_multiaddr.port
+                    break
+
+        candidate_ips: list[str] = []
+        if current_node_id is not None:
+            for conn in state.topology.get_all_connections_between(
+                current_node_id, peer_id
+            ):
+                if conn.sink_ip not in candidate_ips:
+                    candidate_ips.append(conn.sink_ip)
+
+        if peer_id in state.node_network:
+            for iface in state.node_network[peer_id].interfaces:
+                ip = iface.ip_address
+                if ip and ip not in candidate_ips:
+                    candidate_ips.append(ip)
+
+        def _get_ip_priority_score(ip_addr: str, pid: NodeId = peer_id) -> int:
+            if pid in state.node_network:
+                for iface in state.node_network[pid].interfaces:
+                    if iface.ip_address == ip_addr:
+                        match iface.interface_type:
+                            case "thunderbolt":
+                                return 0
+                            case "maybe_ethernet":
+                                return 1
+                            case "ethernet":
+                                return 2
+                            case "wifi":
+                                return 3
+                            case _:
+                                return 4
+            return 4
+
+        candidate_ips.sort(key=_get_ip_priority_score)
+
+        for ip in candidate_ips:
+            url = (
+                f"http://[{ip}]:{peer_port}"
+                if ":" in ip
+                else f"http://{ip}:{peer_port}"
+            )
+            if url not in peer_urls:
+                peer_urls.append(url)
+
+    return peer_urls
+
+
 async def download_file_with_retry(
     model_id: ModelId,
     revision: str,
@@ -631,12 +742,19 @@ async def download_file_with_retry(
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
     on_connection_lost: Callable[[], None] = lambda: None,
     skip_internet: bool = False,
+    peer_sources: list[str] | None = None,
 ) -> Path:
     n_attempts = 5
     for attempt in range(n_attempts):
         try:
             return await _download_file(
-                model_id, revision, path, target_dir, on_progress, skip_internet
+                model_id,
+                revision,
+                path,
+                target_dir,
+                on_progress,
+                skip_internet,
+                peer_sources,
             )
         except HuggingFaceAuthenticationError:
             raise
@@ -675,6 +793,7 @@ async def _download_file(
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
     skip_internet: bool = False,
+    peer_sources: list[str] | None = None,
 ) -> Path:
     target_path = target_dir / path
 
@@ -701,14 +820,64 @@ async def _download_file(
             )
             return target_path
 
+    await aios.makedirs((target_dir / path).parent, exist_ok=True)
+    partial_path = target_dir / f"{path}.partial"
+
+    # Try streaming from cluster peers first
+    if peer_sources:
+        resume_byte_pos = (
+            (await aios.stat(partial_path)).st_size
+            if (await aios.path.exists(partial_path))
+            else None
+        )
+        for base_url in peer_sources:
+            peer_url = f"{base_url.rstrip('/')}/models/stream/{model_id}/{path}"
+            headers: dict[str, str] = {}
+            if resume_byte_pos:
+                headers["Range"] = f"bytes={resume_byte_pos}-"
+            try:
+                async with (
+                    create_http_session(timeout_profile="long") as session,
+                    session.get(peer_url, headers=headers) as r,
+                ):
+                    if r.status in [200, 206]:
+                        if r.status == 206 and "Content-Range" in r.headers:
+                            content_range = r.headers["Content-Range"]
+                            total_length = int(content_range.split("/")[-1])
+                        else:
+                            total_length = int(r.headers.get("Content-Length", 0))
+                            if resume_byte_pos and r.status == 200:
+                                resume_byte_pos = 0
+
+                        n_read = resume_byte_pos or 0
+                        async with aiofiles.open(
+                            partial_path, "ab" if resume_byte_pos else "wb"
+                        ) as f:
+                            chunk_size = 8 * 1024 * 1024
+                            while chunk := await r.content.read(chunk_size):
+                                n_read += await f.write(chunk)
+                                on_progress(n_read, total_length or n_read, False)
+
+                        if total_length and n_read == total_length:
+                            await aios.rename(partial_path, target_path)
+                            on_progress(total_length, total_length, True)
+                            logger.info(
+                                f"Successfully streamed {path} from cluster peer {base_url} ({total_length} bytes)"
+                            )
+                            return target_path
+            except Exception as e:
+                logger.warning(
+                    f"Cluster peer stream failed from {peer_url}: {e}, falling back..."
+                )
+
     if skip_internet:
         raise FileNotFoundError(
-            f"File {path} not found locally and cannot download in offline mode"
+            f"File {path} not found locally or in cluster peers, and cannot download in offline mode"
         )
 
     await aios.makedirs((target_dir / path).parent, exist_ok=True)
     length, etag = await file_meta(model_id, revision, path)
-    remote_hash = etag[:-5] if etag.endswith("-gzip") else etag
+    remote_hash = etag.removesuffix("-gzip")
     partial_path = target_dir / f"{path}.partial"
     resume_byte_pos = (
         (await aios.stat(partial_path)).st_size
@@ -879,6 +1048,7 @@ async def download_shard(
     skip_internet: bool = False,
     allow_patterns: list[str] | None = None,
     on_connection_lost: Callable[[], None] = lambda: None,
+    peer_sources: list[str] | None = None,
 ) -> tuple[Path, RepoDownloadProgress]:
     if not skip_download:
         logger.debug(f"Downloading {shard.model_card.model_id=}")
@@ -902,21 +1072,29 @@ async def download_shard(
             on_connection_lost=on_connection_lost,
         )
     except FileNotFoundError:
-        not_started_progress = RepoDownloadProgress(
-            repo_id=str(model_id),
-            repo_revision=revision,
-            shard=shard,
-            completed_files=0,
-            total_files=0,
-            downloaded=Memory.from_bytes(0),
-            downloaded_this_session=Memory.from_bytes(0),
-            total=Memory.from_bytes(0),
-            overall_speed=0.0,
-            overall_eta=timedelta(0),
-            status="not_started",
-            file_progress={},
+        peer_file_list = (
+            await fetch_file_list_from_peer(model_id, peer_sources)
+            if peer_sources
+            else None
         )
-        return EXO_DEFAULT_MODELS_DIR / model_id.normalize(), not_started_progress
+        if peer_file_list is not None:
+            file_list = peer_file_list
+        else:
+            not_started_progress = RepoDownloadProgress(
+                repo_id=str(model_id),
+                repo_revision=revision,
+                shard=shard,
+                completed_files=0,
+                total_files=0,
+                downloaded=Memory.from_bytes(0),
+                downloaded_this_session=Memory.from_bytes(0),
+                total=Memory.from_bytes(0),
+                overall_speed=0.0,
+                overall_eta=timedelta(0),
+                status="not_started",
+                file_progress={},
+            )
+            return EXO_DEFAULT_MODELS_DIR / model_id.normalize(), not_started_progress
     filtered_file_list = list(
         filter_repo_objects(
             file_list,
@@ -1049,6 +1227,7 @@ async def download_shard(
                 ),
                 on_connection_lost=on_connection_lost,
                 skip_internet=skip_internet,
+                peer_sources=peer_sources,
             )
 
     if not skip_download:

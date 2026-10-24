@@ -1,9 +1,8 @@
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from copy import copy
 from datetime import timedelta
 from pathlib import Path
-from typing import AsyncIterator, Callable
 
 from exo.download.download_utils import RepoDownloadProgress
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
@@ -19,7 +18,10 @@ from exo.shared.types.worker.shards import (
 class ShardDownloader(ABC):
     @abstractmethod
     async def ensure_shard(
-        self, shard: ShardMetadata, config_only: bool = False
+        self,
+        shard: ShardMetadata,
+        config_only: bool = False,
+        peer_sources: list[str] | None = None,
     ) -> Path:
         """
         Ensures that the shard is downloaded.
@@ -57,7 +59,10 @@ class ShardDownloader(ABC):
 
 class NoopShardDownloader(ShardDownloader):
     async def ensure_shard(
-        self, shard: ShardMetadata, config_only: bool = False
+        self,
+        shard: ShardMetadata,
+        config_only: bool = False,
+        peer_sources: list[str] | None = None,
     ) -> Path:
         return Path("/tmp/noop_shard")
 

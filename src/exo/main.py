@@ -18,13 +18,14 @@ from exo_rs import Pidfile, PidfileError
 from loguru import logger
 from pydantic import PositiveInt
 
-import exo.routing.topics as topics
 from exo import __version__
 from exo.api.listening_socket import ApiPortInUseError, listen_on_api_port
 from exo.api.main import API
 from exo.download.coordinator import DownloadCoordinator
+from exo.download.download_utils import get_cluster_model_peer_urls
 from exo.download.impl_shard_downloader import exo_shard_downloader
 from exo.master.main import Master
+from exo.routing import topics
 from exo.routing.event_router import EventRouter
 from exo.routing.router import Router, get_node_zid
 from exo.shared.constants import (
@@ -35,7 +36,7 @@ from exo.shared.constants import (
 )
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
-from exo.shared.types.common import NodeId, SessionId
+from exo.shared.types.common import ModelId, NodeId, SessionId
 from exo.shared.types.state import State
 from exo.utils import STDIO_FDS
 from exo.utils.channels import Receiver, channel
@@ -98,6 +99,13 @@ class Node:
         # Errors the very first time exo is run as dir doesn't exist
         EXO_DEFAULT_MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
+        def _get_peer_sources(mid: ModelId) -> list[str]:
+            if worker is not None:
+                return get_cluster_model_peer_urls(mid, worker.state, node_id)
+            elif api is not None:
+                return get_cluster_model_peer_urls(mid, api.state, node_id)
+            return []
+
         # Create DownloadCoordinator (unless --no-downloads)
         if not args.no_downloads:
             download_coordinator = DownloadCoordinator(
@@ -106,6 +114,7 @@ class Node:
                 event_sender=event_router.sender(),
                 download_command_receiver=router.receiver(topics.DOWNLOAD_COMMANDS),
                 offline=args.offline,
+                peer_source_provider=_get_peer_sources,
             )
         else:
             download_coordinator = None
@@ -285,6 +294,23 @@ class Node:
                                 topics.DOWNLOAD_COMMANDS
                             ),
                             offline=self.offline,
+                            peer_source_provider=(
+                                (
+                                    lambda mid: get_cluster_model_peer_urls(
+                                        mid, self.worker.state, self.node_id
+                                    )
+                                )
+                                if self.worker
+                                else (
+                                    (
+                                        lambda mid: get_cluster_model_peer_urls(
+                                            mid, self.api.state, self.node_id
+                                        )
+                                    )
+                                    if self.api
+                                    else None
+                                )
+                            ),
                         )
                         self._tg.start_soon(self.download_coordinator.run)
                     if self.worker:
