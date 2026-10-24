@@ -26,6 +26,17 @@ _RING_TRANSPORT_ABORT_RE = re.compile(
     r"^\s*\[ring\]\s+Too\s+many\s+send/recv\s+errors\.\s+Aborting\.\.\.\s*$",
     re.IGNORECASE,
 )
+_OOM_RE = re.compile(
+    r"(?:"
+    r"Out\s+of\s+memory"
+    r"|std::bad_alloc"
+    r"|CUDA\s+out\s+of\s+memory"
+    r"|MPS\s+out\s+of\s+memory"
+    r"|Cannot\s+allocate\s+memory"
+    r"|The\s+requested\s+buffer\s+size\s+.*Allocations\s+may\s+fail"
+    r")",
+    re.IGNORECASE,
+)
 
 
 class BaseRunnerDiagnostic(TaggedModel):
@@ -48,12 +59,19 @@ class RunnerRingSocketReceivingError(BaseRunnerDiagnostic):
     error_description: str
 
 
+class RunnerOutOfMemory(BaseRunnerDiagnostic):
+    pass
+
+
 class RunnerUnknown(BaseRunnerDiagnostic):
     pass
 
 
 KnownRunnerDiagnostic = (
-    RunnerMetalGpuTimeout | RunnerRingTransportError | RunnerRingSocketReceivingError
+    RunnerMetalGpuTimeout
+    | RunnerRingTransportError
+    | RunnerRingSocketReceivingError
+    | RunnerOutOfMemory
 )
 
 RunnerDiagnostic = KnownRunnerDiagnostic | RunnerUnknown
@@ -105,6 +123,12 @@ class RunnerDiagnosticCollector:
         if _RING_TRANSPORT_ABORT_RE.match(line):
             return RunnerRingTransportError(
                 message="Ring transport aborted after too many send/recv errors",
+                evidence=evidence,
+            )
+
+        if _OOM_RE.search(line):
+            return RunnerOutOfMemory(
+                message=f"Process ran out of memory: {line.strip()}",
                 evidence=evidence,
             )
 

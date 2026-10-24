@@ -1,7 +1,6 @@
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from typing import Sequence
 
 from exo.master.placement_utils import (
     Cycle,
@@ -137,6 +136,34 @@ def _not_enough_memory(
     )
 
 
+def _tensor_not_enough_memory(
+    command: PlaceInstance,
+    cycles: Sequence[Cycle],
+    node_memory: Mapping[NodeId, MemoryUsage],
+) -> str:
+    details: list[str] = []
+    model_size = command.model_card.storage_size
+    for cycle in cycles:
+        k = len(cycle)
+        req_per_node = model_size // k
+        deficient_nodes = [
+            f"node '{node}' has {node_memory[node].ram_available.in_gb:.1f} GB free"
+            for node in cycle
+            if node in node_memory and node_memory[node].ram_available < req_per_node
+        ]
+        if deficient_nodes:
+            details.append(
+                f"for {k}-node cluster (needs {req_per_node.in_gb:.1f} GB per node): {', '.join(deficient_nodes)}"
+            )
+    explanation = (
+        "; ".join(details) if details else "nodes have uneven or insufficient memory"
+    )
+    return (
+        f"Not enough per-device memory for Tensor sharding: {command.model_card.model_id} ({model_size.in_gb:.1f} GB) "
+        f"requires each node to hold an equal shard, but {explanation}. Consider using Pipeline sharding to allocate layers proportionally."
+    )
+
+
 # Runners whose memory is already in their node's report (loaded), or about to be freed
 _NOT_PENDING = (
     RunnerLoaded,
@@ -256,6 +283,23 @@ def place_instance(
                 f"{f', num_key_value_heads={kv_heads}' if kv_heads is not None else ''}"
                 f" across candidate cycles"
             )
+        tensor_memory_cycles = [
+            cycle
+            for cycle in cycles_with_sufficient_memory
+            if all(
+                node_id in node_memory
+                and node_memory[node_id].ram_available
+                >= (command.model_card.storage_size // len(cycle))
+                for node_id in cycle
+            )
+        ]
+        if not tensor_memory_cycles:
+            raise ValueError(
+                _tensor_not_enough_memory(
+                    command, cycles_with_sufficient_memory, node_memory
+                )
+            )
+        cycles_with_sufficient_memory = tensor_memory_cycles
     if command.sharding == Sharding.Pipeline and command.model_card.model_id == ModelId(
         "mlx-community/DeepSeek-V3.1-8bit"
     ):

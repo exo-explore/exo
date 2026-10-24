@@ -243,9 +243,23 @@ def _get_shard_assignments_for_pure_pipeline(
 def get_shard_assignments_for_tensor_parallel(
     model_card: ModelCard,
     cycle: Cycle,
-):
-    total_layers = model_card.n_layers
+    node_memory: Mapping[NodeId, MemoryUsage] | None = None,
+) -> ShardAssignments:
+    _validate_cycle(cycle)
     world_size = len(cycle)
+    if node_memory is not None:
+        required_per_node = model_card.storage_size // world_size
+        for i, node_id in enumerate(cycle.node_ids):
+            if node_id in node_memory:
+                available = node_memory[node_id].ram_available
+                if available < required_per_node:
+                    raise ValueError(
+                        f"Node {i} ({node_id}) has insufficient memory for tensor parallel: "
+                        f"requires {required_per_node.in_gb:.2f} GB (1/{world_size} of {model_card.storage_size.in_gb:.2f} GB), "
+                        f"but only has {available.in_gb:.2f} GB available"
+                    )
+
+    total_layers = model_card.n_layers
     runner_to_shard: dict[RunnerId, ShardMetadata] = {}
     node_to_runner: dict[NodeId, RunnerId] = {}
 
@@ -290,6 +304,7 @@ def get_shard_assignments(
             return get_shard_assignments_for_tensor_parallel(
                 model_card=model_card,
                 cycle=cycle,
+                node_memory=node_memory,
             )
 
 
