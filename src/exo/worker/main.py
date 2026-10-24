@@ -552,9 +552,19 @@ class Worker:
 
     async def _start_runner_task(self, task: Task):
         if (instance := self.state.instances.get(task.instance_id)) is not None:
-            await self.runners[
-                instance.shard_assignments.node_to_runner[self.node_id]
-            ].start_task(task)
+            runner_id = instance.shard_assignments.node_to_runner.get(self.node_id)
+            if runner_id is not None and runner_id in self.runners:
+                try:
+                    await self.runners[runner_id].start_task(task)
+                except TimeoutError:
+                    logger.error(
+                        f"Runner {runner_id} timed out acknowledging task {task.task_id} ({task.__class__.__name__})"
+                    )
+                    await self.event_sender.send(
+                        TaskStatusUpdated(
+                            task_id=task.task_id, task_status=TaskStatus.TimedOut
+                        )
+                    )
 
     async def _create_supervisor(self, task: CreateRunner) -> RunnerSupervisor:
         """Creates and stores a new AssignedRunner with initial downloading status."""

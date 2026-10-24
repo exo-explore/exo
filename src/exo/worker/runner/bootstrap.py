@@ -1,5 +1,9 @@
 import os
-import resource
+
+try:
+    import resource
+except ImportError:
+    resource = None  # type: ignore
 import traceback
 from dataclasses import dataclass
 from typing import Self, cast

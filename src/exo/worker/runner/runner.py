@@ -239,11 +239,13 @@ class Runner:
                 logger.info("runner connecting")
                 self.update_status(RunnerConnecting())
                 self.acknowledge_task(task)
+                self.event_sender.flush()
 
                 self.generator.connect(self.bound_instance)
 
                 self.send_task_status(task.task_id, TaskStatus.Complete)
                 self.update_status(RunnerConnected())
+                self.event_sender.flush()
                 logger.info("runner connected")
 
             # we load the model if it's connected with a group, or idle without a group. we should never tell a model to connect if it doesn't need to
@@ -259,6 +261,7 @@ class Runner:
                     RunnerLoading(layers_loaded=0, total_layers=total_layers)
                 )
                 self.acknowledge_task(task)
+                self.event_sender.flush()
 
                 for load_progress in self.generator.load(self.bound_instance):
                     self.update_status(
