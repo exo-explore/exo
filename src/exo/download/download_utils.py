@@ -53,6 +53,10 @@ class HuggingFaceAuthenticationError(Exception):
     """Raised when HuggingFace returns 401/403 for a model download."""
 
 
+class HuggingFaceNotFoundError(Exception):
+    """Raised when HuggingFace returns 404 for a model."""
+
+
 class HuggingFaceRateLimitError(Exception):
     """429 Huggingface code"""
 
@@ -83,8 +87,14 @@ def _parse_retry_after(headers: Mapping[str, str]) -> float | None:
 # reset window is 5 min
 _RATE_LIMIT_MAX_SLEEP_SECS = 300.0
 
+# 5m cooldown period for repeatedly failing auth/404 fetch requests.
+_FAILED_FETCH_BACKOFF_SECS = 300.0
+
 # 24h. Manually clear the cache (or `delete_model`) to force a refresh.
 _FILE_LIST_CACHE_TTL_SECS = 24 * 60 * 60
+
+# Negative cache for failed file list queries: (normalized_model_id, revision, token) -> (timestamp, exception)
+_failed_fetch_cache: dict[tuple[str, str, str | None], tuple[float, Exception]] = {}
 
 
 async def _build_auth_error_message(status_code: int, model_id: ModelId) -> str:
@@ -237,6 +247,38 @@ async def ensure_cache_dir(model_id: ModelId) -> Path:
     target = EXO_DEFAULT_MODELS_DIR / "caches" / model_id.normalize()
     await aios.makedirs(target, exist_ok=True)
     return target
+
+
+async def has_local_cache_file(model_id: ModelId, revision: str = "main") -> bool:
+    """Check if a cached file list exists on disk for this model and revision."""
+    cache_file = (
+        EXO_DEFAULT_MODELS_DIR
+        / "caches"
+        / model_id.normalize()
+        / f"{model_id.normalize()}--{revision}--file_list.json"
+    )
+    return await aios.path.exists(cache_file)
+
+
+def has_local_model_files(model_id: ModelId) -> bool:
+    """Check if any files or non-empty subdirectories exist locally for this model."""
+    normalized = model_id.normalize()
+    for search_dir in (*EXO_MODELS_READ_ONLY_DIRS, *EXO_MODELS_DIRS):
+        model_dir = search_dir / normalized
+        if model_dir.is_dir():
+            try:
+                for entry in model_dir.iterdir():
+                    if entry.is_file():
+                        return True
+                    if entry.is_dir():
+                        try:
+                            if any(entry.iterdir()):
+                                return True
+                        except OSError:
+                            continue
+            except OSError:
+                continue
+    return False
 
 
 async def delete_model(model_id: ModelId) -> bool:
@@ -421,6 +463,25 @@ async def fetch_file_list_with_cache(
             f"No internet connection and no cached file list for {model_id}"
         )
 
+    token = await get_hf_token()
+    cache_key = (model_id.normalize(), revision, token)
+    if cache_key in _failed_fetch_cache:
+        failed_time, cached_exc = _failed_fetch_cache[cache_key]
+        if time.time() - failed_time < _FAILED_FETCH_BACKOFF_SECS:
+            if await aios.path.exists(cache_file):
+                async with aiofiles.open(cache_file, "r") as f:
+                    return TypeAdapter(list[FileListEntry]).validate_json(
+                        await f.read()
+                    )
+            local_file_list = await _build_file_list_from_local_directory(
+                model_id, recursive
+            )
+            if local_file_list is not None:
+                return local_file_list
+            raise FileNotFoundError(
+                f"Failed to fetch file list for {model_id} (backing off): {cached_exc}"
+            ) from cached_exc
+
     try:
         file_list = await fetch_file_list_with_retry(
             model_id,
@@ -428,11 +489,31 @@ async def fetch_file_list_with_cache(
             recursive=recursive,
             on_connection_lost=on_connection_lost,
         )
+        _failed_fetch_cache.pop(cache_key, None)
         async with aiofiles.open(cache_file, "w") as f:
             await f.write(
                 TypeAdapter(list[FileListEntry]).dump_json(file_list).decode()
             )
         return file_list
+    except (HuggingFaceAuthenticationError, HuggingFaceNotFoundError) as e:
+        _failed_fetch_cache[cache_key] = (time.time(), e)
+        logger.warning(f"Failed to fetch file list from HF for {model_id}: {e}")
+
+        if await aios.path.exists(cache_file):
+            logger.warning(
+                f"Failed to refresh cached file list for {model_id} - using existing cached file list"
+            )
+            async with aiofiles.open(cache_file, "r") as f:
+                return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
+        local_file_list = await _build_file_list_from_local_directory(
+            model_id, recursive
+        )
+        if local_file_list is not None:
+            logger.warning(
+                f"Failed to fetch file list for {model_id} and no cache exists, using local file list"
+            )
+            return local_file_list
+        raise FileNotFoundError(f"Failed to fetch file list for {model_id}: {e}") from e
     except Exception as e:
         logger.opt(exception=e).warning(
             "Ran into exception when fetching file list from HF."
@@ -440,7 +521,7 @@ async def fetch_file_list_with_cache(
 
         if await aios.path.exists(cache_file):
             logger.warning(
-                f"No cached file list for {model_id} - using local file list"
+                f"Failed to refresh cached file list for {model_id} - using existing cached file list"
             )
             async with aiofiles.open(cache_file, "r") as f:
                 return TypeAdapter(list[FileListEntry]).validate_json(await f.read())
@@ -466,7 +547,7 @@ async def fetch_file_list_with_retry(
     for attempt in range(n_attempts):
         try:
             return await _fetch_file_list(model_id, revision, path, recursive)
-        except HuggingFaceAuthenticationError:
+        except (HuggingFaceAuthenticationError, HuggingFaceNotFoundError):
             raise
         except HuggingFaceRateLimitError as e:
             if attempt == n_attempts - 1:
@@ -507,6 +588,10 @@ async def _fetch_file_list(
         if response.status in [401, 403]:
             msg = await _build_auth_error_message(response.status, model_id)
             raise HuggingFaceAuthenticationError(msg)
+        elif response.status == 404:
+            raise HuggingFaceNotFoundError(
+                f"Model '{model_id}' was not found on Hugging Face (HTTP 404)."
+            )
         elif response.status == 429:
             raise HuggingFaceRateLimitError(
                 f"HuggingFace rate limit hit fetching file list for {model_id}",
@@ -891,6 +976,30 @@ async def download_shard(
 
     if not skip_download:
         logger.debug(f"Downloading {model_id=} with {allow_patterns=}")
+
+    # If purely querying status (skip_download=True), short-circuit if the model
+    # has neither a local metadata cache nor any files on disk. Fetching HF
+    # file list for uninstalled models causes continuous 60s background polling
+    # and authentication errors for gated models (Issue #2376).
+    if skip_download:
+        has_cache = await has_local_cache_file(model_id, revision)
+        has_files = await asyncio.to_thread(has_local_model_files, model_id)
+        if not has_cache and not has_files:
+            not_started_progress = RepoDownloadProgress(
+                repo_id=str(model_id),
+                repo_revision=revision,
+                shard=shard,
+                completed_files=0,
+                total_files=0,
+                downloaded=Memory.from_bytes(0),
+                downloaded_this_session=Memory.from_bytes(0),
+                total=Memory.from_bytes(0),
+                overall_speed=0.0,
+                overall_eta=timedelta(0),
+                status="not_started",
+                file_progress={},
+            )
+            return EXO_DEFAULT_MODELS_DIR / model_id.normalize(), not_started_progress
 
     all_start_time = time.time()
     try:
