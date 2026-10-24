@@ -11,10 +11,21 @@ from anyio import (
     move_on_after,
     sleep_forever,
 )
-from exo_rs import (
-    FromSwarm,
-    NetworkingHandle,
-)
+
+try:
+    from exo_rs import (
+        FromSwarm,
+        NetworkingHandle,
+    )
+except ImportError:
+
+    class FromSwarm:  # type: ignore[no-redef]
+        pass
+
+    class NetworkingHandle:  # type: ignore[no-redef]
+        pass
+
+
 from loguru import logger
 
 from exo.shared.constants import EXO_NODE_ZID
