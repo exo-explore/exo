@@ -1,6 +1,10 @@
 import os
-import resource
 import traceback
+
+try:
+    import resource
+except ImportError:
+    resource = None  # type: ignore[assignment]
 from dataclasses import dataclass
 from typing import Self, cast
 
