@@ -869,6 +869,11 @@
             onboardingInstanceId === launchedId &&
             !onboardingInstanceSeen
           ) {
+            const dl = onboardingModelId
+              ? getModelDownloadStatus(onboardingModelId)
+              : null;
+            if (dl?.isDownloading) return;
+
             abandonedOnboardingInstanceId = launchedId;
             failOnboardingLaunch(
               `${getOnboardingModelName()} didn't start after 30 seconds. Try again or pick another model.`,
@@ -1871,7 +1876,6 @@
               downloadPayload.total_bytes ??
               downloadPayload.totalBytes,
           );
-          if (pendingDownloaded <= 0 && pendingTotal <= 0) continue;
           const pct =
             pendingTotal > 0 ? (pendingDownloaded / pendingTotal) * 100 : 0;
           perNodeMap.set(nodeId, {
@@ -1910,6 +1914,7 @@
     let completedFiles = 0;
     let totalFiles = 0;
     let isDownloading = false;
+    let hasPending = false;
     const allFiles: DownloadProgress["files"] = [];
 
     for (const node of perNode) {
@@ -1921,10 +1926,12 @@
         completedFiles += node.progress.completedFiles;
         totalFiles += node.progress.totalFiles;
         allFiles.push(...node.progress.files);
+      } else if (node.status === "pending" || node.status === "partial") {
+        hasPending = true;
       }
     }
 
-    if (!isDownloading) {
+    if (!isDownloading && !hasPending) {
       return {
         isDownloading: false,
         progress: null,
@@ -1960,6 +1967,7 @@
     isDownloading: boolean;
     progress: DownloadProgress | null;
     perNode: NodeDownloadStatus[];
+    failedError: string | null;
   } {
     return collectDownloadStatus(modelId, nodeIds);
   }
@@ -3107,6 +3115,11 @@
         pendingChatModelId = currentModel;
         return;
       }
+      if (status.statusText === "DOWNLOADING") {
+        chatLaunchState = "downloading";
+        pendingChatModelId = currentModel;
+        return;
+      }
       if (
         status.statusText === "WARMING UP" ||
         status.statusText === "CONNECTED" ||
@@ -3118,6 +3131,32 @@
         pendingChatModelId = currentModel;
         return;
       }
+    }
+
+    // If an in-flight launch or download for currentModel is actively in progress,
+    // do not drop to idle while waiting for backend instances or download packets.
+    if (
+      pendingChatModelId === currentModel &&
+      (chatLaunchState === "downloading" || chatLaunchState === "launching")
+    ) {
+      if (dlStatus.failedError) {
+        addToast({
+          type: "error",
+          message: `Download failed: ${dlStatus.failedError}`,
+        });
+        chatLaunchState = "idle";
+        pendingChatModelId = null;
+        selectedChatCategory = null;
+      }
+      return;
+    }
+
+    // If download failed explicitly, notify user before dropping to idle
+    if (dlStatus.failedError) {
+      addToast({
+        type: "error",
+        message: `Download failed: ${dlStatus.failedError}`,
+      });
     }
 
     // Fallthrough: model exists but has no active instance/download/loading state
