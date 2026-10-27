@@ -223,6 +223,7 @@ class Master:
             _without_requests(initial_state) if initial_state is not None else State()
         )
         self._tg: TaskGroup = TaskGroup()
+        self._stopped: anyio.Event = anyio.Event()
         self.command_task_mapping: dict[CommandId, TaskId] = {}
         self.command_receiver = command_receiver
         self.local_event_receiver = local_event_receiver
@@ -259,14 +260,18 @@ class Master:
             # Event router has been closed (try-star syntax handles error groups)
             pass
         finally:
+            self.event_sender.close()
             self.global_event_sender.close()
             self.snapshot_sender.close()
             self.local_event_receiver.close()
             self.command_receiver.close()
+            self._stopped.set()
 
     async def shutdown(self):
+        """Stop the master, returning once it has stopped producing events."""
         logger.info("Stopping Master")
         self._tg.cancel_tasks()
+        await self._stopped.wait()
 
     def _first_time(self, command_id: CommandId) -> bool:
         """Whether this command hasn't been processed yet. The API sends a chat request again

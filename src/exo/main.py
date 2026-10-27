@@ -225,6 +225,20 @@ class Node:
                 # - Elect master locally if necessary
                 # - Follow it, keeping the worker's runners and the API's state
 
+                demoted = False
+                if (
+                    result.session_id.master_node_id != self.node_id
+                    and self.master is not None
+                ):
+                    logger.info(
+                        f"Node {result.session_id.master_node_id} elected master - demoting self"
+                    )
+                    # Before switching session: the event router would send whatever the
+                    # old master still emits to the new master, as part of its session
+                    await self.master.shutdown()
+                    self.master = None
+                    demoted = True
+
                 if result.is_new_master:
                     await anyio_checkpoint()
                     # Follow the new master without tearing anything down: it carries on from
@@ -261,16 +275,7 @@ class Node:
                         initial_state=self._cluster_state(),
                     )
                     self._tg.start_soon(self.master.run)
-                elif (
-                    result.session_id.master_node_id != self.node_id
-                    and self.master is not None
-                ):
-                    logger.info(
-                        f"Node {result.session_id.master_node_id} elected master - demoting self"
-                    )
-                    await self.master.shutdown()
-                    self.master = None
-                else:
+                elif not demoted:
                     logger.info(
                         f"Node {result.session_id.master_node_id} elected master"
                     )
