@@ -1,112 +1,84 @@
 #!/usr/bin/env bash
-# create-dmg.sh — Build a polished macOS DMG installer for EXO
+# create-dmg.sh: build the EXO disk image
 #
 # Usage:
 #   ./packaging/dmg/create-dmg.sh <app-path> <output-dmg> [volume-name]
 #
 # Example:
-#   ./packaging/dmg/create-dmg.sh output/EXO.app EXO-1.0.0.dmg "EXO"
+#   ./packaging/dmg/create-dmg.sh output/EXO.app EXO-1.0.0.dmg EXO
 #
-# Creates a DMG with:
-#   - Custom background image with drag-to-Applications arrow
-#   - App icon on left, Applications alias on right
-#   - Proper window size and icon positioning
+# The disk opens as a drag-to-install window: EXO.app on the left, a link to
+# Applications on the right, and a branded background (background.png and
+# background@2x.png, drawn by generate-background.py) saying "Drag EXO to
+# Applications".
+#
+# The window layout is written by dmgbuild, which creates the .DS_Store file
+# itself, so this needs neither Finder nor AppleScript and works on headless
+# CI runners. dmgbuild and its dependencies are installed from
+# requirements.txt, pinned with hashes, into a temporary environment.
 set -euo pipefail
 
-APP_PATH="${1:?Usage: create-dmg.sh <app-path> <output-dmg> [volume-name]}"
-OUTPUT_DMG="${2:?Usage: create-dmg.sh <app-path> <output-dmg> [volume-name]}"
+USAGE="Usage: create-dmg.sh <app-path> <output-dmg> [volume-name]"
+APP_PATH="${1:?$USAGE}"
+OUTPUT_DMG="${2:?$USAGE}"
 VOLUME_NAME="${3:-EXO}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BACKGROUND_SCRIPT="${SCRIPT_DIR}/generate-background.py"
-TEMP_DIR="$(mktemp -d)"
-DMG_STAGING="${TEMP_DIR}/dmg-root"
-TEMP_DMG="${TEMP_DIR}/temp.dmg"
-BACKGROUND_PNG="${TEMP_DIR}/background.png"
 
-cleanup() { rm -rf "$TEMP_DIR"; }
+if [[ ! -d $APP_PATH ]]; then
+  echo "App not found: $APP_PATH" >&2
+  exit 1
+fi
+for file in background.png background@2x.png dmgbuild-settings.py requirements.txt; do
+  if [[ ! -f "$SCRIPT_DIR/$file" ]]; then
+    echo "Missing $SCRIPT_DIR/$file" >&2
+    exit 1
+  fi
+done
+
+TEMP_DIR="$(mktemp -d)"
+MOUNT_DIR="$TEMP_DIR/mount"
+cleanup() {
+  if [[ -d $MOUNT_DIR ]]; then
+    hdiutil detach "$MOUNT_DIR" -quiet 2>/dev/null ||
+      hdiutil detach "$MOUNT_DIR" -force -quiet 2>/dev/null || true
+  fi
+  rm -rf "$TEMP_DIR"
+}
 trap cleanup EXIT
 
-echo "==> Creating DMG installer for ${VOLUME_NAME}"
+echo "==> Installing dmgbuild"
+uv venv --quiet --no-config --python 3.13 "$TEMP_DIR/venv"
+uv pip install --quiet --no-config --python "$TEMP_DIR/venv/bin/python" \
+  --require-hashes --only-binary :all: -r "$SCRIPT_DIR/requirements.txt"
 
-# ── Step 1: Generate background image ────────────────────────────────────────
-if command -v python3 &>/dev/null; then
-  python3 "$BACKGROUND_SCRIPT" "$BACKGROUND_PNG"
-  echo "    Background image generated"
-else
-  echo "    Warning: python3 not found, skipping custom background"
-  BACKGROUND_PNG=""
-fi
+echo "==> Creating ${OUTPUT_DMG}"
+"$TEMP_DIR/venv/bin/dmgbuild" \
+  -s "$SCRIPT_DIR/dmgbuild-settings.py" \
+  -D app="$APP_PATH" \
+  -D background="$SCRIPT_DIR/background.png" \
+  "$VOLUME_NAME" "$OUTPUT_DMG"
 
-# ── Step 2: Prepare staging directory ─────────────────────────────────────────
-mkdir -p "$DMG_STAGING"
-cp -R "$APP_PATH" "$DMG_STAGING/"
-ln -s /Applications "$DMG_STAGING/Applications"
+hdiutil verify -quiet "$OUTPUT_DMG"
 
-# ── Step 3: Create writable DMG ──────────────────────────────────────────────
-# Calculate required size (app size + 20MB headroom)
-APP_SIZE_KB=$(du -sk "$APP_PATH" | cut -f1)
-DMG_SIZE_KB=$((APP_SIZE_KB + 20480))
-
-hdiutil create \
-  -volname "$VOLUME_NAME" \
-  -size "${DMG_SIZE_KB}k" \
-  -fs HFS+ \
-  -layout SPUD \
-  "$TEMP_DMG"
-
-# ── Step 4: Mount and configure ──────────────────────────────────────────────
-MOUNT_DIR=$(hdiutil attach "$TEMP_DMG" -readwrite -noverify | awk -F'\t' '/Apple_HFS/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $NF); print $NF}')
-echo "    Mounted at: $MOUNT_DIR"
-
-# Copy contents
-cp -R "$DMG_STAGING/"* "$MOUNT_DIR/"
-
-# Add background image
-if [[ -n $BACKGROUND_PNG && -f $BACKGROUND_PNG ]]; then
-  mkdir -p "$MOUNT_DIR/.background"
-  cp "$BACKGROUND_PNG" "$MOUNT_DIR/.background/background.png"
-fi
-
-# ── Step 5: Configure window appearance via AppleScript ──────────────────────
-# Window: 800×400, app icon on left, Applications on right (matches Ollama layout)
-# Background image is 1600×740 (2× retina for 800×400 logical window).
+# dmgbuild copies the app with ditto, which keeps code signatures, but it
+# doesn't stop if the copy fails. Check that the copy is complete, and that it
+# is still validly signed if the original is.
+echo "==> Checking the app in the image"
 APP_NAME="$(basename "$APP_PATH")"
-
-osascript <<APPLESCRIPT
-tell application "Finder"
-    tell disk "$VOLUME_NAME"
-        open
-        set current view of container window to icon view
-        set toolbar visible of container window to false
-        set statusbar visible of container window to false
-        set bounds of container window to {200, 120, 1000, 520}
-        set opts to icon view options of container window
-        set icon size of opts to 128
-        set text size of opts to 12
-        set arrangement of opts to not arranged
-        if exists file ".background:background.png" then
-            set background picture of opts to file ".background:background.png"
-        end if
-        set position of item "$APP_NAME" of container window to {200, 190}
-        set position of item "Applications" of container window to {600, 190}
-        close
-        open
-        update without registering applications
-        delay 1
-        close
-    end tell
-end tell
-APPLESCRIPT
-
-echo "    Window layout configured"
-
-# Ensure Finder updates are flushed
-sync
-
-# ── Step 6: Finalise ─────────────────────────────────────────────────────────
+mkdir -p "$MOUNT_DIR"
+hdiutil attach "$OUTPUT_DMG" -readonly -nobrowse -noautoopen -quiet \
+  -mountpoint "$MOUNT_DIR"
+SOURCE_ENTRIES="$(find "$APP_PATH" | wc -l | tr -d ' ')"
+IMAGE_ENTRIES="$(find "$MOUNT_DIR/$APP_NAME" | wc -l | tr -d ' ')"
+if [[ $SOURCE_ENTRIES != "$IMAGE_ENTRIES" ]]; then
+  echo "The image has ${IMAGE_ENTRIES} of the app's ${SOURCE_ENTRIES} files" >&2
+  exit 1
+fi
+if codesign --verify --deep --strict "$APP_PATH" 2>/dev/null; then
+  codesign --verify --deep --strict "$MOUNT_DIR/$APP_NAME"
+fi
 hdiutil detach "$MOUNT_DIR" -quiet
-hdiutil convert "$TEMP_DMG" -format UDZO -imagekey zlib-level=9 -o "$OUTPUT_DMG"
+rmdir "$MOUNT_DIR"
 
-echo "==> DMG created: $OUTPUT_DMG"
-echo "    Size: $(du -h "$OUTPUT_DMG" | cut -f1)"
+echo "==> Created ${OUTPUT_DMG} ($(du -h "$OUTPUT_DMG" | cut -f1))"
