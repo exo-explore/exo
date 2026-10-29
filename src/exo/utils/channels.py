@@ -2,6 +2,7 @@ import contextlib
 import multiprocessing as mp
 import pickle
 import select
+import threading
 from dataclasses import dataclass, field
 from functools import wraps
 from inspect import iscoroutinefunction
@@ -248,6 +249,18 @@ class _ImmediateQueue[T]:
         self._read_lock = mp.Lock()
         self._write_lock = mp.Lock()
         self._closed = False
+        # Guards closing in this process only: a lock shared with the other process would stay
+        # held for good if that process were killed while closing.
+        self._close_lock = threading.Lock()
+
+    def __getstate__(self):
+        d = self.__dict__.copy()
+        del d["_close_lock"]
+        return d
+
+    def __setstate__(self, d: dict[str, object]) -> None:
+        self.__dict__.update(d)
+        self._close_lock = threading.Lock()
 
     def put(self, obj: T, block: bool = True, timeout: float | None = None) -> None:
         if self._closed:
@@ -287,9 +300,15 @@ class _ImmediateQueue[T]:
         return cast(T, pickle.loads(payload))
 
     def close(self) -> None:
-        self._closed = True
-        self._reader.close()
-        self._writer.close()
+        # Two threads can close at once: the owner, and a reader that the end-of-stream marker
+        # the owner writes on closing has just woken. A descriptor closed twice fails (EBADF)
+        # or closes whatever has reused its number since, so only the first close closes.
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._reader.close()
+            self._writer.close()
 
     def join_thread(self) -> None:
         """Nothing to wait for: every item put has been written already"""
