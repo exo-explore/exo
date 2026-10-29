@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 import Testing
@@ -152,12 +153,12 @@ struct StartupPreferencesTests {
         let storage = TemporaryDefaults()
         let preferences = StartupPreferences(defaults: storage.defaults)
         #expect(!preferences.onboardingCompleted)
-        #expect(preferences.startupDashboard == .showWelcome)
+        #expect(preferences.startupDashboard(launch: .manual) == .showWelcome)
 
         preferences.markOnboardingCompleted()
 
         #expect(preferences.onboardingCompleted)
-        #expect(preferences.startupDashboard == .openDashboard)
+        #expect(preferences.startupDashboard(launch: .manual) == .openDashboard)
     }
 
     @Test func upgradeFromAVersionThatShowedThePopoutEveryTimeSkipsIt() {
@@ -165,17 +166,19 @@ struct StartupPreferencesTests {
         let storage = TemporaryDefaults()
         storage.defaults.set(true, forKey: StartupPreferences.onboardingCompletedKey)
 
-        #expect(StartupPreferences(defaults: storage.defaults).startupDashboard == .openDashboard)
+        #expect(
+            StartupPreferences(defaults: storage.defaults).startupDashboard(launch: .manual)
+                == .openDashboard)
     }
 
     @Test func turningOffOpenDashboardOnStartupOpensNothing() {
         let storage = TemporaryDefaults()
         let preferences = StartupPreferences(defaults: storage.defaults)
         storage.defaults.set(false, forKey: StartupPreferences.openDashboardOnStartupKey)
-        #expect(preferences.startupDashboard == .none)
+        #expect(preferences.startupDashboard(launch: .manual) == .none)
 
         preferences.markOnboardingCompleted()
-        #expect(preferences.startupDashboard == .none)
+        #expect(preferences.startupDashboard(launch: .manual) == .none)
     }
 
     @Test func reinstallAfterInAppUninstallShowsTheWelcomeAgain() {
@@ -185,7 +188,43 @@ struct StartupPreferencesTests {
 
         preferences.resetForUninstall()
 
-        #expect(preferences.startupDashboard == .showWelcome)
+        #expect(preferences.startupDashboard(launch: .manual) == .showWelcome)
+    }
+
+    // MARK: - Starting at login
+
+    @Test func startingAtLoginOpensNothing() {
+        let storage = TemporaryDefaults()
+        let preferences = StartupPreferences(defaults: storage.defaults)
+        #expect(preferences.startupDashboard(launch: .atLogin) == .none)
+
+        preferences.markOnboardingCompleted()
+
+        #expect(preferences.startupDashboard(launch: .atLogin) == .none)
+        #expect(preferences.startupDashboard(launch: .manual) == .openDashboard)
+    }
+
+    @Test(
+        arguments: [
+            (
+                eventID: AEEventID(kAEOpenApplication), property: OSType(keyAELaunchedAsLogInItem),
+                expected: .atLogin
+            ),
+            (eventID: AEEventID(kAEOpenApplication), property: nil, expected: .manual),
+            (
+                eventID: AEEventID(kAEOpenApplication),
+                property: OSType(keyAELaunchedAsServiceItem), expected: .manual
+            ),
+            (
+                eventID: AEEventID(kAEReopenApplication),
+                property: OSType(keyAELaunchedAsLogInItem), expected: .manual
+            ),
+            (eventID: nil, property: nil, expected: .manual),
+        ] as [(AEEventID?, OSType?, AppLaunchKind)])
+    func launchKindComesFromTheOpenApplicationEvent(
+        eventID: AEEventID?, property: OSType?, expected: AppLaunchKind
+    ) {
+        #expect(AppLaunchKind.of(eventID: eventID, launchProperty: property) == expected)
     }
 }
 
@@ -196,9 +235,12 @@ private final class StartupDashboardSpy {
     var dashboardsOpened = 0
     var finishWelcome: (() -> Void)?
 
-    func opener(_ preferences: StartupPreferences) -> StartupDashboardOpener {
+    func opener(
+        _ preferences: StartupPreferences, launch: AppLaunchKind = .manual
+    ) -> StartupDashboardOpener {
         StartupDashboardOpener(
             preferences: preferences,
+            launchKind: { launch },
             showWelcome: { onSeen in
                 self.welcomesShown += 1
                 self.finishWelcome = onSeen
@@ -225,7 +267,7 @@ struct StartupDashboardOpenerTests {
         #expect(spy.dashboardsOpened == 0)
         spy.finishWelcome?()  // dismissed, used, or counted down
 
-        // Every later launch (e.g. at login): the dashboard, once, no popout.
+        // Every later manual launch: the dashboard, once, no popout.
         for _ in 0..<2 {
             let laterLaunch = spy.opener(preferences)
             laterLaunch.exoIsUp()
@@ -233,6 +275,20 @@ struct StartupDashboardOpenerTests {
         }
         #expect(spy.welcomesShown == 1)
         #expect(spy.dashboardsOpened == 2)
+    }
+
+    @Test func loginLaunchesStaySilent() {
+        let storage = TemporaryDefaults()
+        let preferences = StartupPreferences(defaults: storage.defaults)
+        let spy = StartupDashboardSpy()
+
+        // Even before the welcome has been seen.
+        spy.opener(preferences, launch: .atLogin).exoIsUp()
+        preferences.markOnboardingCompleted()
+        spy.opener(preferences, launch: .atLogin).exoIsUp()
+
+        #expect(spy.welcomesShown == 0)
+        #expect(spy.dashboardsOpened == 0)
     }
 
     @Test func welcomeComesBackIfTheAppQuitBeforeItWasSeen() {

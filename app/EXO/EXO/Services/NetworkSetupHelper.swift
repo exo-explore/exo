@@ -96,45 +96,97 @@ enum NetworkSetupHelper {
         } || true
         """
 
-    /// Prompts user and installs the LaunchDaemon if not already installed.
-    /// Shows an alert explaining what will be installed before requesting admin privileges.
-    static func promptAndInstallIfNeeded() {
-        // Use .utility priority to match NSAppleScript's internal QoS and avoid priority inversion
-        Task.detached(priority: .utility) {
-            // If already correctly installed, skip
-            if daemonAlreadyInstalled() {
-                return
-            }
+    /// Whether this Mac has EXO's Thunderbolt networking service, and whether
+    /// it is the current version.
+    enum SetupState: Equatable {
+        case notInstalled
+        /// Installed by an older EXO. It keeps working, but should be
+        /// replaced.
+        case outdated
+        case current
+    }
 
-            let isUpdate = hasInstalledComponents()
+    /// Reads the installed service's files: cheap enough to check when a menu
+    /// opens.
+    static var setupState: SetupState {
+        if daemonAlreadyInstalled() { return .current }
+        return hasInstalledComponents() ? .outdated : .notInstalled
+    }
 
-            // Show alert on main thread
-            let shouldInstall = await MainActor.run {
-                let alert = NSAlert()
-                alert.messageText = "EXO Network Configuration"
-                alert.informativeText =
-                    isUpdate
-                    ? "EXO needs to update its system service for local networking. It keeps Thunderbolt Bridge disabled as before, and now removes itself if EXO is deleted.\n\nYou will be prompted for your password."
-                    : "EXO needs to install a system service to configure local networking. This will disable Thunderbolt Bridge (preventing packet storms) and install a Network Location.\n\nYou will be prompted for your password."
-                alert.alertStyle = .informational
-                alert.addButton(withTitle: "Install")
-                alert.addButton(withTitle: "Not Now")
-                return alert.runModalInFront() == .alertFirstButtonReturn
-            }
+    /// Whether the service is missing or out of date. It only matters for
+    /// Macs connected to each other by Thunderbolt, so it is offered in that
+    /// context (or from Settings), never when the app starts.
+    static var needsSetup: Bool {
+        setupState != .current
+    }
 
-            guard shouldInstall else {
-                logger.info("User deferred network setup daemon installation")
-                return
-            }
+    static let setupDeclinedKey = "EXONetworkSetupDeclined"
 
+    /// Whether the user chose Not Now when the service was offered. The app
+    /// then stops offering it on its own; Settings still can.
+    static func setupWasDeclined(defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: setupDeclinedKey)
+    }
+
+    static func recordSetupDeclined(_ declined: Bool, defaults: UserDefaults = .standard) {
+        defaults.set(declined, forKey: setupDeclinedKey)
+    }
+
+    enum SetupOutcome: Equatable {
+        case installed
+        /// The user cancelled the administrator password prompt.
+        case cancelled
+    }
+
+    /// Installs (or updates) the service; macOS asks for an administrator
+    /// password. Throws if the installer itself fails.
+    static func setUp() async throws -> SetupOutcome {
+        // NSAppleScript's administrator prompt blocks, and its script runs at
+        // .utility; matching that avoids a priority inversion.
+        try await Task.detached(priority: .utility) {
             do {
                 try installLaunchDaemon()
                 logger.info("Network setup launch daemon installed and started")
-            } catch {
-                logger.error(
-                    "Network setup launch daemon failed: \(error.localizedDescription, privacy: .public)"
-                )
+                return SetupOutcome.installed
+            } catch NetworkSetupError.cancelled {
+                logger.info("Network setup cancelled at the password prompt")
+                return SetupOutcome.cancelled
             }
+        }.value
+    }
+
+    /// Says what setting up Thunderbolt networking changes, then sets it up
+    /// if the user agrees. "Not Now" is remembered. A cancelled password
+    /// prompt does nothing; a real failure is shown.
+    @MainActor
+    static func offerSetUp() async {
+        let isUpdate = setupState == .outdated
+        let alert = NSAlert()
+        alert.messageText =
+            isUpdate ? "Update Thunderbolt Networking?" : "Set Up Thunderbolt Networking?"
+        alert.informativeText =
+            isUpdate
+            ? "EXO's network service needs an update. It keeps Thunderbolt Bridge off as before, and now removes itself if EXO is deleted. You'll be asked for an administrator password."
+            : "Macs connected by Thunderbolt can then talk to each other directly. EXO installs a small system service that turns off Thunderbolt Bridge, gives each Thunderbolt port its own connection, and keeps this Mac on a network location named “exo”. You'll be asked for an administrator password."
+        alert.addButton(withTitle: isUpdate ? "Update" : "Set Up")
+        alert.addButton(withTitle: "Not Now")
+        guard alert.runModalInFront() == .alertFirstButtonReturn else {
+            recordSetupDeclined(true)
+            return
+        }
+        recordSetupDeclined(false)
+        do {
+            _ = try await setUp()
+        } catch {
+            logger.error(
+                "Network setup launch daemon failed: \(error.localizedDescription, privacy: .public)"
+            )
+            let failure = NSAlert()
+            failure.messageText = "Couldn't Set Up Thunderbolt Networking"
+            failure.informativeText = error.localizedDescription
+            failure.alertStyle = .warning
+            failure.addButton(withTitle: "OK")
+            failure.runModalInFront()
         }
     }
 
@@ -448,20 +500,37 @@ enum NetworkSetupHelper {
         appleScript.executeAndReturnError(&errorInfo)
 
         if let errorInfo {
-            let message = errorInfo[NSAppleScript.errorMessage] as? String ?? "Unknown error"
-            throw NetworkSetupError.executionFailed(message)
+            throw NetworkSetupError(
+                appleScriptErrorNumber: errorInfo[NSAppleScript.errorNumber] as? Int,
+                message: errorInfo[NSAppleScript.errorMessage] as? String)
         }
     }
 }
 
-enum NetworkSetupError: LocalizedError {
+enum NetworkSetupError: LocalizedError, Equatable {
     case scriptCreationFailed
+    /// The user cancelled the administrator password prompt. Not a failure:
+    /// callers should do nothing.
+    case cancelled
     case executionFailed(String)
+
+    /// AppleScript's "User canceled." (`userCanceledErr`).
+    static let userCancelledErrorNumber = -128
+
+    init(appleScriptErrorNumber: Int?, message: String?) {
+        if appleScriptErrorNumber == Self.userCancelledErrorNumber {
+            self = .cancelled
+        } else {
+            self = .executionFailed(message ?? "Unknown error")
+        }
+    }
 
     var errorDescription: String? {
         switch self {
         case .scriptCreationFailed:
             return "Failed to create AppleScript for network setup"
+        case .cancelled:
+            return "The administrator password prompt was cancelled."
         case .executionFailed(let message):
             return "Network setup script failed: \(message)"
         }

@@ -38,7 +38,7 @@ final class ExoProcessController: ObservableObject {
         }
     }
 
-    static let exoDirectoryURL: URL = {
+    nonisolated static let exoDirectoryURL: URL = {
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".exo")
     }()
 
@@ -51,7 +51,6 @@ final class ExoProcessController: ObservableObject {
 
     @Published private(set) var status: Status = .stopped
     @Published private(set) var lastError: String?
-    @Published private(set) var launchCountdownSeconds: Int?
     @Published var customNamespace: String = {
         return UserDefaults.standard.string(forKey: customNamespaceKey) ?? ""
     }()
@@ -154,11 +153,17 @@ final class ExoProcessController: ObservableObject {
 
     private var readinessTask: Task<Void, Never>?
     private let readinessProbe: () async -> Bool
+    private let previousExoIsRunning: () -> Bool
 
     /// `readinessProbe` says whether a started exo is up yet. Until it does,
-    /// the status is `.starting`.
-    init(readinessProbe: @escaping () async -> Bool = { await ExoReadiness.answers() }) {
+    /// the status is `.starting`. `previousExoIsRunning` says whether an exo
+    /// this app didn't start still holds exo's PID lock.
+    init(
+        readinessProbe: @escaping () async -> Bool = { await ExoReadiness.answers() },
+        previousExoIsRunning: @escaping () -> Bool = { ExoPidLock.isHeld() }
+    ) {
         self.readinessProbe = readinessProbe
+        self.previousExoIsRunning = previousExoIsRunning
     }
 
     /// Finishes once the exo that was last stopped has exited.
@@ -321,6 +326,7 @@ final class ExoProcessController: ObservableObject {
     }
 
     func stop() {
+        cancelPendingLaunch()
         readinessTask?.cancel()
         readinessTask = nil
         launchAfterStopTask?.cancel()
@@ -355,6 +361,12 @@ final class ExoProcessController: ObservableObject {
         }
     }
 
+    /// Stops exo, and returns once it has exited (or been killed).
+    func stopAndWaitForExit() async {
+        stop()
+        await stoppingTask?.value
+    }
+
     /// Waits up to `seconds` for `process` to exit, and says whether it has.
     /// Uses a deadline rather than counting sleeps, which take longer than
     /// asked on a busy Mac.
@@ -374,35 +386,32 @@ final class ExoProcessController: ObservableObject {
         launch()
     }
 
-    func scheduleLaunch(after seconds: TimeInterval) {
+    /// Starts exo as the app starts, saying "Starting…" straight away. An exo
+    /// from the previous run of the app, stopped just before the app quit
+    /// (e.g. to install an update), can still hold exo's PID lock while it
+    /// shuts down, and a new exo quits at once while it does. So this waits
+    /// for that exo first, for up to `timeout`; usually there is none and exo
+    /// starts immediately.
+    func launchWhenPreviousExoHasExited(
+        timeout: Duration = .seconds(10), every interval: Duration = .milliseconds(250)
+    ) {
+        guard process?.isRunning != true else { return }
         cancelPendingLaunch()
-        let start = max(1, Int(ceil(seconds)))
+        status = .starting
+        lastError = nil
+        let previousExoIsRunning = previousExoIsRunning
         pendingLaunchTask = Task { [weak self] in
-            guard let self else { return }
-            await MainActor.run {
-                self.launchCountdownSeconds = start
-            }
-            var remaining = start
-            while remaining > 0 {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                remaining -= 1
-                if Task.isCancelled { return }
-                await MainActor.run {
-                    if remaining > 0 {
-                        self.launchCountdownSeconds = remaining
-                    } else {
-                        self.launchCountdownSeconds = nil
-                        self.launchIfNeeded()
-                    }
-                }
-            }
+            _ = await ExoPidLock.waitUntilReleased(
+                timeout: timeout, every: interval, isHeld: previousExoIsRunning)
+            guard let self, !Task.isCancelled else { return }
+            self.pendingLaunchTask = nil
+            self.launch()
         }
     }
 
     func cancelPendingLaunch() {
         pendingLaunchTask?.cancel()
         pendingLaunchTask = nil
-        launchCountdownSeconds = nil
     }
 
     func revealRuntimeDirectory() {
