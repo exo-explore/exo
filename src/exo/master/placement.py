@@ -11,8 +11,9 @@ from exo.master.placement_utils import (
     get_mlx_ring_hosts_by_node,
     get_shard_assignments,
     get_smallest_cycles,
+    kv_cache_bytes_per_layer,
 )
-from exo.shared.models.model_cards import ModelId
+from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (
@@ -188,6 +189,27 @@ def memory_once_loaded(
     }
 
 
+def _resolve_max_context_length(
+    model_card: ModelCard, requested: int | None
+) -> int | None:
+    """Resolve a command's requested context-length override to a concrete
+    value, or None if the model didn't report a context length (in which
+    case context-aware memory protection can't be applied and is skipped,
+    matching pre-existing behavior for such models)."""
+    if model_card.context_length <= 0:
+        return None
+    if requested is None:
+        return model_card.context_length
+    if requested <= 0:
+        raise ValueError(f"max_context_length must be positive, got {requested}")
+    if requested > model_card.context_length:
+        raise ValueError(
+            f"Requested max_context_length={requested} exceeds this model's "
+            f"native context length of {model_card.context_length}"
+        )
+    return requested
+
+
 def place_instance(
     command: PlaceInstance,
     topology: Topology,
@@ -207,6 +229,10 @@ def place_instance(
     """
     if runners is not None:
         node_memory = memory_once_loaded(node_memory, current_instances, runners)
+    resolved_context_length = _resolve_max_context_length(
+        command.model_card, command.max_context_length
+    )
+
     cycles = topology.get_cycles()
     if not cycles:
         raise ValueError("No nodes are available")
@@ -226,8 +252,17 @@ def place_instance(
         ]
         if not candidate_cycles:
             raise ValueError("The chosen nodes aren't all connected to each other")
+
+    required_memory = command.model_card.storage_size
+    if resolved_context_length is not None:
+        required_memory = required_memory + (
+            kv_cache_bytes_per_layer(command.model_card)
+            * command.model_card.n_layers
+            * resolved_context_length
+        )
+
     cycles_with_sufficient_memory = filter_cycles_by_memory(
-        candidate_cycles, node_memory, command.model_card.storage_size
+        candidate_cycles, node_memory, required_memory
     )
     if len(cycles_with_sufficient_memory) == 0:
         raise ValueError(_not_enough_memory(command, candidate_cycles, node_memory))
@@ -354,7 +389,11 @@ def place_instance(
         )
 
     shard_assignments = get_shard_assignments(
-        command.model_card, selected_cycle, command.sharding, node_memory
+        command.model_card,
+        selected_cycle,
+        command.sharding,
+        node_memory,
+        max_context_length=resolved_context_length,
     )
 
     cycle_digraph: Topology = topology.get_subgraph_from_nodes(selected_cycle.node_ids)

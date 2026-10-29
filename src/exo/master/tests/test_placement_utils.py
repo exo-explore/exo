@@ -6,7 +6,9 @@ from exo.master.placement_utils import (
     get_mlx_jaccl_coordinators,
     get_shard_assignments,
     get_shard_assignments_for_pipeline_parallel,
+    get_shard_assignments_for_tensor_parallel,
     get_smallest_cycles,
+    kv_cache_bytes_per_layer,
 )
 from exo.master.tests.conftest import (
     create_node_memory,
@@ -21,7 +23,7 @@ from exo.shared.types.profiling import (
     NetworkInterfaceInfo,
     NodeNetworkInfo,
 )
-from exo.shared.types.topology import Connection, SocketConnection
+from exo.shared.types.topology import Connection, Cycle, SocketConnection
 from exo.shared.types.worker.shards import (
     CfgShardMetadata,
     PipelineShardMetadata,
@@ -540,7 +542,7 @@ class TestCfgParallelPlacement:
         )
 
         assignments = get_shard_assignments_for_pipeline_parallel(
-            model_card, cycle, node_memory
+            model_card, cycle, node_memory, max_context_length=None
         )
 
         shards = list(assignments.runner_to_shard.values())
@@ -584,7 +586,7 @@ class TestCfgParallelPlacement:
         )
 
         assignments = get_shard_assignments_for_pipeline_parallel(
-            model_card, cycle, node_memory
+            model_card, cycle, node_memory, max_context_length=None
         )
 
         shards = list(assignments.runner_to_shard.values())
@@ -634,7 +636,7 @@ class TestCfgParallelPlacement:
         )
 
         assignments = get_shard_assignments_for_pipeline_parallel(
-            model_card, cycle, node_memory
+            model_card, cycle, node_memory, max_context_length=None
         )
 
         shards = list(assignments.runner_to_shard.values())
@@ -670,7 +672,7 @@ class TestCfgParallelPlacement:
         )
 
         assignments = get_shard_assignments_for_pipeline_parallel(
-            model_card, cycle, node_memory
+            model_card, cycle, node_memory, max_context_length=None
         )
 
         shards = list(assignments.runner_to_shard.values())
@@ -689,3 +691,176 @@ class TestCfgParallelPlacement:
         # First shard starts at 0, last shard ends at 57
         assert layer_ranges[0][0] == 0
         assert layer_ranges[-1][1] == 57
+
+
+class TestKvCacheBytesPerLayer:
+    def test_uses_kv_heads_and_head_dim_when_both_known(self):
+        model_card = ModelCard(
+            model_id=ModelId("test-model"),
+            storage_size=Memory.from_kb(1000),
+            n_layers=1,
+            hidden_size=8192,  # deliberately different from kv_heads*head_dim
+            num_key_value_heads=8,
+            head_dim=128,
+            supports_tensor=True,
+            tasks=[ModelTask.TextGeneration],
+            backends=[Backend.MlxMetal],
+        )
+
+        result = kv_cache_bytes_per_layer(model_card, dtype_bytes=2)
+
+        # 2 (K+V) * 8 kv_heads * 128 head_dim * 2 bytes = 4096 bytes
+        assert result.in_bytes == 4096
+
+    def test_falls_back_to_hidden_size_when_head_dim_missing(self):
+        model_card = ModelCard(
+            model_id=ModelId("test-model"),
+            storage_size=Memory.from_kb(1000),
+            n_layers=1,
+            hidden_size=4096,
+            num_key_value_heads=8,
+            head_dim=None,
+            supports_tensor=True,
+            tasks=[ModelTask.TextGeneration],
+            backends=[Backend.MlxMetal],
+        )
+
+        result = kv_cache_bytes_per_layer(model_card, dtype_bytes=2)
+
+        # 2 (K+V) * hidden_size (4096) * 2 bytes = 16384 bytes
+        assert result.in_bytes == 16384
+
+    def test_falls_back_to_hidden_size_when_kv_heads_missing(self):
+        model_card = ModelCard(
+            model_id=ModelId("test-model"),
+            storage_size=Memory.from_kb(1000),
+            n_layers=1,
+            hidden_size=4096,
+            num_key_value_heads=None,
+            head_dim=128,
+            supports_tensor=True,
+            tasks=[ModelTask.TextGeneration],
+            backends=[Backend.MlxMetal],
+        )
+
+        result = kv_cache_bytes_per_layer(model_card, dtype_bytes=2)
+
+        assert result.in_bytes == 16384
+
+
+class TestTensorParallelMemoryValidation:
+    def test_rejects_node_that_cannot_hold_its_equal_share(self):
+        """Every rank holds an equal share in tensor parallelism -- a node
+        too small for that equal share must be rejected up front, not
+        silently accepted just because other nodes have plenty of memory."""
+        node_a = NodeId()
+        node_b = NodeId()
+        node_memory = {
+            node_a: create_node_memory(128 * 1024 * 1024 * 1024),
+            node_b: create_node_memory(40 * 1024 * 1024 * 1024),
+        }
+        model_card = ModelCard(
+            model_id=ModelId("tensor-test-model"),
+            storage_size=Memory.from_gb(100),
+            n_layers=32,
+            hidden_size=4096,
+            supports_tensor=True,
+            tasks=[ModelTask.TextGeneration],
+            backends=[Backend.MlxMetal],
+        )
+
+        with pytest.raises(ValueError, match="insufficient memory for tensor-parallel"):
+            get_shard_assignments_for_tensor_parallel(
+                model_card,
+                Cycle(node_ids=[node_a, node_b]),
+                node_memory,
+                max_context_length=None,
+            )
+
+    def test_accepts_when_every_node_can_hold_its_equal_share(self):
+        node_a = NodeId()
+        node_b = NodeId()
+        node_memory = {
+            node_a: create_node_memory(80 * 1024 * 1024 * 1024),
+            node_b: create_node_memory(80 * 1024 * 1024 * 1024),
+        }
+        model_card = ModelCard(
+            model_id=ModelId("tensor-test-model"),
+            storage_size=Memory.from_gb(100),
+            n_layers=32,
+            hidden_size=4096,
+            supports_tensor=True,
+            tasks=[ModelTask.TextGeneration],
+            backends=[Backend.MlxMetal],
+        )
+
+        assignments = get_shard_assignments_for_tensor_parallel(
+            model_card,
+            Cycle(node_ids=[node_a, node_b]),
+            node_memory,
+            max_context_length=None,
+        )
+
+        assert len(assignments.runner_to_shard) == 2
+
+    def test_rejects_node_whose_equal_share_fits_weights_but_not_kv_cache(self):
+        """Both nodes can hold their equal share of *weights* alone, but a
+        large requested context length pushes the per-rank KV cache over the
+        remaining headroom -- this must be caught by the KV term, not just
+        the weight term."""
+        node_a = NodeId()
+        node_b = NodeId()
+        # 40GB/rank weights, 10GB headroom per node.
+        node_memory = {
+            node_a: create_node_memory(50 * 1024 * 1024 * 1024),
+            node_b: create_node_memory(50 * 1024 * 1024 * 1024),
+        }
+        model_card = ModelCard(
+            model_id=ModelId("tensor-test-model"),
+            storage_size=Memory.from_gb(80),
+            n_layers=32,
+            hidden_size=4096,
+            supports_tensor=True,
+            tasks=[ModelTask.TextGeneration],
+            backends=[Backend.MlxMetal],
+        )
+        # hidden_size fallback -> 16384 bytes/layer/token, /2 ranks -> 8192
+        # bytes/layer/token/rank * 32 layers = 262144 bytes/token/rank.
+        # 50_000 tokens -> ~12.2GB/rank of KV cache, more than the 10GB
+        # headroom left after weights.
+        with pytest.raises(ValueError, match="insufficient memory for tensor-parallel"):
+            get_shard_assignments_for_tensor_parallel(
+                model_card,
+                Cycle(node_ids=[node_a, node_b]),
+                node_memory,
+                max_context_length=50_000,
+            )
+
+    def test_accepts_when_kv_cache_fits_within_remaining_headroom(self):
+        """Same topology and model as the rejection case above, but with a
+        smaller requested context length whose KV cache fits in the
+        remaining headroom after weights."""
+        node_a = NodeId()
+        node_b = NodeId()
+        node_memory = {
+            node_a: create_node_memory(50 * 1024 * 1024 * 1024),
+            node_b: create_node_memory(50 * 1024 * 1024 * 1024),
+        }
+        model_card = ModelCard(
+            model_id=ModelId("tensor-test-model"),
+            storage_size=Memory.from_gb(80),
+            n_layers=32,
+            hidden_size=4096,
+            supports_tensor=True,
+            tasks=[ModelTask.TextGeneration],
+            backends=[Backend.MlxMetal],
+        )
+        # 30_000 tokens -> ~7.3GB/rank of KV cache, within the 10GB headroom.
+        assignments = get_shard_assignments_for_tensor_parallel(
+            model_card,
+            Cycle(node_ids=[node_a, node_b]),
+            node_memory,
+            max_context_length=30_000,
+        )
+
+        assert len(assignments.runner_to_shard) == 2
