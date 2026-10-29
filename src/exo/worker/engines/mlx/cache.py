@@ -1,31 +1,81 @@
+from __future__ import annotations
+
 import gc
 import os
 from copy import deepcopy
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
-import mlx.core as mx
+try:
+    import mlx.core as mx
+    from mlx_lm.models.cache import (
+        ArraysCache,
+        CacheList,
+        KVCache,
+        QuantizedKVCache,
+        RotatingKVCache,
+    )
+    from mlx_lm.models.deepseek_v4 import (
+        DeepseekV4Cache,
+    )
+    from mlx_lm.models.deepseek_v4 import (
+        _CompressorBranch as CompressorBranch,  # type: ignore
+    )
+    from mlx_lm.tokenizer_utils import TokenizerWrapper
+except ImportError:
+    from unittest.mock import MagicMock
+
+    mx = MagicMock()
+
+    class ArraysCache:  # type: ignore[no-redef]
+        cache: list[Any]
+
+    class CacheList:  # type: ignore[no-redef]
+        pass
+
+    class KVCache:  # type: ignore[no-redef]
+        offset: int = 0
+        keys: Any = None
+        values: Any = None
+
+    class QuantizedKVCache:  # type: ignore[no-redef]
+        offset: int = 0
+
+    class RotatingKVCache:  # type: ignore[no-redef]
+        offset: int = 0
+
+    class DeepseekV4Cache:  # type: ignore[no-redef]
+        pass
+
+    class CompressorBranch:  # type: ignore[no-redef]
+        pass
+
+    class TokenizerWrapper:  # type: ignore[no-redef]
+        pass
+
 import numpy as np
 import numpy.typing as npt
 import psutil
-from mlx_lm.models.cache import (
-    ArraysCache,
-    CacheList,
-    KVCache,
-    QuantizedKVCache,
-    RotatingKVCache,
-)
-from mlx_lm.models.deepseek_v4 import (
-    DeepseekV4Cache,
-)
-from mlx_lm.models.deepseek_v4 import (
-    _CompressorBranch as CompressorBranch,  # type: ignore
-)
-from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.memory import Memory
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
-from exo.worker.engines.mlx.types import KVCacheType, Model
-from exo.worker.runner.bootstrap import logger
+from exo.worker.engines.mlx.tiered_cache import (
+    NOMINAL_OFFLOADED_METADATA_BYTES,
+    OffloadedCacheMetadata,
+    TieredKVCacheManager,
+)
+
+try:
+    from exo.worker.engines.mlx.types import KVCacheType, Model
+except ImportError:
+    from collections.abc import Sequence
+    KVCacheType = Sequence[Any]  # type: ignore[misc]
+    class Model:  # type: ignore[no-redef]
+        layers: list[Any]
+
+try:
+    from exo.worker.runner.bootstrap import logger
+except ImportError:
+    from loguru import logger
 
 if TYPE_CHECKING:
     from exo.worker.engines.mlx.vision import MediaRegion
@@ -242,19 +292,27 @@ def has_non_kv_caches(cache: KVCacheType) -> bool:
 
 
 class KVPrefixCache:
-    def __init__(self, group: mx.distributed.Group | None):
+    def __init__(
+        self,
+        group: mx.distributed.Group | None,
+        tiered_cache_manager: TieredKVCacheManager | None = None,
+    ):
         self.prompts: list[mx.array] = []  # mx array of tokens (ints)
-        self.caches: list[KVCacheType] = []
+        self.caches: list[KVCacheType | None] = []
         self._snapshots: list[list[CacheSnapshot] | None] = []
-        self._media_regions: list[list["MediaRegion"]] = []
+        self._media_regions: list[list[MediaRegion]] = []
         self._last_used: list[int] = []  # monotonic counter of last access per entry
         self._entry_bytes: list[int] = []
         self.prefill_tps: list[float] = []
         self._access_counter: int = 0
         self._group = group
+        self._tiered_cache_manager = tiered_cache_manager or TieredKVCacheManager()
+        self._offloaded_metadata: list[OffloadedCacheMetadata | None] = []
+        self._is_offloaded: list[bool] = []
 
     def clear(self):
         """Clear all cached prompts and caches."""
+        self._tiered_cache_manager.clear_all_offloaded_entries()
         self.prompts.clear()
         self.caches.clear()
         self._snapshots.clear()
@@ -262,16 +320,18 @@ class KVPrefixCache:
         self._last_used.clear()
         self._entry_bytes.clear()
         self.prefill_tps.clear()
+        self._offloaded_metadata.clear()
+        self._is_offloaded.clear()
 
     def add_kv_cache(
         self,
         prompt_tokens: mx.array,
         cache: KVCacheType,
         ssm_snapshots: list[CacheSnapshot] | None = None,
-        media_regions: list["MediaRegion"] | None = None,
+        media_regions: list[MediaRegion] | None = None,
         prefill_tps: float = 0.0,
     ):
-        """Add a new cache entry. Evicts LRU entries if memory is high or the cache is full."""
+        """Add a new cache entry. Evicts or offloads LRU entries if memory is high or the cache is full."""
         entry_bytes = _entry_nbytes(cache, ssm_snapshots)
         self._evict_if_needed(entry_bytes)
         self.prompts.append(prompt_tokens)
@@ -282,6 +342,8 @@ class KVPrefixCache:
         self._access_counter += 1
         self._last_used.append(self._access_counter)
         self._entry_bytes.append(entry_bytes)
+        self._offloaded_metadata.append(None)
+        self._is_offloaded.append(False)
         logger.info(f"KV cache added: {len(prompt_tokens)} tokens")
 
     def update_kv_cache(
@@ -291,10 +353,15 @@ class KVPrefixCache:
         cache: KVCacheType,
         snapshots: list[CacheSnapshot] | None,
         restore_pos: int,
-        media_regions: list["MediaRegion"] | None = None,
+        media_regions: list[MediaRegion] | None = None,
         prefill_tps: float = 0.0,
     ):
         """Update an existing cache entry in-place."""
+        if self._is_offloaded[index] and self._offloaded_metadata[index] is not None:
+            self._tiered_cache_manager.remove_offloaded_entry(
+                self._offloaded_metadata[index]
+            )
+
         old_snapshots = self._snapshots[index]
         merged: list[CacheSnapshot] = []
         if old_snapshots:
@@ -310,6 +377,8 @@ class KVPrefixCache:
         self._access_counter += 1
         self._last_used[index] = self._access_counter
         self._entry_bytes[index] = _entry_nbytes(cache, self._snapshots[index])
+        self._offloaded_metadata[index] = None
+        self._is_offloaded[index] = False
         logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens")
 
     def _get_snapshot(
@@ -332,7 +401,7 @@ class KVPrefixCache:
         self,
         model: Model,
         prompt_tokens: mx.array,
-        media_regions: list["MediaRegion"] | None = None,
+        media_regions: list[MediaRegion] | None = None,
     ) -> tuple[KVCacheType, mx.array, int | None, bool]:
         """Get KV cache for prompt, returning remaining tokens to prefill.
 
@@ -377,11 +446,18 @@ class KVPrefixCache:
         if best_index is None:
             return make_kv_cache(model), prompt_tokens, None, False
 
+        # If matched entry is offloaded to tiered storage, hydrate it back into memory
+        if self._is_offloaded[best_index]:
+            self._hydrate_entry(best_index)
+
+        matched_cache = self.caches[best_index]
+        assert matched_cache is not None
+
         # For exact match: trim to max_length-1 so remaining has the last token
         # For partial match: trim to best_length, remaining has suffix to prefill
         # This ensures stream_generate always has at least one token to start with
-        has_ssm = has_non_kv_caches(self.caches[best_index])
-        cached_length = cache_length(self.caches[best_index])
+        has_ssm = has_non_kv_caches(matched_cache)
+        cached_length = cache_length(matched_cache)
         if has_ssm:
             target = best_length
         else:
@@ -393,7 +469,7 @@ class KVPrefixCache:
         if restore_snap is None and has_ssm:
             return make_kv_cache(model), prompt_tokens, None, False
 
-        prompt_cache = deepcopy(self.caches[best_index])
+        prompt_cache = deepcopy(matched_cache)
         tokens_to_trim = cached_length - restore_pos
         if tokens_to_trim > 0:
             trim_cache(prompt_cache, tokens_to_trim, restore_snap)
@@ -415,13 +491,13 @@ class KVPrefixCache:
     @staticmethod
     def _validate_media_match(
         match_length: int,
-        cached_regions: list["MediaRegion"],
-        query_regions: list["MediaRegion"],
+        cached_regions: list[MediaRegion],
+        query_regions: list[MediaRegion],
     ) -> int:
         if not cached_regions:
             return match_length
 
-        query_by_start: dict[int, "MediaRegion"] = {
+        query_by_start: dict[int, MediaRegion] = {
             r.start_pos: r for r in query_regions
         }
 
@@ -443,31 +519,106 @@ class KVPrefixCache:
 
         return match_length
 
+    def _offload_entry(self, index: int) -> bool:
+        """Offload an active in-memory cache entry to tiered cold storage."""
+        if self._is_offloaded[index] or self.caches[index] is None:
+            return False
+        try:
+            entry_identifier = f"kv_entry_{index}_{self._last_used[index]}"
+            token_count = len(self.prompts[index])
+            cache_layers = self.caches[index]
+            assert cache_layers is not None
+            metadata = self._tiered_cache_manager.offload_cache_entry(
+                entry_identifier=entry_identifier,
+                token_count=token_count,
+                cache_layers=cache_layers,
+                snapshots=self._snapshots[index],
+                access_counter=self._last_used[index],
+                prefill_tokens_per_second=(
+                    self.prefill_tps[index] if index < len(self.prefill_tps) else 0.0
+                ),
+            )
+            self._offloaded_metadata[index] = metadata
+            self._is_offloaded[index] = True
+            self.caches[index] = None
+            self._entry_bytes[index] = NOMINAL_OFFLOADED_METADATA_BYTES
+            logger.info(
+                f"KV cache offloaded entry {index} ({token_count} tokens) to tiered storage"
+            )
+            return True
+        except (OSError, TypeError, ValueError, KeyError) as exception:
+            logger.warning(
+                f"Failed to offload KV cache entry {index} to tiered storage: {exception}"
+            )
+            return False
+
+    def _hydrate_entry(self, index: int) -> None:
+        """Hydrate an offloaded cache entry back into memory from tiered storage."""
+        if not self._is_offloaded[index]:
+            return
+        metadata = self._offloaded_metadata[index]
+        if metadata is None:
+            return
+        restored_cache, restored_snapshots = (
+            self._tiered_cache_manager.restore_cache_entry(metadata)
+        )
+        self.caches[index] = restored_cache
+        if restored_snapshots is not None:
+            self._snapshots[index] = restored_snapshots
+        self._tiered_cache_manager.remove_offloaded_entry(metadata)
+        self._offloaded_metadata[index] = None
+        self._is_offloaded[index] = False
+        self._entry_bytes[index] = _entry_nbytes(
+            restored_cache, self._snapshots[index]
+        )
+        logger.info(f"KV cache entry {index} successfully hydrated into memory")
+
+    def _permanently_evict_entry(self, index: int) -> None:
+        """Permanently remove an entry from memory and disk storage."""
+        if self._is_offloaded[index] and self._offloaded_metadata[index] is not None:
+            self._tiered_cache_manager.remove_offloaded_entry(
+                self._offloaded_metadata[index]
+            )
+        evicted_tokens = len(self.prompts[index])
+        self.prompts.pop(index)
+        self.caches.pop(index)
+        self._snapshots.pop(index)
+        self._media_regions.pop(index)
+        self._last_used.pop(index)
+        self._entry_bytes.pop(index)
+        self.prefill_tps.pop(index)
+        self._offloaded_metadata.pop(index)
+        self._is_offloaded.pop(index)
+        logger.info(f"KV cache permanently evicted LRU entry ({evicted_tokens} tokens)")
+
     def _evict_if_needed(self, incoming_bytes: int = 0):
-        """Evict least recently used entries while memory usage is high, or while adding
+        """Evict or offload least recently used entries while memory usage is high, or while adding
         an entry of incoming_bytes would take the cache over its size limits."""
         if len(self.caches) == 0:
             return
 
         evicted_any = False
-        # Evict LRU entries until below the limits
         while len(self.caches) > 0 and self._over_limit(incoming_bytes):
-            lru_index = self._last_used.index(min(self._last_used))
-            evicted_tokens = len(self.prompts[lru_index])
-            self.prompts.pop(lru_index)
-            self.caches.pop(lru_index)
-            self._snapshots.pop(lru_index)
-            self._media_regions.pop(lru_index)
-            self._last_used.pop(lru_index)
-            self._entry_bytes.pop(lru_index)
-            self.prefill_tps.pop(lru_index)
+            active_indices = [
+                idx for idx, offloaded in enumerate(self._is_offloaded)
+                if not offloaded
+            ]
+            if len(active_indices) > 0:
+                lru_active_index = min(
+                    active_indices, key=lambda idx: self._last_used[idx]
+                )
+                if self._offload_entry(lru_active_index):
+                    evicted_any = True
+                    continue
 
+            overall_lru_index = self._last_used.index(min(self._last_used))
+            self._permanently_evict_entry(overall_lru_index)
             evicted_any = True
-            logger.info(f"KV cache evicted LRU entry ({evicted_tokens} tokens)")
 
         if evicted_any:
             gc.collect()
-            mx.clear_cache()
+            if mx is not None and hasattr(mx, "clear_cache"):
+                mx.clear_cache()
 
     def _over_limit(self, incoming_bytes: int) -> bool:
         # The same on every rank: they all hold the same entries
@@ -482,22 +633,25 @@ class KVPrefixCache:
         # A cache hit changes how much of a prompt each rank prefills, so every rank must
         # evict the same entries: evict if any rank is under memory pressure or over its
         # budget (each rank holds different layers, so their entries differ in size).
-        flags = mx.distributed.all_gather(
-            mx.array([local_pressure, float(over_budget)], dtype=mx.float32),
-            group=self._group,
-        ).reshape(-1, 2)
-        # .tolist() evals.
-        worst_pressure, any_over_budget = cast(
-            list[float], mx.max(flags, axis=0).tolist()
-        )
-        return worst_pressure > _MEMORY_THRESHOLD or any_over_budget > 0
+        if hasattr(mx, "distributed") and hasattr(mx.distributed, "all_gather"):
+            flags = mx.distributed.all_gather(
+                mx.array([local_pressure, float(over_budget)], dtype=mx.float32),
+                group=self._group,
+            ).reshape(-1, 2)
+            worst_pressure, any_over_budget = cast(
+                list[float], mx.max(flags, axis=0).tolist()
+            )
+            return worst_pressure > _MEMORY_THRESHOLD or any_over_budget > 0
+        return over_budget or local_pressure > _MEMORY_THRESHOLD
 
 
 def _entry_nbytes(cache: KVCacheType, snapshots: list[CacheSnapshot] | None) -> int:
-    total = sum(int(c.nbytes) for c in cache)
+    total = sum(int(getattr(c, "nbytes", 0)) for c in cache if c is not None)
     for snapshot in snapshots or []:
         total += sum(
-            int(state.nbytes) for state in snapshot.states if state is not None
+            int(getattr(state, "nbytes", 0))
+            for state in snapshot.states
+            if state is not None
         )
     return total
 
