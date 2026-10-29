@@ -7,7 +7,10 @@ import os
 import sys
 from collections.abc import Callable, Iterable, Mapping
 from multiprocessing.process import BaseProcess
-from multiprocessing.resource_sharer import DupFd
+try:
+    from multiprocessing.resource_sharer import DupFd
+except ImportError:
+    DupFd = None  # type: ignore[assignment]
 from typing import final
 
 from anyio import (

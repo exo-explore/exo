@@ -63,6 +63,8 @@ RUNNER_WATCH_INTERVAL = 5.0
 # A generating runner reports a token every step and progress every prefill chunk, so this
 # long without a word means it is stuck (its instance's runners can wait on each other forever)
 RUNNER_STALL_TIMEOUT = 90.0
+# How long the supervisor waits for a runner to acknowledge a control task (ConnectToGroup, LoadModel)
+RUNNER_TASK_ACK_TIMEOUT = 30.0
 
 
 @dataclass(eq=False)
@@ -288,7 +290,8 @@ class RunnerSupervisor:
                 )
 
     def shutdown(self):
-        self._tg.cancel_tasks()
+        if self._tg.is_running():
+            self._tg.cancel_tasks()
 
     async def start_task(self, task: Task):
         if task.task_id in self.pending:
@@ -320,7 +323,21 @@ class RunnerSupervisor:
         # status, so those still wait.
         if isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
             return
-        await event.wait()
+        try:
+            with anyio.fail_after(RUNNER_TASK_ACK_TIMEOUT):
+                await event.wait()
+        except TimeoutError:
+            self.in_progress.pop(task.task_id, None)
+            self.pending.pop(task.task_id, None)
+            logger.error(
+                f"Task {task.task_id} ({task.__class__.__name__}) not acknowledged by runner within {RUNNER_TASK_ACK_TIMEOUT}s"
+            )
+            await self._check_runner(
+                TimeoutError(
+                    f"Runner failed to acknowledge task {task.task_id} within {RUNNER_TASK_ACK_TIMEOUT}s"
+                )
+            )
+            raise
 
     async def cancel_task(self, task_id: TaskId):
         if task_id in self.completed:
@@ -419,6 +436,24 @@ class RunnerSupervisor:
                             f"Runner made no progress for {RUNNER_STALL_TIMEOUT:.0f}s while generating"
                         )
                     )
+                elif self._initialization_timed_out():
+                    await self._check_runner(
+                        TimeoutError(
+                            f"Runner made no progress for {self.initialize_timeout:.0f}s while initializing"
+                        )
+                    )
+
+    def _initialization_timed_out(self) -> bool:
+        """Whether the runner is stuck in connecting or loading beyond initialize_timeout."""
+        is_initializing = isinstance(
+            self.status, (RunnerConnecting, RunnerLoading, RunnerIdle, RunnerWarmingUp)
+        )
+        has_pending_work = len(self.in_progress) > 0 or len(self.pending) > 0
+        return (
+            is_initializing
+            and has_pending_work
+            and (anyio.current_time() - self._last_heard > self.initialize_timeout)
+        )
 
     def _stuck(self) -> bool:
         """Whether the runner is generating but has gone silent. Only the first rank of an
@@ -449,8 +484,8 @@ class RunnerSupervisor:
         rc = self.runner_process.exitcode
         logger.info(f"Runner exited with exit code {rc}")
 
-        # If exit code is 0 then the transient errors were recoverable, meaning we don't need runner diagnostics
-        if rc == 0:
+        # If exit code is 0 and no error was reported then the transient errors were recoverable, meaning we don't need runner diagnostics
+        if rc == 0 and e is None:
             return
 
         if isinstance(rc, int) and rc < 0:
@@ -467,10 +502,10 @@ class RunnerSupervisor:
 
         if e is not None:
             # Record how runner shut down, try exception, resort to RunnerTerminationError fallback
+            cause = f"{cause} ({e})"
             if isinstance(e, Exception):
                 logger.opt(exception=e).error(f"Runner terminated with {cause}")
             else:
-                cause = f"{cause}\nRunner error: {e}"
                 logger.error(f"Runner terminated with {cause}")
         else:
             logger.error(f"Runner terminated with {cause}")
