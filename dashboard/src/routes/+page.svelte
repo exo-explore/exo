@@ -39,6 +39,7 @@
     clearPreviewNodeFilter,
     previewNodeFilter,
     createConversation,
+    deleteDownload,
     setSelectedChatModel,
     selectedChatModel,
     sendMessage,
@@ -2266,17 +2267,64 @@
     return 0;
   }
 
-  async function deleteInstance(instanceId: string) {
-    // Get the model ID of the instance being deleted before we delete it
-    const deletedInstanceModelId = getInstanceModelId(instanceData[instanceId]);
+  // Get the node IDs an instance is running on, from its shard assignments
+  function getInstanceNodeIds(instanceWrapped: unknown): string[] {
+    const [, instance] = getTagged(instanceWrapped);
+    if (!instance || typeof instance !== "object") return [];
+    const inst = instance as {
+      shardAssignments?: { nodeToRunner?: Record<string, string> };
+    };
+    return Object.keys(inst.shardAssignments?.nodeToRunner ?? {});
+  }
+
+  // Stop an instance, optionally deleting its downloaded weights from disk.
+  async function ejectInstance(instanceId: string) {
+    // Get the model ID and node IDs of the instance before we delete it
+    const wrappedInstance = instanceData[instanceId];
+    const deletedInstanceModelId = getInstanceModelId(wrappedInstance);
     const shortName =
       deletedInstanceModelId.split("/").pop() ?? deletedInstanceModelId;
-    if (!confirm(`Stop ${shortName}? Downloaded files are kept.`)) return;
+    if (
+      !confirm(
+        `Eject ${shortName}? Downloaded files are kept unless you choose otherwise.`,
+      )
+    )
+      return;
+    const nodeIds = getInstanceNodeIds(wrappedInstance);
     const wasSelected = selectedChatModel() === deletedInstanceModelId;
 
     if (!(await requestInstanceDeletion(instanceId))) {
-      addToast({ type: "error", message: `Failed to stop ${shortName}` });
-    } else if (wasSelected) {
+      addToast({ type: "error", message: `Failed to eject ${shortName}` });
+      return;
+    }
+
+    // Offer to free disk space by deleting this instance's downloaded weights.
+    if (
+      deletedInstanceModelId &&
+      deletedInstanceModelId !== "Unknown" &&
+      deletedInstanceModelId !== "Unknown Model" &&
+      nodeIds.length > 0 &&
+      confirm(
+        `Also delete the downloaded weights for ${deletedInstanceModelId} from disk to free storage?`,
+      )
+    ) {
+      await Promise.all(
+        nodeIds.map((nodeId) =>
+          deleteDownload(nodeId, deletedInstanceModelId).catch((error) => {
+            console.error(
+              `Failed to delete weights on node ${nodeId}:`,
+              error,
+            );
+            addToast({
+              type: "error",
+              message: `Failed to delete weights on node ${nodeId.slice(0, 8)}...`,
+            });
+          }),
+        ),
+      );
+    }
+
+    if (wasSelected) {
       // If we deleted the currently selected model, switch to another available model
       // Find another instance that isn't the one we just deleted
       const remainingInstances = Object.entries(instanceData).filter(
@@ -6067,11 +6115,11 @@
                           >
                         </div>
                         <button
-                          title="Stop this model. Downloaded files are kept."
+                          title="Eject this model. You can optionally delete its downloaded files."
                           onclick={(e) => {
-                            // Don't let the card's handlers select the model being stopped
+                            // Don't let the card's handlers select the model being ejected
                             e.stopPropagation();
-                            deleteInstance(id);
+                            ejectInstance(id);
                           }}
                           onkeydown={(e) => e.stopPropagation()}
                           class="flex-shrink-0 text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
@@ -7295,16 +7343,16 @@
                             >
                           </div>
                           <button
-                            title="Stop this model. Downloaded files are kept."
+                            title="Eject this model. You can optionally delete its downloaded files."
                             onclick={(e) => {
-                              // Don't let the card's handlers select the model being stopped
+                              // Don't let the card's handlers select the model being ejected
                               e.stopPropagation();
-                              deleteInstance(id);
+                              ejectInstance(id);
                             }}
                             onkeydown={(e) => e.stopPropagation()}
                             class="flex-shrink-0 text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
                           >
-                            Stop
+                            EJECT
                           </button>
                         </div>
                         <div class="pl-2">
