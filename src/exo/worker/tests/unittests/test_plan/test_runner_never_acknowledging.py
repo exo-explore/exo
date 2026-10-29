@@ -128,7 +128,6 @@ async def _silent_supervisor(
         bound_instance=bound,
         runner_process=proc,
         _runner_stdio_handler=handler,
-        initialize_timeout=400,
         _ev_recv=ev_recv,
         _task_sender=task_sender,
         _event_sender=event_sender,

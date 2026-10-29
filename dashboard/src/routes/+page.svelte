@@ -2204,10 +2204,14 @@
       .filter(Boolean);
     const first = lines[0] ?? message;
     if (!first.startsWith("Terminated (")) return first;
-    const runnerError = lines.find((line) => line.startsWith("Runner error:"));
-    return runnerError
-      ? runnerError.slice("Runner error:".length).trim()
-      : first;
+    const index = lines.findIndex((line) => line.startsWith("Runner error:"));
+    if (index === -1) return first;
+    const runnerError = lines[index].slice("Runner error:".length).trim();
+    // A reason the supervisor stopped the runner for has no traceback after
+    // it, so it ends with the closing parenthesis of "Terminated (…)"
+    return index === lines.length - 1 && runnerError.endsWith(")")
+      ? runnerError.slice(0, -1).trimEnd()
+      : runnerError;
   }
 
   function deriveInstanceStatus(instanceWrapped: unknown): {

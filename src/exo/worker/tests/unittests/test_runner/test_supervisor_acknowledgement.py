@@ -70,7 +70,6 @@ async def supervisor() -> AsyncIterator[tuple[RunnerSupervisor, MpReceiver[Task]
             bound_instance=BOUND,
             runner_process=proc,
             _runner_stdio_handler=handler,
-            initialize_timeout=400,
             _ev_recv=ev_recv,
             _task_sender=task_sender,
             _event_sender=event_sender,
