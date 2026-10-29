@@ -66,6 +66,7 @@
     nodeIdentities,
     isConnected,
     type DownloadProgress,
+    type NodeInfo,
     type PlacementPreview,
   } from "$lib/stores/app.svelte";
   import { addToast, dismissByMessage } from "$lib/stores/toast.svelte";
@@ -306,14 +307,26 @@
 
   // ── Onboarding wizard state ──
   const ONBOARDING_COMPLETE_KEY = "exo-onboarding-complete";
-  let onboardingStep = $state(0); // 0 = not in onboarding, 1-9 = wizard steps
+  // 0 = not in onboarding, 6 = pick a model, 7 = getting it ready (download
+  // and load), 9 = chat. The numbers are those of the older, longer wizard.
+  let onboardingStep = $state(0);
   let onboardingModelId = $state<string | null>(null); // model selected during onboarding
   let onboardingFadingOut = $state(false); // true during fade-out transition
+  // Onboarding isn't complete, and the first cluster state decides whether to
+  // show it: a device that joins a cluster that already runs a model skips it
+  let onboardingDecisionPending = $state(false);
   const showOnboarding = $derived(onboardingStep > 0);
-  const showOnboardingOverlay = $derived(showOnboarding || onboardingFadingOut);
+  const showOnboardingOverlay = $derived(
+    showOnboarding || onboardingFadingOut || onboardingDecisionPending,
+  );
+  // Shown on the model list after the user stopped getting a model ready
+  let onboardingNote = $state<string | null>(null);
 
-  // ── Steps 1-5 animation state: cinematic SVG story ──
-  const SIMULATED_STUDIO_GB = 256; // simulated Mac Studio memory
+  // ── "How EXO works": optional cinematic SVG story, steps 1-4 ──
+  // Opened from onboarding and played over it; onboardingStep (and the
+  // tracking of a model getting ready) carries on underneath.
+  let explainerStep = $state(0); // 0 = closed
+  const SIMULATED_STUDIO_GB = 256; // simulated second Mac's memory
   const onboardingCombinedGB = $derived(
     userDeviceInfo.memoryGB + SIMULATED_STUDIO_GB,
   );
@@ -360,19 +373,29 @@
   let stepTitle = $state("");
   let stepTransitioning = $state(false);
 
-  // Advance to the next onboarding step
-  function advanceStep(target: number) {
+  function openExplainer() {
     showContinueButton = false;
-    if (target <= 5) {
-      // Steps 1-5 share a persistent SVG canvas — just set the step directly
-      onboardingStep = target;
+    explainerStep = 1;
+  }
+
+  // Leave the story: fade out, then show the onboarding step underneath
+  function closeExplainer() {
+    showContinueButton = false;
+    stepTransitioning = true;
+    setTimeout(() => {
+      explainerStep = 0;
+      stepTransitioning = false;
+    }, 350);
+  }
+
+  // Advance to the next step of the story, or leave it after the last
+  function advanceExplainer(target: number) {
+    showContinueButton = false;
+    if (target <= 4) {
+      // Steps 1-4 share a persistent SVG canvas — just set the step directly
+      explainerStep = target;
     } else {
-      // Leaving the cinematic sequence — fade out, then switch
-      stepTransitioning = true;
-      setTimeout(() => {
-        onboardingStep = target;
-        stepTransitioning = false;
-      }, 350);
+      closeExplainer();
     }
   }
 
@@ -398,7 +421,7 @@
 
   // ── Step 1: "Your cluster" — show real topology ──
   $effect(() => {
-    if (onboardingStep === 1) {
+    if (explainerStep === 1) {
       showContinueButton = false;
       stepTitle = "";
       // Reset all tweens to initial
@@ -438,7 +461,7 @@
 
   // ── Step 2: "Add devices to run larger models" — cross-fade topology out, device pair animates in ──
   $effect(() => {
-    if (onboardingStep === 2) {
+    if (explainerStep === 2) {
       showContinueButton = false;
 
       // Cross-fade: fade out real topology
@@ -497,7 +520,7 @@
 
   // ── Step 3: "EXO splits the model" — model block appears, splits ──
   $effect(() => {
-    if (onboardingStep === 3) {
+    if (explainerStep === 3) {
       showContinueButton = false;
       // Gently fade out the unlock chips
       chipPhase.set(0, { duration: 600 });
@@ -533,7 +556,7 @@
 
   // ── Step 4: "A device disconnects... start it again on the remaining devices" ──
   $effect(() => {
-    if (onboardingStep === 4) {
+    if (explainerStep === 4) {
       showContinueButton = false;
 
       // Crossfade title
@@ -584,7 +607,7 @@
         modelBlockY.set(125); // Settle back down just above the device
       }, 4800);
       const t8 = setTimeout(() => {
-        advanceStep(6);
+        closeExplainer();
       }, 6200);
 
       return () => {
@@ -601,105 +624,97 @@
     }
   });
 
-  // Recommended models for onboarding: 2 large, 2 medium, 2 small
-  // Always includes Llama-3.2-3B-4bit as a fast-loading small option
+  // The model onboarding recommends, listed first: small and quick to
+  // download, so the first chat is minutes away. Llama 3.2 3B when it fits,
+  // otherwise the smallest text model that does.
   const PINNED_ONBOARDING_MODEL = "mlx-community/Llama-3.2-3B-Instruct-4bit";
-  const onboardingModels = $derived.by(() => {
-    if (models.length === 0) return [];
-    const sorted = [...models]
-      .filter((m) => hasEnoughMemory(m) && getModelSizeGB(m) > 0)
-      .sort((a, b) => getModelSizeGB(b) - getModelSizeGB(a));
-    if (sorted.length <= 6) return sorted;
-
-    // Split into thirds by size: large (top third), medium (middle), small (bottom)
-    const third = Math.max(1, Math.floor(sorted.length / 3));
-    const large = sorted.slice(0, third);
-    const medium = sorted.slice(third, third * 2);
-    const small = sorted.slice(third * 2);
-
-    // Pick 2 from each tier, ensuring pinned model counts as a small pick
-    const pinned =
-      small.find((m) => m.id === PINNED_ONBOARDING_MODEL) ||
-      sorted.find((m) => m.id === PINNED_ONBOARDING_MODEL);
-    const pickLarge = large.slice(0, 2);
-    const pickMedium = medium.slice(0, 2);
-    const pickSmall = pinned
-      ? [
-          small.find((m) => m.id !== PINNED_ONBOARDING_MODEL) || small[0],
-          pinned,
-        ].filter(Boolean)
-      : small.slice(0, 2);
-
-    const result = [...pickLarge, ...pickMedium, ...pickSmall];
-    // Deduplicate (in case pinned was already picked)
-    const seen = new Set<string>();
-    return result.filter((m) => {
-      if (seen.has(m.id)) return false;
-      seen.add(m.id);
-      return true;
-    });
+  const onboardingRecommendedModel = $derived.by(() => {
+    const fitting = models.filter(
+      (m) =>
+        hasEnoughMemory(m) &&
+        getModelSizeGB(m) > 0 &&
+        (!m.tasks || m.tasks.includes("TextGeneration")),
+    );
+    return (
+      fitting.find((m) => m.id === PINNED_ONBOARDING_MODEL) ??
+      [...fitting].sort((a, b) => getModelSizeGB(a) - getModelSizeGB(b))[0] ??
+      null
+    );
   });
 
-  // Track onboarding instance status for auto-advancing steps.
-  // Uses runner status as source of truth to avoid false "ready" from missing download data.
-  // Only tracks the specific model launched during onboarding (ignores other running instances).
-  $effect(() => {
-    if (onboardingStep === 7 && instanceCount > 0 && onboardingModelId) {
-      let anyDownloading = false;
-      let anyReady = false;
-      for (const [id, inst] of Object.entries(instanceData)) {
-        // Only check instances for the model we launched during onboarding
-        if (getInstanceModelId(inst) !== onboardingModelId) continue;
-        const runnerStatus = deriveInstanceStatus(inst);
-        if (
-          runnerStatus.statusText === "READY" ||
-          runnerStatus.statusText === "LOADED" ||
-          runnerStatus.statusText === "RUNNING"
-        ) {
-          anyReady = true;
-        } else if (runnerStatus.statusText === "DOWNLOADING") {
-          anyDownloading = true;
-        } else {
-          const dlStatus = getInstanceDownloadStatus(id, inst);
-          if (dlStatus.isDownloading) anyDownloading = true;
-        }
-      }
-      // Model already cached & ready — skip download AND loading steps
-      if (anyReady) {
-        onboardingStep = 9;
-      } else if (anyDownloading) {
-        // Stay on step 7 (downloading)
-      } else {
-        // Not ready and not downloading — could be loading, initializing, or preparing.
-        // Only advance to step 8 if runners are actually in a loading state.
-        for (const [, inst] of Object.entries(instanceData)) {
-          if (getInstanceModelId(inst) !== onboardingModelId) continue;
-          const runnerStatus = deriveInstanceStatus(inst);
-          if (
-            runnerStatus.statusText === "LOADING" ||
-            runnerStatus.statusText === "WARMING UP"
-          ) {
-            onboardingStep = 8;
-            break;
-          }
-        }
-      }
+  // Bigger models after it, smallest first: four that fit, spread from small
+  // to the biggest, one quantization (the smallest) per base model
+  const ONBOARDING_OTHER_MODEL_COUNT = 4;
+  const onboardingOtherModels = $derived.by(() => {
+    const recommendedId = onboardingRecommendedModel?.id;
+    const seenBaseModels = new Set<string>();
+    const candidates = models
+      .filter(
+        (m) =>
+          m.id !== recommendedId && hasEnoughMemory(m) && getModelSizeGB(m) > 0,
+      )
+      .sort((a, b) => getModelSizeGB(a) - getModelSizeGB(b))
+      .filter((m) => {
+        const key = m.base_model || m.id;
+        if (seenBaseModels.has(key)) return false;
+        seenBaseModels.add(key);
+        return true;
+      });
+    if (candidates.length <= ONBOARDING_OTHER_MODEL_COUNT) return candidates;
+    const picked = new Set<number>();
+    for (let i = 1; i <= ONBOARDING_OTHER_MODEL_COUNT; i++) {
+      picked.add(
+        Math.round(
+          (i / ONBOARDING_OTHER_MODEL_COUNT) * (candidates.length - 1),
+        ),
+      );
     }
+    return [...picked].sort((a, b) => a - b).map((i) => candidates[i]);
   });
 
+  // A rough download time, assuming a typical 100 Mbit/s connection
+  const ASSUMED_DOWNLOAD_BYTES_PER_SECOND = 100_000_000 / 8;
+
+  // "less than a minute", "about 4 min", "about 2.5 h"
+  function formatRoughDuration(ms: number): string {
+    const minutes = ms / 60_000;
+    if (minutes < 1) return "less than a minute";
+    if (minutes < 60) return `about ${Math.round(minutes)} min`;
+    const hours = minutes / 60;
+    return `about ${hours < 10 ? Number(hours.toFixed(1)) : Math.round(hours)} h`;
+  }
+
+  // Size and download time for the onboarding model list
+  function describeOnboardingDownload(model: {
+    id: string;
+    name?: string;
+    storage_size_megabytes?: number;
+  }): string {
+    const sizeGB = getModelSizeGB(model);
+    const size = `${sizeGB >= 10 ? Math.round(sizeGB) : sizeGB.toFixed(1)} GB`;
+    if (getNodesWithModelDownloaded(downloadsData, model.id).length > 0) {
+      return `${size} · downloaded`;
+    }
+    const seconds =
+      (sizeGB * 1024 * 1024 * 1024) / ASSUMED_DOWNLOAD_BYTES_PER_SECOND;
+    return `${size} · ${formatRoughDuration(seconds * 1000)} to download`;
+  }
+
+  // The model onboarding started is ready: go to the chat. Runner status is
+  // the source of truth (missing download data can look like "ready"), and
+  // only the model started here counts.
   $effect(() => {
-    if (onboardingStep === 8 && instanceCount > 0 && onboardingModelId) {
-      for (const [, inst] of Object.entries(instanceData)) {
-        if (getInstanceModelId(inst) !== onboardingModelId) continue;
-        const runnerStatus = deriveInstanceStatus(inst);
-        if (
-          runnerStatus.statusText === "READY" ||
-          runnerStatus.statusText === "LOADED" ||
-          runnerStatus.statusText === "RUNNING"
-        ) {
-          onboardingStep = 9;
-          break;
-        }
+    if (onboardingStep !== 7 || !onboardingModelId) return;
+    for (const [, inst] of Object.entries(instanceData)) {
+      if (getInstanceModelId(inst) !== onboardingModelId) continue;
+      const runnerStatus = deriveInstanceStatus(inst);
+      if (
+        runnerStatus.statusText === "READY" ||
+        runnerStatus.statusText === "LOADED" ||
+        runnerStatus.statusText === "RUNNING"
+      ) {
+        onboardingStep = 9;
+        return;
       }
     }
   });
@@ -769,7 +784,7 @@
   }
 
   $effect(() => {
-    if (onboardingStep !== 7 && onboardingStep !== 8) return;
+    if (onboardingStep !== 7) return;
     if (!onboardingInstanceId) return;
     const inst = instanceData[onboardingInstanceId];
     if (!inst) {
@@ -823,9 +838,39 @@
     }
   });
 
+  // Bumped when the user leaves a model that is being started, so a launch
+  // still in flight knows it was abandoned
+  let onboardingLaunchGeneration = 0;
+
+  // "Pick a different model" while one is getting ready: stop it. Its
+  // download stops too (the master pauses downloads that no model needs),
+  // so a large one doesn't carry on unnoticed. What was downloaded stays on
+  // disk, and the Downloads page can resume or delete it; say so.
+  async function pickDifferentOnboardingModel() {
+    const instanceId = onboardingInstanceId;
+    const modelId = onboardingModelId;
+    onboardingLaunchGeneration++;
+    resetOnboardingLaunchTracking();
+    onboardingError = null;
+    onboardingNote = null;
+    onboardingStep = 6;
+    if (!modelId) return;
+    const partlyDownloaded = getModelDownloadStatus(modelId).perNode.some(
+      (node) => node.status === "downloading" || node.status === "partial",
+    );
+    if (instanceId && instanceData[instanceId]) {
+      await requestInstanceDeletion(instanceId);
+    }
+    if (partlyDownloaded && onboardingStep === 6) {
+      onboardingNote = `Stopped ${getModelDisplayName(modelId)}. Its download is paused: resume or delete it on the Downloads page.`;
+    }
+  }
+
   async function onboardingLaunchModel(modelId: string) {
+    const generation = ++onboardingLaunchGeneration;
     onboardingModelId = modelId;
     onboardingError = null;
+    onboardingNote = null;
     resetOnboardingLaunchTracking();
     selectPreviewModel(modelId);
     onboardingStep = 7;
@@ -861,6 +906,11 @@
       const [, placed] = getTagged(instanceData);
       const launchedId =
         (placed as { instanceId?: string } | null)?.instanceId ?? null;
+      if (generation !== onboardingLaunchGeneration) {
+        // The user picked a different model while this one was being placed
+        if (launchedId) abandonedOnboardingInstanceId = launchedId;
+        return;
+      }
       onboardingInstanceId = launchedId;
       if (launchedId) {
         setTimeout(() => {
@@ -922,6 +972,42 @@
       percentage: (layersLoaded / totalLayers) * 100,
     };
   });
+
+  // "Getting <model> ready": the download, then loading into memory, as one
+  // progress bar and one line of plain status
+  const onboardingReadiness = $derived.by(
+    (): { percentage: number | null; status: string } => {
+      const download = onboardingDownloadProgress;
+      if (download) {
+        // The first seconds of a download give wild estimates
+        const timeLeft =
+          download.etaMs > 0 && download.percentage >= 1
+            ? ` · ${formatRoughDuration(download.etaMs)} left`
+            : "";
+        return {
+          percentage: download.percentage,
+          status: `Downloading · ${formatBytes(download.downloadedBytes, 1)} of ${formatBytes(download.totalBytes, 1)}${timeLeft}`,
+        };
+      }
+      const load = onboardingLoadProgress;
+      if (load) {
+        return {
+          percentage: load.percentage,
+          status: `Loading into memory · ${load.layersLoaded} of ${load.totalLayers} layers`,
+        };
+      }
+      // Loaded, running a first short generation before it's ready
+      const warmingUp = Object.values(instanceData).some(
+        (inst) =>
+          getInstanceModelId(inst) === onboardingModelId &&
+          deriveInstanceStatus(inst).statusText === "WARMING UP",
+      );
+      return {
+        percentage: null,
+        status: warmingUp ? "Almost ready…" : "Starting…",
+      };
+    },
+  );
 
   // Instance launch state
   let models = $state<
@@ -1512,7 +1598,8 @@
     if (params.has("reset-onboarding")) {
       localStorage.removeItem(ONBOARDING_COMPLETE_KEY);
       window.history.replaceState({}, "", window.location.pathname);
-      onboardingStep = 1;
+      // Asked for explicitly: show it even if a model is already running
+      onboardingStep = 6;
       return;
     }
 
@@ -1536,7 +1623,7 @@
       if (res.ok) {
         const data = await res.json();
         if (!data.completed) {
-          onboardingStep = 1;
+          awaitOnboardingDecision();
         }
         return;
       }
@@ -1546,9 +1633,75 @@
 
     // Fallback: check localStorage
     if (!localStorage.getItem(ONBOARDING_COMPLETE_KEY)) {
-      onboardingStep = 1;
+      awaitOnboardingDecision();
     }
   });
+
+  // Onboarding isn't done: decide once the first cluster state is in (see
+  // below). If it doesn't come, show onboarding anyway.
+  const ONBOARDING_DECISION_TIMEOUT_MS = 5_000;
+  function awaitOnboardingDecision() {
+    onboardingDecisionPending = true;
+    setTimeout(() => {
+      if (onboardingDecisionPending) decideOnboarding();
+    }, ONBOARDING_DECISION_TIMEOUT_MS);
+  }
+
+  // Decide once the cluster state and the model list (for the model's name)
+  // are in
+  $effect(() => {
+    if (onboardingDecisionPending && update && models.length > 0) {
+      decideOnboarding();
+    }
+  });
+
+  // A device that joins a cluster that already runs a model skips onboarding:
+  // the cluster is set up, so say so and offer the chat instead. A device on
+  // its own, or in a cluster with nothing running, gets onboarding.
+  function decideOnboarding() {
+    onboardingDecisionPending = false;
+    const modelId =
+      bestRunningModelId ??
+      Object.values(instanceData)
+        .map((inst) => getInstanceModelId(inst))
+        .find((id) => id !== "Unknown" && id !== "Unknown Model");
+    if (!modelId) {
+      onboardingStep = 6;
+      return;
+    }
+    completeOnboarding();
+    announceJoinedCluster(modelId);
+  }
+
+  // Whether the device serving this dashboard is a Mac. Mac models are "Mac
+  // Studio", "MacBook Pro", "Mac mini", ...; before /node_id answers, every
+  // device in the cluster has to be a Mac.
+  const localDeviceIsMac = $derived.by(() => {
+    const isMac = (node?: NodeInfo) =>
+      node?.system_info?.model_id?.startsWith("Mac") ?? false;
+    const localNode = localNodeId ? data?.nodes?.[localNodeId] : undefined;
+    if (localNode) return isMac(localNode);
+    const nodes = Object.values(data?.nodes ?? {});
+    return nodes.length > 0 && nodes.every(isMac);
+  });
+
+  function announceJoinedCluster(modelId: string) {
+    const thisDevice = localDeviceIsMac ? "This Mac" : "This device";
+    const joined =
+      nodeCount > 1
+        ? `${thisDevice} joined your cluster (${nodeCount} devices · ${Math.round(clusterTotalMemoryGB())} GB). `
+        : "";
+    const state = hasRunningInstance(modelId) ? "ready" : "starting";
+    addToast({
+      type: "success",
+      message: `${joined}${getModelDisplayName(modelId)} is ${state}.`,
+      duration: 15_000,
+      action: {
+        label: "Chat",
+        onClick: () => void launchModelForChat(modelId, "auto"),
+      },
+    });
+  }
 
   // Deferred Firefox AI sidebar auto-send: wait for cluster state and model
   // list before submitting. Both data (from /state polling) and models (from
@@ -4828,11 +4981,15 @@
   ontouchmove={handleSliderTouchMove}
   ontouchend={handleSliderTouchEnd}
   onkeydown={(e) => {
-    if (!showOnboardingOverlay || stepTransitioning) return;
-    if (e.key === "ArrowRight" || e.key === " " || e.key === "Enter") {
-      if (onboardingStep >= 1 && onboardingStep <= 4 && showContinueButton) {
+    if (!showOnboardingOverlay || stepTransitioning || explainerStep === 0)
+      return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeExplainer();
+    } else if (e.key === "ArrowRight" || e.key === " " || e.key === "Enter") {
+      if (showContinueButton) {
         e.preventDefault();
-        advanceStep(onboardingStep < 4 ? onboardingStep + 1 : 6);
+        advanceExplainer(explainerStep + 1);
       }
     }
   }}
@@ -4881,8 +5038,8 @@
         ? 0
         : 1};"
     >
-      {#if onboardingStep >= 1 && onboardingStep <= 4}
-        <!-- Steps 1-4: Cinematic SVG animation story -->
+      {#if explainerStep >= 1}
+        <!-- "How EXO works", steps 1-4: cinematic SVG animation story -->
         <div
           class="flex flex-col items-center w-full max-w-3xl px-8"
           style="transition: opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1), transform 0.6s cubic-bezier(0.4, 0, 0.2, 1); opacity: {stepTransitioning
@@ -4904,8 +5061,8 @@
               class="text-2xl font-light text-white/90 tracking-wide"
               style="opacity: {$titleOpacity}; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; letter-spacing: 0.02em;"
             >
-              {onboardingStep === 1
-                ? "EXO connects all your devices into an AI supercomputer."
+              {explainerStep === 1
+                ? "EXO connects your devices into one AI cluster."
                 : stepTitle}
             </h1>
 
@@ -4914,12 +5071,12 @@
               class="text-sm mt-2 text-white/40 max-w-md mx-auto"
               style="opacity: {$subtitleOpacity}; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; font-weight: 300; min-height: 1.5em;"
             >
-              {#if onboardingStep === 2}
+              {#if explainerStep === 2}
                 &nbsp;
-              {:else if onboardingStep === 3}
+              {:else if explainerStep === 3}
                 The model is automatically distributed. Each device handles a
                 piece.
-              {:else if onboardingStep === 4}
+              {:else if explainerStep === 4}
                 {stepTitle === "Start it again on the remaining devices"
                   ? "Models using that device stop. You can start them again on the devices that are left."
                   : "Devices can leave anytime. Laptops close, machines restart."}
@@ -4940,13 +5097,10 @@
             </p>
 
             <!-- Step 1: Real topology graph -->
-            {#if onboardingStep <= 1 || $topologyOpacity > 0.01}
+            {#if explainerStep <= 1 || $topologyOpacity > 0.01}
               <div
                 class="absolute inset-0 flex items-center justify-center"
-                style="opacity: {$topologyOpacity}; pointer-events: {onboardingStep <=
-                1
-                  ? 'none'
-                  : 'none'};"
+                style="opacity: {$topologyOpacity}; pointer-events: none;"
               >
                 <TopologyGraph class="w-full h-full" />
               </div>
@@ -4994,7 +5148,7 @@
                 </text>
               </g>
 
-              <!-- Device 2 (Mac Studio — simulated) -->
+              <!-- Device 2 (another Mac — an example) -->
               <g
                 transform="translate({$device2X}, 210)"
                 opacity={$device2Opacity}
@@ -5026,7 +5180,7 @@
                   fill="rgba(255,255,255,0.9)"
                   style="font-size: 15px; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; font-weight: 500; letter-spacing: 0.01em;"
                 >
-                  Mac Studio
+                  Another Mac
                 </text>
                 <text
                   x="0"
@@ -5171,11 +5325,10 @@
                     0,
                     Math.min(1, $chipPhase - stagger),
                   )}
-                  {@const modelName = (
-                    model.name ||
-                    model.id.split("/").pop() ||
-                    ""
-                  ).slice(0, 18)}
+                  {@const modelName = getModelDisplayName(model.id).slice(
+                    0,
+                    18,
+                  )}
                   {@const modelSize = Math.round(getModelSizeGB(model))}
                   {@const slideY = 16 * (1 - progress)}
                   {@const chipScale = 0.85 + 0.15 * progress}
@@ -5260,7 +5413,7 @@
                       fill="rgba(220,180,40,0.9)"
                       style="font-size: 12px; font-family: -apple-system, system-ui, sans-serif; font-weight: 500;"
                     >
-                      LLM
+                      Model
                     </text>
                   </g>
                 {:else}
@@ -5292,7 +5445,7 @@
                       fill="rgba(220,180,40,0.75)"
                       style="font-size: 11px; font-family: -apple-system, system-ui, sans-serif;"
                     >
-                      Shard 1/2
+                      Part 1/2
                     </text>
                   </g>
 
@@ -5318,7 +5471,7 @@
                       fill="rgba(220,180,40,0.75)"
                       style="font-size: 11px; font-family: -apple-system, system-ui, sans-serif;"
                     >
-                      Shard 2/2
+                      Part 2/2
                     </text>
                   </g>
                 {/if}
@@ -5326,7 +5479,7 @@
             </svg>
           </div>
 
-          <!-- Continue button — smooth transition, only for steps 1 and 5 -->
+          <!-- Continue button — shown once each step's animation is done -->
           <div
             style="transition: opacity 0.4s ease, transform 0.4s cubic-bezier(0.4,0,0.2,1); opacity: {showContinueButton
               ? 1
@@ -5338,8 +5491,7 @@
           >
             <button
               type="button"
-              onclick={() =>
-                advanceStep(onboardingStep < 4 ? onboardingStep + 1 : 6)}
+              onclick={() => advanceExplainer(explainerStep + 1)}
               class="inline-flex items-center gap-2.5 px-10 py-3.5 bg-exo-yellow text-exo-black text-sm font-semibold rounded-full cursor-pointer"
               style="transition: transform 0.2s ease, box-shadow 0.3s ease, filter 0.2s ease; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; letter-spacing: 0.02em;"
               onmouseenter={(e) => {
@@ -5370,21 +5522,22 @@
           </div>
         </div>
       {:else if onboardingStep === 6}
-        <!-- Step 6: Choose a Model -->
+        <!-- Pick a model: the recommended small one first, bigger ones after -->
         <div
-          class="flex flex-col items-center w-full max-w-2xl px-8"
+          class="flex flex-col items-center w-full max-w-xl px-8"
           style="opacity: 0; animation: onb-fade-in 0.5s ease forwards;"
         >
           <div class="text-center mb-8">
             <h1
               class="text-xl font-sans font-light text-white/90 mb-2 tracking-wide"
             >
-              Choose a model
+              Pick a model to start
             </h1>
             <p class="text-sm font-sans text-white/40">
-              Showing recommended models for your devices ({Math.round(
-                availableMemoryGB(),
-              )} GB memory available).
+              {nodeCount > 1
+                ? `Your ${nodeCount} devices have`
+                : `Your ${localDeviceIsMac ? "Mac" : "device"} has`}
+              {Math.round(availableMemoryGB())} GB of memory free.
             </p>
           </div>
 
@@ -5395,65 +5548,87 @@
             >
               {onboardingError}
             </div>
+          {:else if onboardingNote}
+            <div
+              class="w-full mb-6 px-4 py-3 rounded-lg border border-white/10 bg-white/5 text-sm font-sans text-white/60"
+              role="status"
+              in:fade={{ duration: 200 }}
+            >
+              {onboardingNote}
+            </div>
           {/if}
 
-          {#if onboardingModels.length === 0}
+          {#if !onboardingRecommendedModel && onboardingOtherModels.length === 0}
             <div class="text-center py-8">
               <div class="text-sm text-white/40 font-sans animate-pulse">
-                Loading models...
+                Loading models…
               </div>
             </div>
           {:else}
-            <div class="w-full space-y-3 mb-8">
-              {#each onboardingModels as model}
-                {@const sizeGB = getModelSizeGB(model)}
-                {@const fitsNow = hasEnoughMemory(model)}
-                {@const tags = modelTags()[model.id] || []}
-                <button
-                  type="button"
-                  onclick={() => onboardingLaunchModel(model.id)}
-                  class="w-full flex items-center justify-between gap-4 px-5 py-4 rounded-xl border transition-all duration-200 cursor-pointer {fitsNow
-                    ? 'border-white/10 bg-white/5 hover:border-exo-yellow/50 hover:bg-exo-yellow/5'
-                    : 'border-white/10 bg-white/[0.02] hover:border-white/20 opacity-60'}"
+            {#if onboardingRecommendedModel}
+              {@const model = onboardingRecommendedModel}
+              <button
+                type="button"
+                onclick={() => onboardingLaunchModel(model.id)}
+                title={model.id}
+                class="group w-full flex items-center justify-between gap-4 px-5 py-4 rounded-xl border border-exo-yellow/40 bg-exo-yellow/5 hover:border-exo-yellow/70 hover:bg-exo-yellow/10 transition-all duration-200 cursor-pointer text-left"
+              >
+                <div class="flex flex-col items-start gap-1 min-w-0">
+                  <div class="flex items-center gap-2 min-w-0">
+                    <span
+                      class="text-base font-sans font-medium text-white truncate"
+                      >{getModelDisplayName(model.id)}</span
+                    >
+                    <span
+                      class="flex-shrink-0 text-[10px] font-sans font-semibold px-2 py-0.5 rounded-full bg-exo-yellow text-exo-black"
+                      >Recommended</span
+                    >
+                  </div>
+                  <span class="text-xs font-sans text-white/50"
+                    >Quick to download, good for everyday chat</span
+                  >
+                  <span
+                    class="text-xs font-mono text-white/40"
+                    title="Download times are estimated for a 100 Mbit/s connection"
+                    >{describeOnboardingDownload(model)}</span
+                  >
+                </div>
+                <span
+                  class="flex-shrink-0 px-5 py-2 rounded-full bg-exo-yellow text-exo-black text-sm font-sans font-semibold group-hover:brightness-110"
+                  >Start</span
                 >
-                  <div class="flex flex-col items-start gap-1 min-w-0">
-                    <div class="flex items-center gap-2">
-                      <span
-                        class="text-sm font-sans font-medium text-white truncate"
-                        >{model.name || model.id}</span
-                      >
-                      {#each tags as tag}
-                        <span
-                          class="text-[10px] font-sans font-medium px-1.5 py-0.5 rounded-full bg-exo-yellow/10 text-exo-yellow/80"
-                          >{tag}</span
+              </button>
+            {/if}
+            {#if onboardingOtherModels.length > 0}
+              <p class="w-full text-xs font-sans text-white/40 mt-8 mb-3">
+                Bigger models
+              </p>
+              <div class="w-full space-y-2">
+                {#each onboardingOtherModels as model}
+                  <button
+                    type="button"
+                    onclick={() => onboardingLaunchModel(model.id)}
+                    title={model.id}
+                    class="w-full flex items-center justify-between gap-4 px-4 py-3 rounded-lg border border-white/10 bg-white/[0.03] hover:border-exo-yellow/50 hover:bg-exo-yellow/5 transition-all duration-200 cursor-pointer text-left"
+                  >
+                    <span
+                      class="min-w-0 truncate text-sm font-sans text-white/80"
+                    >
+                      {getModelDisplayName(model.id)}
+                      {#if model.quantization}
+                        <span class="text-white/40">· {model.quantization}</span
                         >
-                      {/each}
-                    </div>
-                    <span class="text-xs font-mono text-white/40 truncate"
-                      >{model.id}</span
+                      {/if}
+                    </span>
+                    <span
+                      class="flex-shrink-0 text-xs font-mono text-white/40"
+                      title="Download times are estimated for a 100 Mbit/s connection"
+                      >{describeOnboardingDownload(model)}</span
                     >
-                  </div>
-                  <div class="flex items-center gap-3 flex-shrink-0">
-                    <span class="text-xs font-mono text-white/50"
-                      >{sizeGB >= 1 ? sizeGB.toFixed(0) : sizeGB.toFixed(1)} GB</span
-                    >
-                    <svg
-                      class="w-4 h-4 text-white/40"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      stroke-width="2"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        d="M9 5l7 7-7 7"
-                      />
-                    </svg>
-                  </div>
-                </button>
-              {/each}
-            </div>
+                  </button>
+                {/each}
+              </div>
+            {/if}
           {/if}
 
           <button
@@ -5462,64 +5637,47 @@
               modelPickerContext = "dashboard";
               isModelPickerOpen = true;
             }}
-            class="text-sm font-sans text-white/40 hover:text-exo-yellow transition-colors cursor-pointer underline underline-offset-4 decoration-white/20 hover:decoration-exo-yellow/50"
+            class="mt-6 text-sm font-sans text-white/40 hover:text-exo-yellow transition-colors cursor-pointer underline underline-offset-4 decoration-white/20 hover:decoration-exo-yellow/50"
           >
-            Browse all models
+            More models…
           </button>
+          <p class="mt-8 text-xs font-sans text-white/30 text-center">
+            Want bigger models? Add another {localDeviceIsMac
+              ? "Mac"
+              : "device"}, and EXO combines their memory.
+          </p>
         </div>
       {:else if onboardingStep === 7}
-        <!-- Step 7: Downloading -->
+        <!-- Getting the model ready: its download and loading, as one step -->
         <div
-          class="text-center max-w-lg px-8"
+          class="text-center w-full max-w-lg px-8"
           style="opacity: 0; animation: onb-fade-in 0.5s ease forwards;"
         >
-          <div class="mb-8">
-            <h1
-              class="text-xl font-sans font-light text-white/90 mb-2 tracking-wide"
-            >
-              {onboardingDownloadProgress ? "Downloading" : "Starting"}
-            </h1>
-            {#if onboardingModelId}
-              <p class="text-sm text-white/40 font-sans">
-                {getModelDisplayName(onboardingModelId)}
-              </p>
-            {/if}
-          </div>
+          <h1
+            class="text-xl font-sans font-light text-white/90 mb-8 tracking-wide"
+          >
+            Getting {onboardingModelId
+              ? getModelDisplayName(onboardingModelId)
+              : "your model"} ready
+          </h1>
 
-          {#if onboardingDownloadProgress}
-            <div class="w-full max-w-md mx-auto space-y-4">
-              <div
-                class="relative h-2 bg-white/10 rounded-full overflow-hidden"
-              >
+          <div class="w-full max-w-md mx-auto space-y-3">
+            <div class="relative h-2 bg-white/10 rounded-full overflow-hidden">
+              {#if onboardingReadiness.percentage !== null}
                 <div
                   class="absolute inset-y-0 left-0 bg-gradient-to-r from-exo-yellow to-exo-yellow-darker rounded-full transition-all duration-500"
-                  style="width: {onboardingDownloadProgress.percentage}%"
+                  style="width: {onboardingReadiness.percentage}%"
                 ></div>
-              </div>
-              <div class="flex justify-between text-xs font-mono text-white/50">
-                <span>{onboardingDownloadProgress.percentage.toFixed(1)}%</span>
-                <span
-                  >{formatBytes(onboardingDownloadProgress.downloadedBytes)} /
-                  {formatBytes(onboardingDownloadProgress.totalBytes)}</span
-                >
-              </div>
-              <div class="flex justify-between text-xs font-mono text-white/40">
-                <span>{formatSpeed(onboardingDownloadProgress.speed)}</span>
-                <span>ETA: {formatEta(onboardingDownloadProgress.etaMs)}</span>
-              </div>
-            </div>
-          {:else}
-            <div class="w-full max-w-md mx-auto">
-              <div
-                class="relative h-2 bg-white/10 rounded-full overflow-hidden"
-              >
+              {:else}
                 <div
                   class="absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-exo-yellow to-exo-yellow-darker rounded-full animate-pulse"
                 ></div>
-              </div>
-              <p class="text-xs font-mono text-white/40 mt-4">Preparing…</p>
+              {/if}
             </div>
-          {/if}
+            <p class="text-xs font-mono text-white/50 text-left" role="status">
+              {onboardingReadiness.status}
+            </p>
+          </div>
 
           {#if onboardingRetryNote}
             <p class="text-xs font-mono text-yellow-400/80 mt-6">
@@ -5528,75 +5686,16 @@
           {/if}
 
           <p class="text-xs font-sans text-white/40 mt-8">
-            This may take a few minutes depending on your connection.
+            You can chat as soon as it has downloaded and loaded into memory.
           </p>
-        </div>
-      {:else if onboardingStep === 8}
-        <!-- Step 8: Loading into memory -->
-        <div
-          class="text-center max-w-lg px-8"
-          style="opacity: 0; animation: onb-fade-in 0.5s ease forwards;"
-        >
-          <div class="mb-6">
-            <h1
-              class="text-xl font-sans font-light text-white/90 mb-2 tracking-wide"
-            >
-              Loading into memory
-            </h1>
-            {#if onboardingModelId}
-              <p class="text-sm text-white/40 font-sans">
-                {getModelDisplayName(onboardingModelId)}
-              </p>
-            {/if}
-          </div>
 
-          <!-- Device icon -->
-          <div class="flex justify-center mb-6">
-            <svg
-              viewBox="0 0 200 200"
-              class="w-32 h-32"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <DeviceIcon
-                deviceType={userDeviceInfo.deviceType}
-                cx={100}
-                cy={100}
-                size={80}
-                ramPercent={60}
-                uid="onb-loading"
-              />
-            </svg>
-          </div>
-
-          {#if onboardingLoadProgress}
-            <div class="w-full max-w-xs mx-auto space-y-3">
-              <div
-                class="relative h-2 bg-white/10 rounded-full overflow-hidden"
-              >
-                <div
-                  class="absolute inset-y-0 left-0 bg-gradient-to-r from-exo-yellow to-exo-yellow-darker rounded-full transition-all duration-500"
-                  style="width: {onboardingLoadProgress.percentage}%"
-                ></div>
-              </div>
-              <p class="text-xs text-white/40 font-mono text-center">
-                {onboardingLoadProgress.layersLoaded} / {onboardingLoadProgress.totalLayers}
-                layers loaded
-              </p>
-            </div>
-          {:else}
-            <div class="flex justify-center mb-4">
-              <div
-                class="w-8 h-8 border-2 border-exo-yellow/15 border-t-exo-yellow/70 rounded-full animate-spin"
-              ></div>
-            </div>
-            <p class="text-sm text-white/30 font-sans">Loading...</p>
-          {/if}
-
-          {#if onboardingRetryNote}
-            <p class="text-xs font-mono text-yellow-400/80 mt-6">
-              {onboardingRetryNote}
-            </p>
-          {/if}
+          <button
+            type="button"
+            onclick={pickDifferentOnboardingModel}
+            class="mt-8 px-5 py-2 rounded-full border border-white/20 text-sm font-sans text-white/70 hover:text-white hover:border-white/40 transition-colors cursor-pointer"
+          >
+            Pick a different model
+          </button>
         </div>
       {:else if onboardingStep === 9}
         <!-- Step 9: Ready — centered input with suggestion chips -->
@@ -5649,48 +5748,73 @@
         </div>
       {/if}
 
-      <!-- Replay / Skip — visible on all onboarding steps -->
-      <div class="absolute bottom-8 flex items-center gap-6">
-        <button
-          type="button"
-          onclick={() => {
-            onboardingStep = 0;
-            setTimeout(() => {
-              onboardingStep = 1;
-            }, 50);
-          }}
-          class="flex items-center gap-1.5 text-xs font-sans text-white/50 hover:text-white/80 transition-colors duration-300 cursor-pointer"
-        >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.8"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="M2.5 2v5h5" />
-            <path d="M2.5 7a6.5 6.5 0 1 1 1.4-2.8" />
-          </svg>
-          Replay
-        </button>
-        <button
-          type="button"
-          onclick={completeOnboarding}
-          class="flex items-center gap-1.5 text-xs font-sans text-white/50 hover:text-white/80 transition-colors duration-300 cursor-pointer"
-        >
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M3 2.5v11L9 8 3 2.5z" />
-            <rect x="10.5" y="2.5" width="2.5" height="11" rx="0.5" />
-          </svg>
-          Skip
-        </button>
-      </div>
+      <!-- Secondary actions: "How EXO works" and Skip, or Back from the story -->
+      {#if explainerStep >= 1 || onboardingStep > 0}
+        <div class="absolute bottom-8 flex items-center gap-6">
+          {#if explainerStep >= 1}
+            <button
+              type="button"
+              onclick={closeExplainer}
+              class="flex items-center gap-1.5 text-xs font-sans text-white/50 hover:text-white/80 transition-colors duration-300 cursor-pointer"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M10 3L5 8l5 5" />
+              </svg>
+              Back
+            </button>
+          {:else}
+            {#if onboardingStep === 6 || onboardingStep === 7}
+              <button
+                type="button"
+                onclick={openExplainer}
+                class="flex items-center gap-1.5 text-xs font-sans text-white/50 hover:text-white/80 transition-colors duration-300 cursor-pointer"
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d={infoIconPath} />
+                </svg>
+                How EXO works
+              </button>
+            {/if}
+            <button
+              type="button"
+              onclick={completeOnboarding}
+              class="flex items-center gap-1.5 text-xs font-sans text-white/50 hover:text-white/80 transition-colors duration-300 cursor-pointer"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+              >
+                <path d="M3 2.5v11L9 8 3 2.5z" />
+                <rect x="10.5" y="2.5" width="2.5" height="11" rx="0.5" />
+              </svg>
+              {onboardingStep === 6 ? "Skip for now" : "Skip"}
+            </button>
+          {/if}
+        </div>
+      {/if}
     </div>
 
-    <!-- Model Picker Modal (available during onboarding step 4) -->
+    <!-- Model Picker Modal ("More models…" on the model list) -->
     {#if onboardingStep === 6}
       <ModelPickerModal
         isOpen={isModelPickerOpen}
