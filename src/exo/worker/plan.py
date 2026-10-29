@@ -53,6 +53,15 @@ def plan(
     instance_backoff: KeyedBackoff[InstanceId],
     download_backoff: KeyedBackoff[ModelId],
 ) -> Task | None:
+    # A runner that has yet to pick up the last task sent to it still has the status from
+    # before that task: starting the next phase from it would send the task again. Such a
+    # runner sits out those steps until it does (or until it's found stuck and stopped), and
+    # the other runners on this node carry on.
+    settled = {
+        runner_id: runner
+        for runner_id, runner in runners.items()
+        if not runner.awaiting_acknowledgement
+    }
     # Python short circuiting OR logic should evaluate these sequentially.
     return (
         _cancel_tasks(runners, tasks)
@@ -61,9 +70,9 @@ def plan(
         or _model_needs_download(
             node_id, runners, global_download_status, download_backoff
         )
-        or _init_distributed_backend(runners, all_runners)
-        or _load_model(runners, all_runners, global_download_status)
-        or _ready_to_warmup(runners, all_runners)
+        or _init_distributed_backend(settled, all_runners)
+        or _load_model(settled, all_runners, global_download_status)
+        or _ready_to_warmup(settled, all_runners)
         or _pending_tasks(runners, tasks, all_runners)
     )
 

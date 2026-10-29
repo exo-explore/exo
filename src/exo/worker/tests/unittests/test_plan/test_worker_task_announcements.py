@@ -44,6 +44,7 @@ class RecordingRunner:
     cancelled: set[TaskId] = field(default_factory=set)
     pending: dict[TaskId, object] = field(default_factory=dict)
     started: list[Task] = field(default_factory=list)
+    awaiting_acknowledgement: bool = False
 
     async def start_task(self, task: Task) -> None:
         self.started.append(task)

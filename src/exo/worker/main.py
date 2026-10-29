@@ -433,6 +433,8 @@ class Worker:
                     try:
                         with fail_after(3):
                             await runner.start_task(task)
+                            # Give it a moment to start shutting down by itself
+                            await runner.wait_for_acknowledgement(task.task_id)
                     except TimeoutError:
                         await self.event_sender.send(
                             TaskStatusUpdated(
