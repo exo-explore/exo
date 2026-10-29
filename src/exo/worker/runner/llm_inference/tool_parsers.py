@@ -1,5 +1,6 @@
 import json
 import math
+import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -20,7 +21,29 @@ class ToolParser:
             return None
         if tools is not None:
             parsed = _coerce_tool_calls_to_schema(parsed, tools)
+            if any(_missing_required_arguments(call, tools) for call in parsed):
+                # Better to hand back the raw text than an empty call: an empty
+                # call always fails, and once it is in the history the model
+                # copies it and loops.
+                return None
         return parsed
+
+
+def _missing_required_arguments(
+    tool_call: ToolCallItem, tools: list[dict[str, Any]]
+) -> bool:
+    try:
+        arguments = json.loads(tool_call.arguments)  # pyright: ignore[reportAny]
+    except json.JSONDecodeError:
+        return False
+    if arguments:
+        return False
+    for tool in tools:
+        function = tool.get("function")
+        if isinstance(function, dict) and function.get("name") == tool_call.name:  # pyright: ignore[reportUnknownMemberType]
+            parameters = function.get("parameters")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            return isinstance(parameters, dict) and bool(parameters.get("required"))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    return False
 
 
 def _json_type_matches(value: Any, expected_type: str) -> bool:  # pyright: ignore[reportAny]
@@ -183,16 +206,65 @@ def _coerce_tool_calls_to_schema(
     return coerced_calls
 
 
+_xml_function_regex = re.compile(
+    r"<function=([^>\n]+)>(.*?)(?:</function>|$)", re.DOTALL
+)
+_xml_parameter_regex = re.compile(
+    r'<parameter(?:=|\s+name=)"?([^">\n]+)"?>\n?(.*?)\n?(?=</parameter>|<parameter[=\s]|$)',
+    re.DOTALL,
+)
+
+
+def _parse_xml_lenient(text: str) -> dict[str, Any] | None:
+    """Recover Qwen3-Coder style calls the strict mlx_lm parser turns into `{}`.
+
+    Qwen sometimes drops `</parameter>` / `</function>`, writes
+    `<parameter name="x">`, or writes a JSON object inside `<function=name>`
+    (often with raw newlines inside its strings, which strict JSON rejects).
+    The strict parser returns empty arguments for all of those, and the agent
+    then loops resending a call it thinks it made.
+    """
+    function_match = _xml_function_regex.search(text)
+    if function_match is None:
+        return None
+    name = function_match.group(1).strip()
+    body = function_match.group(2).strip()
+    if body.startswith("{"):
+        try:
+            arguments = json.loads(body, strict=False)  # pyright: ignore[reportAny]
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(arguments, dict):
+            return None
+        return {"name": name, "arguments": arguments}
+    arguments = {
+        parameter_match.group(1).strip(): parameter_match.group(2)
+        for parameter_match in _xml_parameter_regex.finditer(body)
+    }
+    if not arguments:
+        return None
+    return {"name": name, "arguments": arguments}
+
+
 def make_mlx_parser(
     tool_call_start: str,
     tool_call_end: str,
     tool_parser: Callable[[str], dict[str, Any] | list[dict[str, Any]]],
 ) -> ToolParser:
     def parse_tool_calls(text: str) -> list[ToolCallItem] | None:
+        text = text.removeprefix(tool_call_start)
+        text = text.removesuffix(tool_call_end)
         try:
-            text = text.removeprefix(tool_call_start)
-            text = text.removesuffix(tool_call_end)
             parsed = tool_parser(text)
+        except Exception:
+            parsed = None
+        if "<function=" in text and (
+            parsed is None or (isinstance(parsed, dict) and not parsed.get("arguments"))
+        ):
+            parsed = _parse_xml_lenient(text) or parsed
+        if parsed is None:
+            return None
+        try:
             if isinstance(parsed, list):
                 return [ToolCallItem.model_validate(_flatten(p)) for p in parsed]
             else:

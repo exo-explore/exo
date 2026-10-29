@@ -235,3 +235,110 @@ class TestParseToolCalls:
 
         args = json.loads(results[0].tool_calls[0].arguments)  # pyright: ignore[reportAny]
         assert args == {"action": "output", "id": "0"}
+
+
+class TestQwenLenientToolCalls:
+    """Malformed Qwen3-Coder XML calls must not come back with empty arguments."""
+
+    def _parse(self, body: str) -> dict[str, Any]:
+        from mlx_lm.tool_parsers.qwen3_coder import parse_tool_call
+
+        parser = make_mlx_parser("<tool_call>", "</tool_call>", parse_tool_call)
+        parsed = parser.parse(f"<tool_call>{body}</tool_call>", tools=None)
+        assert parsed is not None
+        arguments: dict[str, Any] = json.loads(parsed[0].arguments)  # pyright: ignore[reportAny]
+        return arguments
+
+    def test_missing_parameter_close(self):
+        arguments = self._parse(
+            "\n<function=write>\n<parameter=path>\n/a.txt\n<parameter=content>\nhi\n</function>\n"
+        )
+        assert arguments == {"path": "/a.txt", "content": "hi"}
+
+    def test_json_body(self):
+        arguments = self._parse(
+            '\n<function=write>\n{"path": "/a.txt", "content": "hi"}\n</function>\n'
+        )
+        assert arguments == {"path": "/a.txt", "content": "hi"}
+
+    def test_missing_function_close(self):
+        arguments = self._parse(
+            "\n<function=write>\n<parameter=path>\n/a.txt\n</parameter>\n<parameter=content>\nhi\n</parameter>\n"
+        )
+        assert arguments == {"path": "/a.txt", "content": "hi"}
+
+    def test_well_formed_unchanged(self):
+        arguments = self._parse(
+            "\n<function=write>\n<parameter=path>\n/a.txt\n</parameter>\n<parameter=content>\nline1\n</parameter>\n</function>\n"
+        )
+        assert arguments == {"path": "/a.txt", "content": "line1"}
+
+    def test_json_body_with_raw_newlines(self):
+        arguments = self._parse(
+            '\n<function=edit>\n{"path": "/a.py", "oldString": "def a():\n    return 1", "newString": "def a():\n    return 2"}\n</function>\n'
+        )
+        assert arguments == {
+            "path": "/a.py",
+            "oldString": "def a():\n    return 1",
+            "newString": "def a():\n    return 2",
+        }
+
+    def test_parameter_name_attribute(self):
+        arguments = self._parse(
+            '\n<function=edit>\n<parameter name="path">/a.py</parameter>\n<parameter name="oldString">x = 1</parameter>\n<parameter name="newString">x = 2</parameter>\n</function>\n'
+        )
+        assert arguments == {
+            "path": "/a.py",
+            "oldString": "x = 1",
+            "newString": "x = 2",
+        }
+
+
+class TestEmptyArgumentsForRequiredParameters:
+    """A call that would reach the client with `{}` for a tool with required
+    parameters is returned as a parse failure, so the raw text surfaces instead."""
+
+    _tools: list[dict[str, Any]] = [
+        {
+            "type": "function",
+            "function": {
+                "name": "write",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "content": {"type": "string"},
+                    },
+                    "required": ["path", "content"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "list_sequences",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+    ]
+
+    def _parser(self):
+        from mlx_lm.tool_parsers.qwen3_coder import parse_tool_call
+
+        return make_mlx_parser("<tool_call>", "</tool_call>", parse_tool_call)
+
+    def test_unparseable_arguments_for_required_tool_fail(self):
+        text = "<tool_call>\n<function=write>\nsome garbled body\n</function>\n</tool_call>"
+        assert self._parser().parse(text, tools=self._tools) is None
+
+    def test_no_argument_tool_still_works(self):
+        text = "<tool_call>\n<function=list_sequences>\n</function>\n</tool_call>"
+        parsed = self._parser().parse(text, tools=self._tools)
+        assert parsed is not None
+        assert parsed[0].name == "list_sequences"
+
+    def test_valid_call_unchanged(self):
+        text = "<tool_call>\n<function=write>\n<parameter=path>\n/a.py\n</parameter>\n<parameter=content>\nx = 1\n</parameter>\n</function>\n</tool_call>"
+        parsed = self._parser().parse(text, tools=self._tools)
+        assert parsed is not None
+        assert json.loads(parsed[0].arguments) == {"path": "/a.py", "content": "x = 1"}
