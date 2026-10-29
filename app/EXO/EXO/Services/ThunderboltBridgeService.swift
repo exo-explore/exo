@@ -9,13 +9,14 @@ import os.log
 final class ThunderboltBridgeService: ObservableObject {
     private static let logger = Logger(subsystem: "io.exo.EXO", category: "ThunderboltBridge")
 
+    /// Devices whose Thunderbolt Bridges form a loop (more than two), as the
+    /// cluster reports it. Shown as a row in the menu and a badge on the
+    /// icon, rather than an alert at an arbitrary moment.
     @Published private(set) var detectedCycle: [String]?
-    @Published private(set) var hasPromptedForCurrentCycle = false
     @Published private(set) var lastError: String?
 
     private weak var clusterStateService: ClusterStateService?
     private var cancellables = Set<AnyCancellable>()
-    private var previousCycleSignature: String?
 
     init(clusterStateService: ClusterStateService) {
         self.clusterStateService = clusterStateService
@@ -26,77 +27,23 @@ final class ThunderboltBridgeService: ObservableObject {
         guard let service = clusterStateService else { return }
 
         service.$latestSnapshot
-            .compactMap { $0 }
-            .sink { [weak self] snapshot in
-                self?.checkForCycles(snapshot: snapshot)
+            .map { snapshot in Self.loop(in: snapshot?.thunderboltBridgeCycles ?? []) }
+            .removeDuplicates()
+            .sink { [weak self] cycle in
+                self?.detectedCycle = cycle
             }
             .store(in: &cancellables)
     }
 
-    private func checkForCycles(snapshot: ClusterState) {
-        let cycles = snapshot.thunderboltBridgeCycles
-
-        // Only consider cycles with more than 2 nodes
-        guard let firstCycle = cycles.first, firstCycle.count > 2 else {
-            // No problematic cycles detected, reset state
-            if detectedCycle != nil {
-                detectedCycle = nil
-                previousCycleSignature = nil
-                hasPromptedForCurrentCycle = false
-            }
-            return
-        }
-
-        // Create a signature for this cycle to detect if it changed
-        let cycleSignature = firstCycle.sorted().joined(separator: ",")
-
-        // If this is a new/different cycle, reset the prompt state
-        if cycleSignature != previousCycleSignature {
-            previousCycleSignature = cycleSignature
-            hasPromptedForCurrentCycle = false
-        }
-
-        detectedCycle = firstCycle
-
-        // Only prompt once per cycle
-        if !hasPromptedForCurrentCycle {
-            showDisableBridgePrompt(nodeIds: firstCycle)
-        }
+    /// The first loop of more than two devices; a pair can't loop.
+    static func loop(in cycles: [[String]]) -> [String]? {
+        cycles.first { $0.count > 2 }
     }
 
-    private func showDisableBridgePrompt(nodeIds: [String]) {
-        hasPromptedForCurrentCycle = true
-
-        // Get friendly names for the nodes if available
-        let nodeNames = nodeIds.map { nodeId -> String in
-            if let snapshot = clusterStateService?.latestSnapshot,
-                let profile = snapshot.nodeProfiles[nodeId],
-                let friendlyName = profile.friendlyName, !friendlyName.isEmpty
-            {
-                return friendlyName
-            }
-            return String(nodeId.prefix(8))  // Use first 8 chars of node ID as fallback
-        }
-        let machineNames = nodeNames.joined(separator: ", ")
-
-        let alert = NSAlert()
-        alert.messageText = "Thunderbolt Bridge Loop Detected"
-        alert.informativeText = """
-            A Thunderbolt Bridge loop has been detected between \(nodeNames.count) machines: \(machineNames).
-
-            This can cause network packet storms and connectivity issues. Would you like to disable Thunderbolt Bridge on this machine to break the loop?
-            """
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Disable Bridge")
-        alert.addButton(withTitle: "Not Now")
-
-        let response = alert.runModalInFront()
-
-        if response == .alertFirstButtonReturn {
-            Task {
-                await disableThunderboltBridge()
-            }
-        }
+    /// Whether this Mac is in the loop, so turning off its bridge helps.
+    func loopIncludes(nodeId: String?) -> Bool {
+        guard let nodeId, let detectedCycle else { return false }
+        return detectedCycle.contains(nodeId)
     }
 
     func disableThunderboltBridge() async {

@@ -20,6 +20,20 @@ final class LocalNetworkChecker: ObservableObject {
             return false
         }
 
+        /// macOS said Local Network access is off for EXO.
+        static let deniedByMacOSReason = "Local Network access is off"
+        /// The probe failed in a way that usually, but not always, means
+        /// access is off: "No route to host" also happens for a moment while
+        /// the network comes up.
+        static let deniedReason = "Permission denied"
+        static let blockedReason = "Connection blocked"
+
+        var suggestsAccessOff: Bool {
+            guard case .notWorking(let reason) = self else { return false }
+            return [Self.deniedByMacOSReason, Self.deniedReason, Self.blockedReason]
+                .contains(reason)
+        }
+
         var displayText: String {
             switch self {
             case .unknown:
@@ -34,10 +48,21 @@ final class LocalNetworkChecker: ObservableObject {
         }
     }
 
+    /// Whether to tell the user Local Network access is off: only when two
+    /// checks in a row say so. Right after exo starts, macOS can report
+    /// access as off for a few seconds before the check works (seen on a Mac
+    /// Studio with access allowed), and a network still coming up at login
+    /// looks the same; one check shouldn't flash a warning.
+    nonisolated static func accessIsOff(current: Status, previous: Status) -> Bool {
+        current.suggestsAccessOff && previous.suggestsAccessOff
+    }
+
     private static let logger = Logger(subsystem: "io.exo.EXO", category: "LocalNetworkChecker")
     private static let hasCompletedInitialCheckKey = "LocalNetworkChecker.hasCompletedInitialCheck"
 
     @Published private(set) var status: Status = .unknown
+    /// What the menu bar shows; see `accessIsOff(current:previous:)`.
+    @Published private(set) var accessIsOff = false
 
     private var connection: NWConnection?
     private var checkTask: Task<Void, Never>?
@@ -92,12 +117,15 @@ final class LocalNetworkChecker: ObservableObject {
 
             Self.logger.debug("Checking local network connectivity (first check: \(isFirstCheck))")
             let result = await self.checkConnectivity(timeout: timeout)
+            let previous = self.status
             self.status = result
+            self.accessIsOff = Self.accessIsOff(current: result, previous: previous)
             self.hasCompletedInitialCheck = true
 
             // Only log on state changes or first check to reduce noise
-            if isFirstCheck || result != self.status {
-                Self.logger.info("Local network check: \(result.displayText)")
+            if isFirstCheck || result != previous {
+                Self.logger.notice(
+                    "Local network check: \(result.displayText, privacy: .public)")
             }
         }
     }
@@ -130,14 +158,18 @@ final class LocalNetworkChecker: ObservableObject {
                 continuation.resume(returning: status)
             }
 
-            conn.stateUpdateHandler = { state in
+            conn.stateUpdateHandler = { [weak conn] state in
                 switch state {
                 case .ready:
                     resumeOnce(.working)
                 case .waiting(let error):
                     let errorStr = "\(error)"
-                    if errorStr.contains("54") || errorStr.contains("ECONNRESET") {
-                        resumeOnce(.notWorking(reason: "Connection blocked"))
+                    if conn?.currentPath?.unsatisfiedReason == .localNetworkDenied {
+                        // What macOS reports when Local Network access is off
+                        // for EXO (TN3179).
+                        resumeOnce(.notWorking(reason: Status.deniedByMacOSReason))
+                    } else if errorStr.contains("54") || errorStr.contains("ECONNRESET") {
+                        resumeOnce(.notWorking(reason: Status.blockedReason))
                     }
                 // Otherwise keep waiting - might be showing permission prompt
                 case .failed(let error):
@@ -145,7 +177,7 @@ final class LocalNetworkChecker: ObservableObject {
                     if errorStr.contains("65") || errorStr.contains("EHOSTUNREACH")
                         || errorStr.contains("permission") || errorStr.contains("denied")
                     {
-                        resumeOnce(.notWorking(reason: "Permission denied"))
+                        resumeOnce(.notWorking(reason: Status.deniedReason))
                     } else {
                         resumeOnce(.notWorking(reason: "Failed: \(error.localizedDescription)"))
                     }
