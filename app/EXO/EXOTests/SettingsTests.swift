@@ -202,11 +202,13 @@ struct ExoLaunchSettingsTests {
     @MainActor
     @Test func theControllerReadsAndConvertsStoredSettings() {
         let storage = ScratchDefaults()
+        let keychain = ScratchKeychainItem()
         storage.defaults.set("studio", forKey: "EXOCustomNamespace")
         storage.defaults.set(true, forKey: FastSynchSetting.legacyEnabledKey)
         storage.defaults.set("/a", forKey: ModelFolder.legacyWritableKey)
 
-        let controller = ExoProcessController(readinessProbe: { false }, defaults: storage.defaults)
+        let controller = ExoProcessController(
+            readinessProbe: { false }, defaults: storage.defaults, tokenKeychain: keychain.password)
 
         #expect(controller.customNamespace == "studio")
         #expect(controller.fastSynch == .automatic)
@@ -217,13 +219,16 @@ struct ExoLaunchSettingsTests {
     @MainActor
     @Test func changesAreSavedAsTheyAreMade() {
         let storage = ScratchDefaults()
-        let controller = ExoProcessController(readinessProbe: { false }, defaults: storage.defaults)
+        let keychain = ScratchKeychainItem()
+        let controller = ExoProcessController(
+            readinessProbe: { false }, defaults: storage.defaults, tokenKeychain: keychain.password)
 
         controller.fastSynch = .on
         controller.otherModelFolders = [ModelFolder(path: "/b", readOnly: true)]
         controller.offlineMode = true
 
-        let reloaded = ExoProcessController(readinessProbe: { false }, defaults: storage.defaults)
+        let reloaded = ExoProcessController(
+            readinessProbe: { false }, defaults: storage.defaults, tokenKeychain: keychain.password)
         #expect(reloaded.fastSynch == .on)
         #expect(reloaded.otherModelFolders.map(\.path) == ["/b"])
         #expect(reloaded.otherModelFolders.first?.readOnly == true)
@@ -233,7 +238,9 @@ struct ExoLaunchSettingsTests {
     @MainActor
     @Test func aStoppedExoNeverNeedsRestarting() async throws {
         let storage = ScratchDefaults()
-        let controller = ExoProcessController(readinessProbe: { false }, defaults: storage.defaults)
+        let keychain = ScratchKeychainItem()
+        let controller = ExoProcessController(
+            readinessProbe: { false }, defaults: storage.defaults, tokenKeychain: keychain.password)
         controller.modelsRunningOnThisMac = { true }
 
         controller.offlineMode = true

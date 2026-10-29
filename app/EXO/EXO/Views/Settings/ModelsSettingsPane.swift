@@ -46,7 +46,7 @@ struct ModelsSettingsPane: View {
             } footer: {
                 // One literal, so the link is parsed as Markdown.
                 Text(
-                    "A token is needed for gated models. [Get a token…](https://huggingface.co/settings/tokens) Use a mirror, such as https://hf-mirror.com, if huggingface.co is slow or blocked where you are."
+                    "A token is needed for gated models, and is kept in your keychain. [Get a token…](https://huggingface.co/settings/tokens) Use a mirror, such as https://hf-mirror.com, if huggingface.co is slow or blocked where you are."
                 )
                 .font(.callout)
                 .foregroundStyle(.secondary)
