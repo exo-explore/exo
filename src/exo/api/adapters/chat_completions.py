@@ -16,6 +16,7 @@ from exo.api.types import (
     ErrorInfo,
     ErrorResponse,
     FinishReason,
+    GenerationStats,
     Logprobs,
     LogprobsContentItem,
     StreamingChoiceResponse,
@@ -309,6 +310,7 @@ async def collect_chat_response(
     finish_reason: FinishReason | None = None
     error_message: str | None = None
     last_usage: Usage | None = None
+    last_stats: GenerationStats | None = None
 
     async for chunk in chunk_stream:
         match chunk:
@@ -323,6 +325,7 @@ async def collect_chat_response(
                 if model is None:
                     model = chunk.model
                 last_usage = chunk.usage or last_usage
+                last_stats = chunk.stats or last_stats
                 if chunk.is_thinking:
                     thinking_parts.append(chunk.text)
                 else:
@@ -342,6 +345,7 @@ async def collect_chat_response(
                 if model is None:
                     model = chunk.model
                 last_usage = chunk.usage or last_usage
+                last_stats = chunk.stats or last_stats
                 tool_calls.extend(
                     ToolCall(
                         id=tool.id,
@@ -379,5 +383,6 @@ async def collect_chat_response(
             )
         ],
         usage=last_usage,
+        generation_stats=last_stats,
     ).model_dump_json(exclude_none=True)
     return
