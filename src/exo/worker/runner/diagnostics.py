@@ -17,6 +17,11 @@ _METAL_GPU_TIMEOUT_RE = re.compile(
     r"(?P<message>\[METAL\].*GPU\s+Timeout.*)\s*$",
     re.IGNORECASE,
 )
+# A command buffer the GPU couldn't run for lack of memory: raised as an error, or as an abort
+# ("libc++abi: terminating due to uncaught exception ...") when it isn't caught
+_METAL_OUT_OF_MEMORY_RE = re.compile(
+    r"\[METAL\].*(?:Insufficient Memory|OutOfMemory)", re.IGNORECASE
+)
 _RING_SOCKET_ERRNO_RE = re.compile(
     r"^\s*\[ring\]\s+Receiving\s+from\s+socket\s+\d+\s+failed\s+with\s+errno\s+"
     r"(?P<error_number>\d+)\s*$",
@@ -38,6 +43,10 @@ class RunnerMetalGpuTimeout(BaseRunnerDiagnostic):
     pass
 
 
+class RunnerMetalOutOfMemory(BaseRunnerDiagnostic):
+    pass
+
+
 class RunnerRingTransportError(BaseRunnerDiagnostic):
     pass
 
@@ -53,7 +62,10 @@ class RunnerUnknown(BaseRunnerDiagnostic):
 
 
 KnownRunnerDiagnostic = (
-    RunnerMetalGpuTimeout | RunnerRingTransportError | RunnerRingSocketReceivingError
+    RunnerMetalGpuTimeout
+    | RunnerMetalOutOfMemory
+    | RunnerRingTransportError
+    | RunnerRingSocketReceivingError
 )
 
 RunnerDiagnostic = KnownRunnerDiagnostic | RunnerUnknown
@@ -99,6 +111,9 @@ class RunnerDiagnosticCollector:
         if metal_error := _parse_metal_gpu_timeout(line, evidence):
             return metal_error
 
+        if out_of_memory := metal_out_of_memory(line, evidence):
+            return out_of_memory
+
         if socket_error := _parse_ring_socket_error(line, evidence):
             return socket_error
 
@@ -120,6 +135,21 @@ def _parse_metal_gpu_timeout(
 
     return RunnerMetalGpuTimeout(
         message=f"Metal GPU timeout: {match.group('message')}",
+        evidence=evidence,
+    )
+
+
+def metal_out_of_memory(
+    text: str, evidence: tuple[str, ...]
+) -> RunnerMetalOutOfMemory | None:
+    """The diagnostic for a GPU that ran out of memory, if the text reports one."""
+    if _METAL_OUT_OF_MEMORY_RE.search(text) is None:
+        return None
+
+    return RunnerMetalOutOfMemory(
+        message=(
+            "Out of GPU memory: the model's share is more than this device's GPU can hold"
+        ),
         evidence=evidence,
     )
 

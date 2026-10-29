@@ -53,6 +53,7 @@ from exo.worker.runner.diagnostics import (
     RunnerDiagnosticCollector,
     RunnerRingTransportError,
     RunnerUnknown,
+    metal_out_of_memory,
 )
 
 PREFILL_TIMEOUT_SECONDS = 60
@@ -473,6 +474,13 @@ class RunnerSupervisor:
             for d in self._runner_stdio_handler.diagnostics.diagnostics()
             if not isinstance(d, RunnerUnknown)
         ]
+        # A GPU out of memory can also come back as the runner's own error
+        if isinstance(e, RunnerTerminationError) and (
+            out_of_memory := metal_out_of_memory(
+                e.exception_message, (f"{e.exception_type}: {e.exception_message}",)
+            )
+        ):
+            diagnostics.append(out_of_memory)
         # Each send yields to the event loop, where the runner's last results can still finish
         # requests (and take them out of in_progress), so walk a copy and skip those.
         for task in list(self.in_progress.values()):
