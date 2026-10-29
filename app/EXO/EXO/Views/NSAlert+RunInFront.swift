@@ -8,7 +8,7 @@ extension NSAlert {
     @MainActor
     @discardableResult
     func runModalInFront() -> NSApplication.ModalResponse {
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         return runModal()
     }
 }

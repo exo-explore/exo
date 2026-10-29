@@ -9,12 +9,11 @@ import AppKit
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import ServiceManagement
-import Sparkle
 import SwiftUI
-import UserNotifications
 import os.log
 
 struct EXOApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var controller: ExoProcessController
     @StateObject private var stateService: ClusterStateService
     @StateObject private var networkStatusService: NetworkStatusService
@@ -23,19 +22,13 @@ struct EXOApp: App {
     @StateObject private var thunderboltBridgeService: ThunderboltBridgeService
     @StateObject private var settingsWindowController: SettingsWindowController
     @StateObject private var bugReportWindowController: BugReportWindowController
-    private let terminationObserver: TerminationObserver
     private let startupDashboardOpener = StartupDashboardOpener()
     private let ciContext = CIContext(options: nil)
 
     init() {
         let controller = ExoProcessController()
         let updater = SparkleUpdater(processController: controller)
-        terminationObserver = TerminationObserver {
-            Task { @MainActor in
-                controller.cancelPendingLaunch()
-                controller.stop()
-            }
-        }
+        AppDelegate.stopExoBeforeQuitting = { await controller.stopAndWaitForExit() }
         _controller = StateObject(wrappedValue: controller)
         let service = ClusterStateService()
         service.resetWhenExoStarts(controller.$status)
@@ -49,12 +42,16 @@ struct EXOApp: App {
         _thunderboltBridgeService = StateObject(wrappedValue: thunderboltBridge)
         _settingsWindowController = StateObject(wrappedValue: SettingsWindowController())
         _bugReportWindowController = StateObject(wrappedValue: BugReportWindowController())
+        // As the unit tests' host app, start nothing: no login item, no exo.
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else {
+            return
+        }
         applyLaunchAtLoginDefault()
-        // Install LaunchDaemon to disable Thunderbolt Bridge on startup (prevents network loops)
-        NetworkSetupHelper.promptAndInstallIfNeeded()
+        // Nothing asks for an administrator password at launch: Thunderbolt
+        // networking (NetworkSetupHelper) is offered when it matters.
         // Check local network access periodically (warning disappears when user grants permission)
         localNetwork.startPeriodicChecking(interval: 10)
-        controller.scheduleLaunch(after: 5)
+        controller.launchWhenPreviousExoHasExited()
         service.startPolling()
         networkStatus.startPolling()
     }
@@ -220,121 +217,6 @@ enum LaunchAtLoginHelper {
             logger.error(
                 "Failed to unregister EXO from launch at login: \(error.localizedDescription, privacy: .public)"
             )
-        }
-    }
-}
-
-final class SparkleUpdater: NSObject, ObservableObject {
-    private let controller: SPUStandardUpdaterController
-    private let delegateProxy: ExoUpdaterDelegate
-    private let notificationDelegate = ExoNotificationDelegate()
-    private var periodicCheckTask: Task<Void, Never>?
-
-    init(processController: ExoProcessController) {
-        let proxy = ExoUpdaterDelegate(processController: processController)
-        delegateProxy = proxy
-        controller = SPUStandardUpdaterController(
-            startingUpdater: true,
-            updaterDelegate: proxy,
-            userDriverDelegate: nil
-        )
-        super.init()
-        let center = UNUserNotificationCenter.current()
-        center.delegate = notificationDelegate
-        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
-        controller.updater.automaticallyChecksForUpdates = true
-        controller.updater.automaticallyDownloadsUpdates = false
-        controller.updater.updateCheckInterval = 900  // 15 minutes
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak controller] in
-            controller?.updater.checkForUpdatesInBackground()
-        }
-        let updater = controller.updater
-        let intervalSeconds = max(60.0, controller.updater.updateCheckInterval)
-        let intervalNanos = UInt64(intervalSeconds * 1_000_000_000)
-        periodicCheckTask = Task {
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: intervalNanos)
-                await MainActor.run {
-                    updater.checkForUpdatesInBackground()
-                }
-            }
-        }
-    }
-
-    deinit {
-        periodicCheckTask?.cancel()
-    }
-
-    @MainActor
-    func checkForUpdates() {
-        controller.checkForUpdates(nil)
-    }
-}
-
-private final class ExoUpdaterDelegate: NSObject, SPUUpdaterDelegate {
-    private weak var processController: ExoProcessController?
-
-    init(processController: ExoProcessController) {
-        self.processController = processController
-    }
-
-    nonisolated func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
-        showNotification(
-            title: "Update available",
-            body: "EXO \(item.displayVersionString) is ready to install."
-        )
-    }
-
-    nonisolated func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
-        Task { @MainActor in
-            guard let controller = self.processController else { return }
-            controller.cancelPendingLaunch()
-            controller.stop()
-        }
-    }
-
-    nonisolated private func showNotification(title: String, body: String) {
-        let center = UNUserNotificationCenter.current()
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        let request = UNNotificationRequest(
-            identifier: "exo-update-\(UUID().uuidString)",
-            content: content,
-            trigger: nil
-        )
-        center.add(request, withCompletionHandler: nil)
-    }
-}
-
-private final class ExoNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
-    func userNotificationCenter(
-        _ center: UNUserNotificationCenter,
-        willPresent notification: UNNotification,
-        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) ->
-            Void
-    ) {
-        completionHandler([.banner, .list, .sound])
-    }
-}
-
-@MainActor
-private final class TerminationObserver {
-    private var token: NSObjectProtocol?
-
-    init(onTerminate: @escaping () -> Void) {
-        token = NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification,
-            object: nil,
-            queue: .main
-        ) { _ in
-            onTerminate()
-        }
-    }
-
-    deinit {
-        if let token {
-            NotificationCenter.default.removeObserver(token)
         }
     }
 }
