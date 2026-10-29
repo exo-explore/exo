@@ -174,6 +174,15 @@ def load_mlx_items(
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
         start_time = time.perf_counter()
         model, _ = load_model(model_path, lazy=True, strict=False)
+        single_device_model_card = bound_instance.bound_shard.model_card
+        if (
+            single_device_model_card.quantization in ("1.58bit", "bitnet", "1bit")
+            or "bitnet" in single_device_model_card.family.lower()
+            or "bitnet" in str(single_device_model_card.model_id).lower()
+        ):
+            from exo.worker.engines.mlx.bitlinear import apply_bitlinear_layers
+            logger.info(f"Applying BitLinear ternary quantization to {single_device_model_card.model_id}")
+            model = apply_bitlinear_layers(model)
         # Eval layers one by one for progress reporting
         try:
             inner = get_inner_model(model)
@@ -237,6 +246,15 @@ def shard_and_load(
     model_path = build_model_path(shard_metadata.model_card.model_id)
 
     model, _ = load_model(model_path, lazy=True, strict=False)
+    distributed_model_card = shard_metadata.model_card
+    if (
+        distributed_model_card.quantization in ("1.58bit", "bitnet", "1bit")
+        or "bitnet" in distributed_model_card.family.lower()
+        or "bitnet" in str(distributed_model_card.model_id).lower()
+    ):
+        from exo.worker.engines.mlx.bitlinear import apply_bitlinear_layers
+        logger.info(f"Applying BitLinear ternary quantization to {distributed_model_card.model_id}")
+        model = apply_bitlinear_layers(model)
     logger.debug(model)
     if hasattr(model, "model") and isinstance(model.model, DeepseekV3Model):  # type: ignore
         pass
