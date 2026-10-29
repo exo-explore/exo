@@ -216,7 +216,13 @@ class RunnerSupervisor:
         event_sender: Sender[Event],
         initialize_timeout: float = 400,
     ) -> Self:
-        ev_send, ev_recv = mp_channel[Event | RunnerTerminationError]()
+        # The runner blocks in native code that holds the GIL: MLX's distributed init holds it
+        # while it waits for the other ranks. Left to a background thread, the status and the
+        # acknowledgement the runner sends just before would wait for the call to return, and
+        # the other ranks wait for that status before they connect.
+        ev_send, ev_recv = mp_channel[Event | RunnerTerminationError](
+            send_immediately=True
+        )
         task_sender, task_recv = mp_channel[Task]()
         cancel_sender, cancel_recv = mp_channel[TaskId]()
 
