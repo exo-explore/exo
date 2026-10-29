@@ -276,6 +276,15 @@ struct ContentView: View {
 
     private var controlButtons: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if let version = updater.availableUpdateVersion {
+                HoverButton(
+                    title: "Install Update (EXO \(version))…",
+                    tint: .primary,
+                    trailingSystemImage: "arrow.down.circle"
+                ) {
+                    updater.checkForUpdates()
+                }
+            }
             if controller.status != .stopped {
                 dashboardButton
                 baseURLRow
@@ -396,14 +405,8 @@ struct ContentView: View {
         case .failed(let message):
             return message
         case .stopped:
-            if let countdown = controller.launchCountdownSeconds {
-                return "Launching in \(countdown)s"
-            }
             return nil
         default:
-            if let countdown = controller.launchCountdownSeconds {
-                return "Launching in \(countdown)s"
-            }
             if let lastError = controller.lastError {
                 return lastError
             }

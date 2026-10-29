@@ -4,6 +4,10 @@
 <dict>
 	<key>SUFeedURL</key>
 	<string>https://assets.exolabs.net/appcast.xml</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>3600</integer>
 	<key>EXOBuildTag</key>
 	<string>$(EXO_BUILD_TAG)</string>
 	<key>EXOBuildCommit</key>

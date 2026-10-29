@@ -2,7 +2,7 @@ import Foundation
 
 /// What EXO does on its own when the app starts. Both behaviours default to
 /// on, as they were before they became settings, and are changed from
-/// Settings → General → Startup.
+/// Settings → General → Startup. Starting at login is always silent.
 struct StartupPreferences {
     static let openDashboardOnStartupKey = "EXOOpenDashboardOnStartup"
     static let openDashboardOnStartupDefault = true
@@ -29,8 +29,8 @@ struct StartupPreferences {
     }
 
     /// Whether to open the web dashboard in the browser when exo first comes
-    /// up after the app starts. Settings writes this key directly via
-    /// `@AppStorage`.
+    /// up after the user opens the app (never at login). Settings writes this
+    /// key directly via `@AppStorage`.
     var openDashboardOnStartup: Bool {
         defaults.object(forKey: Self.openDashboardOnStartupKey) as? Bool
             ?? Self.openDashboardOnStartupDefault
@@ -55,8 +55,10 @@ struct StartupPreferences {
 
     /// How the dashboard is opened when exo first comes up after the app
     /// starts: the welcome popout until it has been seen once, then directly.
-    var startupDashboard: StartupDashboard {
-        guard openDashboardOnStartup else { return .none }
+    /// Nothing opens when macOS started the app at login: a login item that
+    /// opens a browser tab at every login is an interruption, not a feature.
+    func startupDashboard(launch: AppLaunchKind) -> StartupDashboard {
+        guard launch == .manual, openDashboardOnStartup else { return .none }
         return onboardingCompleted ? .openDashboard : .showWelcome
     }
 

@@ -106,6 +106,9 @@ final class ThunderboltBridgeService: ObservableObject {
         do {
             try await disableThunderboltBridgeWithSCPreferences()
             Self.logger.info("Successfully disabled Thunderbolt Bridge")
+        } catch ThunderboltBridgeError.authorizationCanceled {
+            // The user cancelled the password prompt: their choice, not an error.
+            Self.logger.info("Turning off Thunderbolt Bridge was cancelled")
         } catch {
             Self.logger.error(
                 "Failed to disable Thunderbolt Bridge: \(error.localizedDescription, privacy: .public)"
@@ -214,9 +217,9 @@ final class ThunderboltBridgeService: ObservableObject {
 
     private func showErrorAlert(message: String) {
         let alert = NSAlert()
-        alert.messageText = "Failed to Disable Thunderbolt Bridge"
+        alert.messageText = "Couldn't Turn Off Thunderbolt Bridge"
         alert.informativeText = message
-        alert.alertStyle = .critical
+        alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
         alert.runModalInFront()
     }
