@@ -650,6 +650,15 @@ class Master:
                 node_id not in connected
                 for node_id in instance.shard_assignments.node_to_runner
             ) and self._resend_due(self._deleting_instances, instance_id):
+                missing = [
+                    node_id
+                    for node_id in instance.shard_assignments.node_to_runner
+                    if node_id not in connected
+                ]
+                logger.warning(
+                    f"Deleting instance {instance_id}: node {missing[0]} "
+                    "is no longer in topology"
+                )
                 await self.event_sender.send(InstanceDeleted(instance_id=instance_id))
 
         # Forget what has been applied
