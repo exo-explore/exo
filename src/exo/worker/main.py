@@ -32,6 +32,7 @@ from exo.shared.types.events import (
     Event,
     InputChunkReceived,
     InstanceDeleted,
+    InstanceReplacedAtomically,
     NodeDownloadProgress,
     NodeGatheredInfo,
     RunnerStatusUpdated,
@@ -59,7 +60,7 @@ from exo.shared.types.tasks import (
 from exo.shared.types.text_generation import Base64Image, Base64ImageHash
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import DownloadCompleted
-from exo.shared.types.worker.instances import InstanceId
+from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerReady
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
@@ -188,6 +189,20 @@ class Worker:
                 if isinstance(event, InstanceDeleted):
                     self._instance_backoff.reset(event.instance_id)
                     self._deletion_requested.pop(event.instance_id, None)
+
+                if isinstance(event, InstanceReplacedAtomically):
+                    self._instance_backoff.reset(event.new_instance.instance_id)
+                    self._instance_backoff.reset(event.old_instance_id)
+                    self._deletion_requested.pop(event.old_instance_id, None)
+                    node_to_runner = event.new_instance.shard_assignments.node_to_runner
+                    if self.node_id in node_to_runner:
+                        runner_id = node_to_runner[self.node_id]
+                        if runner_id in self.runners:
+                            self.runners[runner_id].bound_instance = BoundInstance(
+                                instance=event.new_instance,
+                                bound_runner_id=runner_id,
+                                bound_node_id=self.node_id,
+                            )
 
                 # Our runner for an instance has started: the attempts before it no longer
                 # count towards giving up on the instance, which is for one that can't start

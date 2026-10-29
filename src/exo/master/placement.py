@@ -1,7 +1,6 @@
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from typing import Sequence
 
 from exo.master.placement_utils import (
     Cycle,
@@ -27,6 +26,7 @@ from exo.shared.types.events import (
     Event,
     InstanceCreated,
     InstanceDeleted,
+    InstanceReplacedAtomically,
     TaskStatusUpdated,
 )
 from exo.shared.types.memory import Memory
@@ -524,18 +524,55 @@ def get_transition_events(
 ) -> Sequence[Event]:
     events: list[Event] = []
 
-    # find instances to create
-    for instance_id, instance in target_instances.items():
-        if instance_id not in current_instances:
+    unmatched_current: dict[InstanceId, Instance] = {
+        iid: inst
+        for iid, inst in current_instances.items()
+        if iid not in target_instances
+    }
+    unmatched_target: dict[InstanceId, Instance] = {
+        iid: inst
+        for iid, inst in target_instances.items()
+        if iid not in current_instances
+    }
+
+    # Match instances for atomic replacement (same model and shard assignments on same nodes)
+    replaced_current_ids: set[InstanceId] = set()
+    replaced_target_ids: set[InstanceId] = set()
+
+    for old_id, old_inst in unmatched_current.items():
+        for new_id, new_inst in unmatched_target.items():
+            if new_id in replaced_target_ids:
+                continue
+            if (
+                old_inst.shard_assignments.model_id
+                == new_inst.shard_assignments.model_id
+                and old_inst.shard_assignments.node_to_runner
+                == new_inst.shard_assignments.node_to_runner
+                and old_inst.shard_assignments.runner_to_shard
+                == new_inst.shard_assignments.runner_to_shard
+            ):
+                events.append(
+                    InstanceReplacedAtomically(
+                        old_instance_id=old_id,
+                        new_instance=new_inst,
+                    )
+                )
+                replaced_current_ids.add(old_id)
+                replaced_target_ids.add(new_id)
+                break
+
+    # Unmatched target instances are newly created
+    for instance_id, instance in unmatched_target.items():
+        if instance_id not in replaced_target_ids:
             events.append(
                 InstanceCreated(
                     instance=instance,
                 )
             )
 
-    # find instances to delete
-    for instance_id in current_instances:
-        if instance_id not in target_instances:
+    # Unmatched current instances are deleted (cancelling their pending/running tasks)
+    for instance_id in unmatched_current:
+        if instance_id not in replaced_current_ids:
             for task in tasks.values():
                 if task.instance_id == instance_id and task.task_status in [
                     TaskStatus.Pending,
