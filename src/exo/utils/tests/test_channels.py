@@ -1,4 +1,6 @@
+import ctypes
 import multiprocessing as mp
+import threading
 import time
 
 import pytest
@@ -59,15 +61,64 @@ def bar(send: MpSender[str]):
 
 
 @pytest.mark.anyio
-async def test_channel_ipc():
+@pytest.mark.parametrize("send_immediately", [False, True])
+async def test_channel_ipc(send_immediately: bool):
     with fail_after(0.5):
-        s, r = mp_channel[str]()
+        s, r = mp_channel[str](send_immediately=send_immediately)
         p1 = mp.Process(target=foo, args=(r,))
         p2 = mp.Process(target=bar, args=(s,))
         p1.start()
         p2.start()
         p1.join()
         p2.join()
+
+
+def send_then_hold_the_gil(send: MpSender[str]):
+    # Look the function up first: loading a library releases the GIL
+    hold_the_gil = ctypes.PyDLL(None).sleep
+    send.send("status")
+    send.send("acknowledgement")
+    # As MLX's distributed init does while it waits for the other ranks
+    hold_the_gil(60)
+
+
+def receive(recv: MpReceiver[str], count: int, seconds: float) -> list[str]:
+    received: list[str] = []
+    deadline = time.monotonic() + seconds
+    while len(received) < count and time.monotonic() < deadline:
+        try:
+            received.append(recv.receive_nowait())
+        except WouldBlock:
+            time.sleep(0.01)
+    return received
+
+
+def test_what_is_sent_immediately_leaves_before_a_call_that_holds_the_gil():
+    send, recv = mp_channel[str](send_immediately=True)
+    sender = mp.Process(target=send_then_hold_the_gil, args=(send,), daemon=True)
+    sender.start()
+    try:
+        assert receive(recv, 2, 5) == ["status", "acknowledgement"]
+    finally:
+        sender.kill()
+        sender.join()
+        recv.close()
+
+
+def test_closing_wakes_a_reader_of_a_channel_that_sends_immediately():
+    _, recv = mp_channel[str](send_immediately=True)
+    ended = threading.Event()
+
+    def read() -> None:
+        with pytest.raises((EndOfStream, ClosedResourceError)):
+            recv.receive()
+        ended.set()
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    time.sleep(0.1)
+    recv.close()
+    assert ended.wait(2)
 
 
 def test_channel_error_override_replaces_sync_errors_with_subclasses():
@@ -119,3 +170,17 @@ async def test_channel_error_override_is_preserved_by_clones():
 
     with pytest.raises(CustomBrokenResourceError):
         await cloned_send.send(1)
+
+
+def test_closing_a_full_channel_that_sends_immediately_does_not_block():
+    send, recv = mp_channel[str](send_immediately=True)
+    # Fill the pipe: nobody is reading
+    with pytest.raises(WouldBlock):
+        for _ in range(1_000_000):
+            send.send_nowait("x" * 200)
+
+    closer = threading.Thread(target=recv.close, daemon=True)
+    closer.start()
+    closer.join(2)
+    assert not closer.is_alive()
+    send.close()
