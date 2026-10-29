@@ -12,6 +12,7 @@ from anyio import (
     BrokenResourceError,
     CancelScope,
     ClosedResourceError,
+    WouldBlock,
 )
 from loguru import logger
 
@@ -460,17 +461,20 @@ class RunnerSupervisor:
         await self._send_cancel(task_id)
 
     async def _send_cancel(self, task_id: TaskId) -> None:
-        with anyio.move_on_after(0.5) as scope:
-            try:
-                await self._cancel_sender.send_async(task_id)
-            except ClosedResourceError:
-                # typically occurs when trying to shut down a failed instance
-                logger.warning(
-                    f"Cancelling task {task_id} failed, runner closed communication"
-                )
-        if scope.cancel_called:
-            logger.error("RunnerSupervisor cancel pipe blocked")
-            await self._check_runner(TimeoutError("cancel pipe blocked"))
+        # The cancel queue is unbounded, so a put never waits on the runner. Sending
+        # through a worker thread under a 0.5s deadline could time out while the event
+        # loop was busy, and the timeout path then stopped the live runner, tearing down
+        # the whole instance whenever a client disconnected mid-generation.
+        try:
+            self._cancel_sender.send_nowait(task_id)
+        except WouldBlock:
+            logger.warning(f"Cancel queue full, cancelling {task_id} in the background")
+            self._tg.start_soon(self._cancel_sender.send_async, task_id)
+        except ClosedResourceError:
+            # typically occurs when trying to shut down a failed instance
+            logger.warning(
+                f"Cancelling task {task_id} failed, runner closed communication"
+            )
 
     async def _forward_events(self):
         try:
@@ -494,8 +498,11 @@ class RunnerSupervisor:
                         isinstance(event, TaskStatusUpdated)
                         and event.task_status == TaskStatus.Complete
                     ):
-                        # If a task has just been completed, we should be working on it.
-                        assert isinstance(
+                        # A completed task should land while the runner is working on it. A
+                        # cancelled one can finish just as the status moves on, so an
+                        # unexpected status is logged, not asserted: an assert here crashed the
+                        # supervisor and tore down a healthy instance.
+                        if not isinstance(
                             self.status,
                             (
                                 RunnerRunning,
@@ -504,7 +511,11 @@ class RunnerSupervisor:
                                 RunnerConnecting,
                                 RunnerShuttingDown,
                             ),
-                        )
+                        ):
+                            logger.warning(
+                                f"Task {event.task_id} completed while runner was "
+                                f"{type(self.status).__name__}"
+                            )
                         self.in_progress.pop(event.task_id, None)
                         self.completed.add(event.task_id)
                     await self._event_sender.send(event)
