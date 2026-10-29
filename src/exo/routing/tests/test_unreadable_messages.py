@@ -12,6 +12,7 @@ from exo.utils.channels import Receiver, channel
 from exo.worker.runner.diagnostics import (
     KnownRunnerDiagnostic,
     RunnerMetalGpuTimeout,
+    RunnerMetalOutOfMemory,
     RunnerRingSocketReceivingError,
     RunnerRingTransportError,
 )
@@ -53,6 +54,7 @@ def router() -> tuple[TopicRouter[LocalForwarderEvent], Receiver[LocalForwarderE
             error_description="Connection reset by peer",
         ),
         RunnerMetalGpuTimeout(message="timeout"),
+        RunnerMetalOutOfMemory(message="out of memory", evidence=("d",)),
     ],
 )
 async def test_a_failed_request_with_diagnostics_reaches_other_nodes(

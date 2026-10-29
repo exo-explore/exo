@@ -19,6 +19,7 @@ from exo.shared.types.worker.runners import RunnerFailed, RunnerId, RunnerRunnin
 from exo.utils.async_process import AsyncProcess
 from exo.utils.channels import Receiver, Sender, channel, mp_channel
 from exo.worker.runner.bootstrap import RunnerTerminationError
+from exo.worker.runner.diagnostics import RunnerMetalOutOfMemory
 from exo.worker.runner.supervisor import RunnerStdioHandler, RunnerSupervisor
 from exo.worker.tests.unittests.conftest import get_bound_mlx_ring_instance
 
@@ -366,3 +367,32 @@ async def test_other_ranks_are_not_judged_by_their_silence(
         await supervisor._watch_runner()  # pyright: ignore[reportPrivateUsage]
 
     assert process.is_alive()
+
+
+_OUT_OF_MEMORY = (
+    "[METAL] Command buffer execution failed: Insufficient Memory "
+    "(00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)"
+)
+
+
+@pytest.mark.anyio
+async def test_a_runner_out_of_gpu_memory_fails_with_the_cause() -> None:
+    event_sender, event_receiver = channel[Event]()
+    supervisor = await _supervisor_of_dead_runner(event_sender)
+
+    await supervisor._check_runner(  # pyright: ignore[reportPrivateUsage]
+        RunnerTerminationError(
+            exception_type="RuntimeError",
+            exception_message=_OUT_OF_MEMORY + ".",
+            exception_repr=f"RuntimeError('{_OUT_OF_MEMORY}.')",
+            traceback="",
+        )
+    )
+
+    with anyio.fail_after(1):
+        status = await event_receiver.receive()
+    assert isinstance(status, RunnerStatusUpdated)
+    assert isinstance(status.runner_status, RunnerFailed)
+    assert [type(d) for d in status.runner_status.diagnostics] == [
+        RunnerMetalOutOfMemory
+    ]

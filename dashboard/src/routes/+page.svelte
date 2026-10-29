@@ -2112,10 +2112,22 @@
     }
   }
 
-  // Why an instance's runners failed: known diagnostics first (they name the
-  // root cause, e.g. a Metal GPU timeout), then the runner's error message.
-  function getRunnerFailureMessage(runnerIds: string[]): string | undefined {
-    const reasons = new Set<string>();
+  // How a runner fails when another runner of its instance stops: the ring or
+  // JACCL connection to it breaks. The reason is on the other device.
+  const LOST_PEER_FAILURE =
+    /connection to a peer was lost|lost the connection to the instance's other runners|ring socket receive failed|ring transport aborted|\[(ring|jaccl)\]/i;
+
+  type RunnerFailure = { device: string; reason: string; lostPeer: boolean };
+
+  // Each failed runner of an instance, with its device and its reasons: known
+  // diagnostics first (they name the cause, e.g. a Metal GPU timeout), then its
+  // error message. Runners that failed on their own come first, then those that
+  // only lost the connection to them.
+  function getRunnerFailures(
+    runnerIds: string[],
+    runnerToNode: Record<string, string>,
+  ): RunnerFailure[] {
+    const failures: RunnerFailure[] = [];
     for (const rid of runnerIds) {
       const [kind, payload] = getTagged(runnersData[rid]);
       if (kind !== "RunnerFailed" || !payload || typeof payload !== "object")
@@ -2124,14 +2136,61 @@
         errorMessage?: string | null;
         diagnostics?: unknown[];
       };
+      const reasons = new Set<string>();
       for (const diagnostic of failed.diagnostics ?? []) {
         const [, detail] = getTagged(diagnostic);
         const message = (detail as { message?: unknown } | null)?.message;
         if (typeof message === "string" && message) reasons.add(message);
       }
       if (failed.errorMessage) reasons.add(failed.errorMessage);
+      if (reasons.size === 0) continue;
+      const reason = [...reasons].join("\n");
+      const nodeId = runnerToNode[rid];
+      failures.push({
+        device: nodeId ? getNodeName(nodeId) : "A device",
+        reason,
+        lostPeer: LOST_PEER_FAILURE.test(reason),
+      });
     }
-    return reasons.size > 0 ? [...reasons].join("\n") : undefined;
+    return failures.sort((a, b) => Number(a.lostPeer) - Number(b.lostPeer));
+  }
+
+  // Why an instance's runners failed. The first line names the device that
+  // failed on its own and why; every runner's full reason follows.
+  function getRunnerFailureMessage(
+    runnerIds: string[],
+    runnerToNode: Record<string, string>,
+  ): string | undefined {
+    const failures = getRunnerFailures(runnerIds, runnerToNode);
+    if (failures.length === 0) return undefined;
+    const [first] = failures;
+    return [
+      `${first.device}: ${summarizeFailureReason(first.reason)}`,
+      ...failures.map(({ device, reason }) => `${device}: ${reason}`),
+    ].join("\n");
+  }
+
+  function getRunnerToNode(instanceWrapped: unknown): Record<string, string> {
+    const [, instance] = getTagged(instanceWrapped);
+    const inst = instance as {
+      shardAssignments?: { nodeToRunner?: Record<string, string> };
+    } | null;
+    const runnerToNode: Record<string, string> = {};
+    for (const [nodeId, runnerId] of Object.entries(
+      inst?.shardAssignments?.nodeToRunner ?? {},
+    )) {
+      runnerToNode[runnerId] = nodeId;
+    }
+    return runnerToNode;
+  }
+
+  // Whether a runner of the instance failed on its own, rather than only losing
+  // the connection to one that did (whose failure may not be in yet)
+  function isFailureExplained(instanceWrapped: unknown): boolean {
+    const runnerToNode = getRunnerToNode(instanceWrapped);
+    return getRunnerFailures(Object.keys(runnerToNode), runnerToNode).some(
+      (failure) => !failure.lostPeer,
+    );
   }
 
   // One readable line from a failure message. A runner that raised is
@@ -2199,7 +2258,10 @@
       return {
         statusText: "FAILED",
         statusClass: "failed",
-        errorMessage: getRunnerFailureMessage(runnerIds),
+        errorMessage: getRunnerFailureMessage(
+          runnerIds,
+          getRunnerToNode(instanceWrapped),
+        ),
       };
     if (has("Shutdown"))
       return { statusText: "SHUTDOWN", statusClass: "inactive" };
@@ -2817,6 +2879,11 @@
   // runner several times, so the status flips in and out of FAILED; announce it
   // once, until the model is ready to serve or the instance is gone.
   const announcedFailures = new Set<string>();
+  // Failures seen but not announced yet. When one runner fails, the others of
+  // its instance fail too, as their connection to it breaks, and often report
+  // first: wait a little for the reason of the runner that failed on its own.
+  const pendingFailures = new Map<string, number>();
+  const FAILURE_REASON_WAIT_MS = 10_000;
 
   $effect(() => {
     const currentStatuses: Record<string, string> = {};
@@ -2864,24 +2931,17 @@
 
         if (currentStatus === "READY" || currentStatus === "RUNNING") {
           announcedFailures.delete(id);
+          pendingFailures.delete(id);
         }
 
-        // Any -> Failed
+        // Any -> Failed: announced below, once its reason is in
         if (
           prevStatus !== "FAILED" &&
           currentStatus === "FAILED" &&
-          !announcedFailures.has(id)
+          !announcedFailures.has(id) &&
+          !pendingFailures.has(id)
         ) {
-          announcedFailures.add(id);
-          // One readable line; the instance card's tooltip has the full text
-          const failure = failureReasons[id];
-          const reason = failure ? summarizeFailureReason(failure) : undefined;
-          addToast({
-            type: "error",
-            message: reason
-              ? `Model failed: ${shortName} — ${reason}`
-              : `Model failed: ${shortName}`,
-          });
+          pendingFailures.set(id, Date.now());
         }
 
         // Any -> Shutdown
@@ -2889,10 +2949,38 @@
           addToast({ type: "info", message: `Model shut down: ${shortName}` });
         }
       }
+
+      for (const [id, failedAt] of pendingFailures) {
+        // Between retries the reason isn't shown: wait for the next failure
+        if (currentStatuses[id] !== "FAILED") continue;
+        if (
+          !isFailureExplained(instanceData[id]) &&
+          Date.now() - failedAt < FAILURE_REASON_WAIT_MS
+        )
+          continue;
+        pendingFailures.delete(id);
+        announcedFailures.add(id);
+        const modelId = getInstanceModelId(instanceData[id]);
+        const shortName = modelId
+          ? (modelId.split("/").pop() ?? modelId)
+          : id.slice(0, 8);
+        // One readable line; the instance card's tooltip has the full text
+        const failure = failureReasons[id];
+        const reason = failure ? summarizeFailureReason(failure) : undefined;
+        addToast({
+          type: "error",
+          message: reason
+            ? `Model failed: ${shortName} — ${reason}`
+            : `Model failed: ${shortName}`,
+        });
+      }
     }
 
     for (const id of announcedFailures) {
       if (!(id in currentStatuses)) announcedFailures.delete(id);
+    }
+    for (const id of pendingFailures.keys()) {
+      if (!(id in currentStatuses)) pendingFailures.delete(id);
     }
     previousInstanceStatuses = currentStatuses;
   });
