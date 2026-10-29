@@ -23,6 +23,13 @@ struct EXOApp: App {
     @StateObject private var menuBar: MenuBarController
 
     init() {
+        // As the unit tests' host app, start nothing: no welcome, no login
+        // item, no exo.
+        let isHostingTests =
+            ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        // Decided first, before anything else writes this app's defaults.
+        let isFirstRun = !isHostingTests && StartupPreferences().welcomeIsDue()
+
         let controller = ExoProcessController()
         let updater = SparkleUpdater(processController: controller)
         AppDelegate.stopExoBeforeQuitting = { await controller.stopAndWaitForExit() }
@@ -44,27 +51,46 @@ struct EXOApp: App {
         let menuBar = MenuBarController(
             controller: controller, stateService: service, localNetworkChecker: localNetwork,
             thunderboltBridgeService: thunderboltBridge, updater: updater,
-            bugReportWindowController: bugReportWindow)
+            bugReportWindowController: bugReportWindow,
+            startupDashboardOpener: StartupDashboardOpener(isFirstRun: isFirstRun))
         _menuBar = StateObject(wrappedValue: menuBar)
         SettingsOpener.openSettings = {
             settingsWindow.open(
                 controller: controller, updater: updater, networkStatusService: networkStatus,
                 thunderboltBridgeService: thunderboltBridge, stateService: service)
         }
-        AppDelegate.onReopen = { menuBar.handleReopen() }
-        // As the unit tests' host app, start nothing: no login item, no exo.
-        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else {
-            return
-        }
+        guard !isHostingTests else { return }
+
         menuBar.install()
-        applyLaunchAtLoginDefault()
+        LaunchAtLoginHelper.registerIfChosen()
         // Nothing asks for an administrator password at launch: Thunderbolt
         // networking (NetworkSetupHelper) is offered when it matters.
-        // Check local network access periodically (warning disappears when user grants permission)
-        localNetwork.startPeriodicChecking(interval: 10)
-        controller.launchWhenPreviousExoHasExited()
         service.startPolling()
         networkStatus.startPolling()
+        // exo, and the Local Network check (which, like exo, makes macOS ask
+        // for Local Network access), start straight away, except on the first
+        // run, where the welcome window explains the prompt first.
+        let startExo = {
+            localNetwork.startPeriodicChecking(interval: isFirstRun ? 3 : 10)
+            controller.launchWhenPreviousExoHasExited()
+        }
+        guard isFirstRun else {
+            startExo()
+            AppDelegate.onReopen = { menuBar.handleReopen() }
+            return
+        }
+        let welcome = WelcomeWindowController(
+            controller: controller, localNetworkChecker: localNetwork, startExo: startExo)
+        AppDelegate.welcomeWindow = welcome
+        AppDelegate.launchAsRegularApp = true
+        AppDelegate.onFinishLaunching = { welcome.show() }
+        AppDelegate.onReopen = {
+            if welcome.isShowing {
+                welcome.bringToFront()
+            } else {
+                menuBar.handleReopen()
+            }
+        }
     }
 
     /// The menu bar item is AppKit (`MenuBarController`); SwiftUI only needs
@@ -74,22 +100,6 @@ struct EXOApp: App {
             EmptyView()
         }
     }
-
-    /// Registers a new install as a login item, retrying on later launches
-    /// until it succeeds. Upgrades, and launches after that, leave the login
-    /// item alone so that turning it off (in Settings or in System Settings →
-    /// Login Items) sticks.
-    private func applyLaunchAtLoginDefault() {
-        let preferences = StartupPreferences()
-        let isTranslocated = StartupPreferences.isTranslocated(
-            bundlePath: Bundle.main.bundlePath)
-        guard preferences.shouldRegisterLaunchAtLoginOnStartup(isTranslocated: isTranslocated)
-        else { return }
-        if LaunchAtLoginHelper.enable() {
-            preferences.markLaunchAtLoginDefaultApplied()
-        }
-    }
-
 }
 
 /// Helper for managing EXO's launch-at-login registration
@@ -137,6 +147,18 @@ enum LaunchAtLoginHelper {
             logger.error(
                 "Failed to unregister EXO from launch at login: \(error.localizedDescription, privacy: .public)"
             )
+        }
+    }
+
+    /// Registers EXO as a login item if the user ticked "Open EXO at login"
+    /// in the welcome window and it isn't registered yet. Waits for a launch
+    /// from a stable location if the app runs translocated.
+    static func registerIfChosen(preferences: StartupPreferences = StartupPreferences()) {
+        let isTranslocated = StartupPreferences.isTranslocated(bundlePath: Bundle.main.bundlePath)
+        guard preferences.shouldRegisterLaunchAtLoginOnStartup(isTranslocated: isTranslocated)
+        else { return }
+        if enable() {
+            preferences.markLaunchAtLoginDefaultApplied()
         }
     }
 }

@@ -12,7 +12,7 @@ import os.log
 @MainActor
 final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     private static let logger = Logger(subsystem: "io.exo.EXO", category: "MenuBar")
-    private static let localNetworkSettingsURL = URL(
+    static let localNetworkSettingsURL = URL(
         string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork")!
 
     private let controller: ExoProcessController
@@ -21,7 +21,7 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     private let thunderboltBridgeService: ThunderboltBridgeService
     private let updater: SparkleUpdater
     private let bugReportWindowController: BugReportWindowController
-    private let startupDashboardOpener = StartupDashboardOpener()
+    private let startupDashboardOpener: StartupDashboardOpener
 
     private var statusItem: NSStatusItem?
     private let menu = NSMenu()
@@ -36,7 +36,8 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         controller: ExoProcessController, stateService: ClusterStateService,
         localNetworkChecker: LocalNetworkChecker,
         thunderboltBridgeService: ThunderboltBridgeService, updater: SparkleUpdater,
-        bugReportWindowController: BugReportWindowController
+        bugReportWindowController: BugReportWindowController,
+        startupDashboardOpener: StartupDashboardOpener
     ) {
         self.controller = controller
         self.stateService = stateService
@@ -44,6 +45,7 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         self.thunderboltBridgeService = thunderboltBridgeService
         self.updater = updater
         self.bugReportWindowController = bugReportWindowController
+        self.startupDashboardOpener = startupDashboardOpener
         super.init()
     }
 

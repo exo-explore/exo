@@ -29,16 +29,71 @@ private final class TemporaryDefaults {
 
 struct StartupPreferencesTests {
 
-    // MARK: - Launch at login
+    // MARK: - First run
 
-    @Test func newInstallIsRegisteredUntilItSucceedsThenLeftAlone() {
+    @Test func newInstallShowsTheWelcomeUntilItHasBeenSeen() {
         let storage = TemporaryDefaults()
         let preferences = StartupPreferences(defaults: storage.defaults)
 
-        #expect(preferences.shouldRegisterLaunchAtLoginOnStartup(isTranslocated: false))
-        // Registering failed, and the welcome popout was seen meanwhile: the
-        // next launch still retries.
+        #expect(preferences.welcomeIsDue())
+        // Quit before finishing it, then the app ran (writing its usual keys):
+        // still due at the next launch.
+        storage.defaults.set(true, forKey: "SUHasLaunchedBefore")
+        storage.defaults.set(true, forKey: "LocalNetworkChecker.hasCompletedInitialCheck")
+        #expect(preferences.welcomeIsDue())
+
+        preferences.markWelcomeSeen()
+        #expect(!preferences.welcomeIsDue())
+        #expect(preferences.onboardingCompleted)
+    }
+
+    @Test(arguments: StartupPreferences.hasRunBeforeKeys)
+    func upgradeFromAVersionThatRanNeverSeesTheWelcome(key: String) {
+        let storage = TemporaryDefaults()
+        storage.defaults.set(true, forKey: key)
+        let preferences = StartupPreferences(defaults: storage.defaults)
+
+        #expect(!preferences.welcomeIsDue())
+        // Treated as seen, so later manual launches open the dashboard.
+        #expect(preferences.onboardingCompleted)
+        #expect(preferences.startupDashboard(launch: .manual) == .openDashboard)
+    }
+
+    @Test(
+        arguments: [
+            (stored: nil, hasRunBefore: false, expected: .welcome),
+            (stored: nil, hasRunBefore: true, expected: .done),
+            (stored: .welcome, hasRunBefore: true, expected: .welcome),
+            (stored: .done, hasRunBefore: false, expected: .done),
+        ] as [(StartupPreferences.FirstRun?, Bool, StartupPreferences.FirstRun)])
+    func firstRunClassification(
+        stored: StartupPreferences.FirstRun?, hasRunBefore: Bool,
+        expected: StartupPreferences.FirstRun
+    ) {
+        #expect(StartupPreferences.firstRun(stored: stored, hasRunBefore: hasRunBefore) == expected)
+    }
+
+    // MARK: - Launch at login
+
+    @Test func nothingIsRegisteredWithoutTheWelcomesCheckbox() {
+        let storage = TemporaryDefaults()
+        let preferences = StartupPreferences(defaults: storage.defaults)
+        // A new install, before the welcome, and an upgrade: no silent
+        // registration.
+        #expect(!preferences.shouldRegisterLaunchAtLoginOnStartup(isTranslocated: false))
         storage.defaults.set(true, forKey: StartupPreferences.onboardingCompletedKey)
+        #expect(!preferences.shouldRegisterLaunchAtLoginOnStartup(isTranslocated: false))
+    }
+
+    @Test func aTickedBoxIsRegisteredUntilItSucceedsThenLeftAlone() {
+        let storage = TemporaryDefaults()
+        let preferences = StartupPreferences(defaults: storage.defaults)
+        preferences.chooseLaunchAtLogin(true)
+
+        #expect(preferences.shouldRegisterLaunchAtLoginOnStartup(isTranslocated: false))
+        // Opened straight from the disk image: registering now would point
+        // the login item at a temporary copy, so wait for the installed one.
+        #expect(!preferences.shouldRegisterLaunchAtLoginOnStartup(isTranslocated: true))
         #expect(preferences.shouldRegisterLaunchAtLoginOnStartup(isTranslocated: false))
 
         preferences.markLaunchAtLoginDefaultApplied()  // registered
@@ -47,35 +102,10 @@ struct StartupPreferencesTests {
         }
     }
 
-    @Test func translocatedLaunchWaitsForTheInstalledCopy() {
-        // Opened straight from the disk image: registering now would point
-        // the login item at a temporary copy.
+    @Test func anUntickedBoxIsRespected() {
         let storage = TemporaryDefaults()
         let preferences = StartupPreferences(defaults: storage.defaults)
-
-        #expect(!preferences.shouldRegisterLaunchAtLoginOnStartup(isTranslocated: true))
-        #expect(preferences.shouldRegisterLaunchAtLoginOnStartup(isTranslocated: false))
-    }
-
-    @Test func upgradeFromAVersionThatAlwaysRegisteredIsLeftAlone() {
-        // Earlier versions registered on every launch and recorded that the
-        // welcome popout had been seen, but had no launch-at-login setting. A
-        // login item the user removed must stay removed.
-        let storage = TemporaryDefaults()
-        storage.defaults.set(true, forKey: StartupPreferences.onboardingCompletedKey)
-        let preferences = StartupPreferences(defaults: storage.defaults)
-
-        #expect(!preferences.shouldRegisterLaunchAtLoginOnStartup(isTranslocated: false))
-        storage.defaults.removeObject(forKey: StartupPreferences.onboardingCompletedKey)
-        #expect(!preferences.shouldRegisterLaunchAtLoginOnStartup(isTranslocated: false))
-    }
-
-    @Test func changingTheSettingStopsStartupFromRegistering() {
-        let storage = TemporaryDefaults()
-        let preferences = StartupPreferences(defaults: storage.defaults)
-        #expect(!preferences.shouldRegisterLaunchAtLoginOnStartup(isTranslocated: true))
-
-        preferences.markLaunchAtLoginDefaultApplied()  // user turned it off in Settings
+        preferences.chooseLaunchAtLogin(false)
 
         #expect(!preferences.shouldRegisterLaunchAtLoginOnStartup(isTranslocated: false))
     }
@@ -83,34 +113,17 @@ struct StartupPreferencesTests {
     @Test func reinstallAfterInAppUninstallIsANewInstall() {
         let storage = TemporaryDefaults()
         let preferences = StartupPreferences(defaults: storage.defaults)
-        storage.defaults.set(true, forKey: StartupPreferences.onboardingCompletedKey)
+        storage.defaults.set(true, forKey: "SUHasLaunchedBefore")
+        storage.defaults.set(true, forKey: "LocalNetworkChecker.hasCompletedInitialCheck")
         storage.defaults.set(false, forKey: StartupPreferences.openDashboardOnStartupKey)
-        preferences.markLaunchAtLoginDefaultApplied()
+        #expect(!preferences.welcomeIsDue())
+        preferences.chooseLaunchAtLogin(false)
 
         preferences.resetForUninstall()
 
-        #expect(preferences.shouldRegisterLaunchAtLoginOnStartup(isTranslocated: false))
+        #expect(preferences.welcomeIsDue())
         #expect(preferences.openDashboardOnStartup)
-    }
-
-    @Test(
-        arguments: [
-            (stored: nil, hasRunBefore: false, expected: .pending),
-            (stored: nil, hasRunBefore: true, expected: .applied),
-            (stored: .pending, hasRunBefore: true, expected: .pending),
-            (stored: .applied, hasRunBefore: false, expected: .applied),
-        ]
-            as [(
-                StartupPreferences.LaunchAtLoginDefault?, Bool,
-                StartupPreferences.LaunchAtLoginDefault
-            )])
-    func launchAtLoginDefaultClassification(
-        stored: StartupPreferences.LaunchAtLoginDefault?, hasRunBefore: Bool,
-        expected: StartupPreferences.LaunchAtLoginDefault
-    ) {
-        #expect(
-            StartupPreferences.launchAtLoginDefault(stored: stored, hasRunBefore: hasRunBefore)
-                == expected)
+        #expect(!preferences.shouldRegisterLaunchAtLoginOnStartup(isTranslocated: false))
     }
 
     @Test func detectsTranslocatedBundlePaths() {
@@ -147,61 +160,18 @@ struct StartupPreferencesTests {
         #expect(StartupPreferences(defaults: storage.defaults).openDashboardOnStartup)
     }
 
-    // MARK: - Welcome popout
-
-    @Test func welcomePopoutUntilItHasBeenSeenThenTheDashboardDirectly() {
+    @Test func dashboardOpensOnlyOnManualLaunchesAfterTheWelcome() {
         let storage = TemporaryDefaults()
         let preferences = StartupPreferences(defaults: storage.defaults)
-        #expect(!preferences.onboardingCompleted)
-        #expect(preferences.startupDashboard(launch: .manual) == .showWelcome)
+        #expect(preferences.startupDashboard(launch: .manual) == .none)
 
-        preferences.markOnboardingCompleted()
+        preferences.markWelcomeSeen()
 
-        #expect(preferences.onboardingCompleted)
         #expect(preferences.startupDashboard(launch: .manual) == .openDashboard)
-    }
+        #expect(preferences.startupDashboard(launch: .atLogin) == .none)
 
-    @Test func upgradeFromAVersionThatShowedThePopoutEveryTimeSkipsIt() {
-        // Earlier versions recorded the popout as seen but never read it.
-        let storage = TemporaryDefaults()
-        storage.defaults.set(true, forKey: StartupPreferences.onboardingCompletedKey)
-
-        #expect(
-            StartupPreferences(defaults: storage.defaults).startupDashboard(launch: .manual)
-                == .openDashboard)
-    }
-
-    @Test func turningOffOpenDashboardOnStartupOpensNothing() {
-        let storage = TemporaryDefaults()
-        let preferences = StartupPreferences(defaults: storage.defaults)
         storage.defaults.set(false, forKey: StartupPreferences.openDashboardOnStartupKey)
         #expect(preferences.startupDashboard(launch: .manual) == .none)
-
-        preferences.markOnboardingCompleted()
-        #expect(preferences.startupDashboard(launch: .manual) == .none)
-    }
-
-    @Test func reinstallAfterInAppUninstallShowsTheWelcomeAgain() {
-        let storage = TemporaryDefaults()
-        let preferences = StartupPreferences(defaults: storage.defaults)
-        preferences.markOnboardingCompleted()
-
-        preferences.resetForUninstall()
-
-        #expect(preferences.startupDashboard(launch: .manual) == .showWelcome)
-    }
-
-    // MARK: - Starting at login
-
-    @Test func startingAtLoginOpensNothing() {
-        let storage = TemporaryDefaults()
-        let preferences = StartupPreferences(defaults: storage.defaults)
-        #expect(preferences.startupDashboard(launch: .atLogin) == .none)
-
-        preferences.markOnboardingCompleted()
-
-        #expect(preferences.startupDashboard(launch: .atLogin) == .none)
-        #expect(preferences.startupDashboard(launch: .manual) == .openDashboard)
     }
 
     @Test(
@@ -228,23 +198,18 @@ struct StartupPreferencesTests {
     }
 }
 
-/// Records what the opener did instead of showing a popover or a browser.
+/// Records what the opener did instead of opening a browser.
 @MainActor
 private final class StartupDashboardSpy {
-    var welcomesShown = 0
     var dashboardsOpened = 0
-    var finishWelcome: (() -> Void)?
 
     func opener(
-        _ preferences: StartupPreferences, launch: AppLaunchKind = .manual
+        _ preferences: StartupPreferences, launch: AppLaunchKind = .manual, firstRun: Bool = false
     ) -> StartupDashboardOpener {
         StartupDashboardOpener(
             preferences: preferences,
             launchKind: { launch },
-            showWelcome: { onSeen in
-                self.welcomesShown += 1
-                self.finishWelcome = onSeen
-            },
+            isFirstRun: firstRun,
             openDashboard: { self.dashboardsOpened += 1 }
         )
     }
@@ -253,64 +218,121 @@ private final class StartupDashboardSpy {
 @MainActor
 struct StartupDashboardOpenerTests {
 
-    @Test func firstLaunchShowsTheWelcomeOnceAndLaterLaunchesOpenTheDashboard() {
+    @Test func theFirstRunNeverOpensTheBrowserByItself() {
         let storage = TemporaryDefaults()
         let preferences = StartupPreferences(defaults: storage.defaults)
         let spy = StartupDashboardSpy()
 
-        // First launch: exo comes up, is switched off and on, and restarted.
-        let firstLaunch = spy.opener(preferences)
-        for _ in 0..<3 {
-            firstLaunch.exoIsUp()
-        }
-        #expect(spy.welcomesShown == 1)
-        #expect(spy.dashboardsOpened == 0)
-        spy.finishWelcome?()  // dismissed, used, or counted down
+        let firstRun = spy.opener(preferences, firstRun: true)
+        preferences.markWelcomeSeen()  // closed the welcome before exo came up
+        firstRun.exoIsUp()
 
-        // Every later manual launch: the dashboard, once, no popout.
+        #expect(spy.dashboardsOpened == 0)
+    }
+
+    @Test func laterManualLaunchesOpenTheDashboardOnce() {
+        let storage = TemporaryDefaults()
+        let preferences = StartupPreferences(defaults: storage.defaults)
+        preferences.markWelcomeSeen()
+        let spy = StartupDashboardSpy()
+
         for _ in 0..<2 {
-            let laterLaunch = spy.opener(preferences)
-            laterLaunch.exoIsUp()
-            laterLaunch.exoIsUp()
+            let launch = spy.opener(preferences)
+            // exo comes up, is switched off and on, and restarted.
+            for _ in 0..<3 {
+                launch.exoIsUp()
+            }
         }
-        #expect(spy.welcomesShown == 1)
+
         #expect(spy.dashboardsOpened == 2)
     }
 
     @Test func loginLaunchesStaySilent() {
         let storage = TemporaryDefaults()
         let preferences = StartupPreferences(defaults: storage.defaults)
+        preferences.markWelcomeSeen()
         let spy = StartupDashboardSpy()
 
-        // Even before the welcome has been seen.
-        spy.opener(preferences, launch: .atLogin).exoIsUp()
-        preferences.markOnboardingCompleted()
         spy.opener(preferences, launch: .atLogin).exoIsUp()
 
-        #expect(spy.welcomesShown == 0)
-        #expect(spy.dashboardsOpened == 0)
-    }
-
-    @Test func welcomeComesBackIfTheAppQuitBeforeItWasSeen() {
-        let storage = TemporaryDefaults()
-        let preferences = StartupPreferences(defaults: storage.defaults)
-        let spy = StartupDashboardSpy()
-
-        spy.opener(preferences).exoIsUp()
-        spy.opener(preferences).exoIsUp()
-
-        #expect(spy.welcomesShown == 2)
         #expect(spy.dashboardsOpened == 0)
     }
 
     @Test func nothingOpensWhenTheSettingIsOff() {
         let storage = TemporaryDefaults()
         storage.defaults.set(false, forKey: StartupPreferences.openDashboardOnStartupKey)
+        let preferences = StartupPreferences(defaults: storage.defaults)
+        preferences.markWelcomeSeen()
         let spy = StartupDashboardSpy()
 
-        spy.opener(StartupPreferences(defaults: storage.defaults)).exoIsUp()
+        spy.opener(preferences).exoIsUp()
 
-        #expect(spy.welcomesShown == 0)
         #expect(spy.dashboardsOpened == 0)
+    }
+}
+
+// MARK: - Welcome window
+
+struct WelcomeFlowTests {
+
+    @Test func continueTwiceAsksForLocalNetworkThenAnAllowLeadsToReady() {
+        var flow = WelcomeFlow()
+        #expect(flow.pane == .welcome)
+
+        #expect(flow.handle(.continueFromWelcome).isEmpty)
+        #expect(flow.pane == .findMacs && flow.localNetwork == .notAsked)
+
+        // Continue starts exo, which makes macOS ask.
+        #expect(flow.handle(.askForLocalNetwork) == [.startExo])
+        #expect(flow.localNetwork == .asking)
+        // Asking twice doesn't start exo twice.
+        #expect(flow.handle(.askForLocalNetwork).isEmpty)
+
+        flow.handle(.localNetworkAllowed)
+        #expect(flow.pane == .ready && flow.localNetwork == .allowed)
+    }
+
+    @Test func aDenialOffersSettingsAndLetsTheUserContinue() {
+        var flow = WelcomeFlow()
+        flow.handle(.continueFromWelcome)
+        flow.handle(.askForLocalNetwork)
+
+        flow.handle(.localNetworkDenied)
+        #expect(flow.pane == .findMacs && flow.localNetwork == .denied)
+
+        flow.handle(.continueWithoutLocalNetwork)
+        #expect(flow.pane == .ready && flow.localNetwork == .denied)
+    }
+
+    @Test func turningAccessOnAfterADenialMovesOn() {
+        var flow = WelcomeFlow()
+        flow.handle(.continueFromWelcome)
+        flow.handle(.askForLocalNetwork)
+        flow.handle(.localNetworkDenied)
+
+        flow.handle(.localNetworkAllowed)
+
+        #expect(flow.pane == .ready && flow.localNetwork == .allowed)
+    }
+
+    @Test func anUndecidedCheckDoesntHoldTheUserUp() {
+        var flow = WelcomeFlow()
+        flow.handle(.continueFromWelcome)
+        flow.handle(.askForLocalNetwork)
+
+        flow.handle(.localNetworkUndetermined)
+
+        #expect(flow.pane == .ready)
+    }
+
+    @Test func resultsBeforeAskingAreIgnored() {
+        var flow = WelcomeFlow()
+        flow.handle(.localNetworkAllowed)
+        flow.handle(.localNetworkDenied)
+        #expect(flow.pane == .welcome)
+        flow.handle(.continueFromWelcome)
+        flow.handle(.localNetworkDenied)
+        flow.handle(.continueWithoutLocalNetwork)
+        #expect(flow.pane == .findMacs && flow.localNetwork == .notAsked)
     }
 }
