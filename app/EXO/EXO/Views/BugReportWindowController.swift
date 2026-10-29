@@ -22,7 +22,7 @@ final class BugReportWindowController: ObservableObject {
 
         let newWindow = NSWindow(contentViewController: hostingController)
         newWindow.styleMask = [.titled, .closable, .resizable]
-        newWindow.title = "Send a Bug Report"
+        newWindow.title = "Report a Bug"
         newWindow.center()
         newWindow.setFrameAutosaveName("ExoBugReportWindow")
         newWindow.isReleasedWhenClosed = false
@@ -44,6 +44,9 @@ private struct BugReportView: View {
 
     @State private var phase: Phase = .prompting
     @State private var userDescription: String = ""
+    @State private var showsDetails = false
+    @State private var preparingFiles = false
+    @State private var filesError: String?
     @FocusState private var descriptionFocused: Bool
 
     var body: some View {
@@ -60,7 +63,7 @@ private struct BugReportView: View {
             }
         }
         .padding(16)
-        .frame(minWidth: 380)
+        .frame(minWidth: 380, idealWidth: 460, maxWidth: .infinity)
         .animation(.easeInOut(duration: 0.2), value: phase)
         .onAppear { descriptionFocused = true }
     }
@@ -95,9 +98,7 @@ private struct BugReportView: View {
                     .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
             )
 
-            Text("Diagnostic logs will be uploaded with your report.")
-                .font(.caption)
-                .foregroundColor(.secondary)
+            whatIsSent
 
             HStack {
                 Spacer()
@@ -109,6 +110,85 @@ private struct BugReportView: View {
                 .keyboardShortcut(.defaultAction)
             }
             .padding(.top, 4)
+        }
+    }
+
+    /// What the report includes, with the details under a disclosure and a
+    /// way to see the files themselves.
+    private var whatIsSent: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(
+                "Your report includes EXO's logs, this Mac's model and macOS version, its network setup, and your cluster's status."
+            )
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            DisclosureGroup(isExpanded: $showsDetails) {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Self.details, id: \.self) { line in
+                        Label {
+                            Text(line).fixedSize(horizontal: false, vertical: true)
+                        } icon: {
+                            Image(systemName: "circle.fill").font(.system(size: 4))
+                        }
+                    }
+                    HStack {
+                        Button("Show Report Files…", action: showReportFiles)
+                            .disabled(preparingFiles)
+                        if preparingFiles {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+                    .padding(.top, 4)
+                    if let filesError {
+                        Text(filesError)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .font(.callout)
+                .padding(.top, 4)
+            } label: {
+                // The whole label toggles, not only the triangle.
+                Text("Details")
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation { showsDetails.toggle() }
+                    }
+            }
+            .font(.callout)
+        }
+    }
+
+    static let details = [
+        "EXO's logs, with your account name, this Mac's name and your prompts taken out.",
+        "This Mac's model, macOS version and time since it started.",
+        "Its network interfaces and their addresses, Thunderbolt Bridge and RDMA status. "
+            + "Not hardware addresses or your Wi-Fi network.",
+        "Your cluster's status and recent activity: its devices, models and errors. "
+            + "Not your prompts, the models' responses, or device names.",
+        "What you write above.",
+    ]
+
+    /// Writes the report to a new temporary folder and shows it in Finder.
+    private func showReportFiles() {
+        preparingFiles = true
+        filesError = nil
+        let description = userDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task {
+            do {
+                let files = try await BugReportService().collect(
+                    isManual: true, userDescription: description.isEmpty ? nil : description)
+                let folder = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(
+                        "EXO Bug Report \(BugReportService.runTimestampString(Date()))",
+                        isDirectory: true)
+                try BugReportService.write(files, to: folder)
+                NSWorkspace.shared.open(folder)
+            } catch {
+                filesError = "The report couldn't be prepared: \(error.localizedDescription)"
+            }
+            preparingFiles = false
         }
     }
 
@@ -176,7 +256,7 @@ private struct BugReportView: View {
     }
 
     private func send() async {
-        phase = .sending("Collecting logs and uploading…")
+        phase = .sending("Sending report…")
         let service = BugReportService()
         let description = userDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         do {

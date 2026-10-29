@@ -25,6 +25,25 @@ enum BugReportError: LocalizedError {
     }
 }
 
+/// One file of a bug report, at its path inside the report.
+struct BugReportFile: Equatable {
+    let path: String
+    let data: Data
+}
+
+/// Collects a bug report and sends it, or writes it to a folder so the user
+/// can see exactly what would be sent.
+///
+/// A report holds only what is needed to diagnose a problem, with the user's
+/// prompts, the names of the user and their devices, and hardware addresses
+/// taken out (see `BugReportRedactor`):
+/// - EXO's logs: exo's own (~/.exo/exo_log) and its output kept by the app
+///   (~/.exo/exo_app.log), which says why exo couldn't start or stopped;
+/// - the cluster's state and recent events, as exo reports them;
+/// - this Mac's model and macOS version and its network setup
+///   (`BugReportSystemInfo`), plus `ifconfig`, Thunderbolt Bridge and RDMA
+///   status;
+/// - the user's description.
 struct BugReportService {
     private struct PresignedUrlsRequest: Codable {
         let keys: [String]
@@ -34,6 +53,8 @@ struct BugReportService {
         let urls: [String: String]
         let expiresIn: Int?
     }
+
+    var redactor = BugReportRedactor.current
 
     func sendReport(
         baseURL: URL = URL(string: "http://127.0.0.1:52415")!,
@@ -45,52 +66,13 @@ struct BugReportService {
         let dayPrefix = Self.dayPrefixString(now)
         let prefix = "reports/\(dayPrefix)/\(timestamp)/"
 
-        let logFiles = readAllLogs()
-        let ifconfigText = try await captureIfconfig()
-        let hostName = Host.current().localizedName ?? "unknown"
-        let debugInfo = readDebugInfo()
-
-        let stateData = try await fetch(url: baseURL.appendingPathComponent("state"))
-        // The API keeps its recent events in memory; nothing writes them to disk
-        let eventsData = try await fetch(url: baseURL.appendingPathComponent("events"))
-
-        // Extract cluster TB bridge status from exo state
-        let clusterTbBridgeStatus = extractClusterTbBridgeStatus(from: stateData)
-
-        let reportJSON = makeReportJson(
-            timestamp: timestamp,
-            hostName: hostName,
-            ifconfig: ifconfigText,
-            debugInfo: debugInfo,
-            isManual: isManual,
-            clusterTbBridgeStatus: clusterTbBridgeStatus,
-            userDescription: userDescription
-        )
-
-        let eventLogFiles = readAllEventLogs()
-
-        var uploads: [(path: String, data: Data?)] = logFiles.map { (path, data) in
-            ("\(prefix)\(path)", data)
-        }
-        uploads.append(
-            contentsOf: eventLogFiles.map { (path, data) in
-                ("\(prefix)\(path)", data as Data?)
-            })
-        uploads.append(contentsOf: [
-            ("\(prefix)state.json", stateData),
-            ("\(prefix)events.json", eventsData),
-            ("\(prefix)report.json", reportJSON),
-        ])
-
-        let uploadItems: [(key: String, body: Data)] = uploads.compactMap { item in
-            guard let body = item.data else { return nil }
-            return (key: item.path, body: body)
-        }
-
-        guard !uploadItems.isEmpty else {
+        let files = try await collect(
+            baseURL: baseURL, now: now, isManual: isManual, userDescription: userDescription)
+        guard !files.isEmpty else {
             return BugReportOutcome(success: false, message: "No data to upload")
         }
 
+        let uploadItems = files.map { (key: "\(prefix)\($0.path)", body: $0.data) }
         let presignedUrls = try await fetchPresignedUploadUrls(keys: uploadItems.map(\.key))
         for item in uploadItems {
             guard let urlString = presignedUrls[item.key], let url = URL(string: urlString) else {
@@ -99,8 +81,55 @@ struct BugReportService {
             try await uploadToPresignedUrl(url: url, body: item.body)
         }
 
-        return BugReportOutcome(
-            success: true, message: "Bug Report sent. Thank you for helping to improve EXO 1.0.")
+        return BugReportOutcome(success: true, message: "Report sent. Thank you.")
+    }
+
+    /// Everything a report sends.
+    func collect(
+        baseURL: URL = URL(string: "http://127.0.0.1:52415")!,
+        now: Date = Date(),
+        isManual: Bool = false,
+        userDescription: String? = nil
+    ) async throws -> [BugReportFile] {
+        let ifconfigText = redactor.scrub(try captureIfconfig())
+        let debugInfo = readDebugInfo()
+
+        let stateData = await fetch(url: baseURL.appendingPathComponent("state"))
+        // The API keeps its recent events in memory; nothing writes them to disk
+        let eventsData = await fetch(url: baseURL.appendingPathComponent("events"))
+
+        let reportJSON = makeReportJson(
+            timestamp: Self.runTimestampString(now),
+            ifconfig: ifconfigText,
+            debugInfo: debugInfo,
+            isManual: isManual,
+            clusterTbBridgeStatus: extractClusterTbBridgeStatus(from: stateData),
+            userDescription: userDescription
+        )
+
+        var files = readLogs()
+        // Sent only if they could be checked (see `BugReportRedactor.scrubJSON`).
+        if let state = stateData.flatMap(redactor.scrubJSON) {
+            files.append(BugReportFile(path: "state.json", data: state))
+        }
+        if let events = eventsData.flatMap(redactor.scrubJSON) {
+            files.append(BugReportFile(path: "events.json", data: events))
+        }
+        if let reportJSON {
+            files.append(BugReportFile(path: "report.json", data: reportJSON))
+        }
+        return files
+    }
+
+    /// Writes `files` into `directory`, creating it and the folders inside.
+    static func write(_ files: [BugReportFile], to directory: URL) throws {
+        let fileManager = FileManager.default
+        for file in files {
+            let url = directory.appendingPathComponent(file.path)
+            try fileManager.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try file.data.write(to: url)
+        }
     }
 
     private static func dayPrefixString(_ date: Date) -> String {
@@ -113,7 +142,7 @@ struct BugReportService {
         return String(format: "%04d/%02d/%02d", year, month, day)
     }
 
-    private static func runTimestampString(_ date: Date) -> String {
+    static func runTimestampString(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
@@ -157,44 +186,31 @@ struct BugReportService {
         return decoded.urls
     }
 
-    private func readAllLogs() -> [(path: String, data: Data)] {
-        let dir = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".exo")
-            .appendingPathComponent("exo_log")
-        var results: [(path: String, data: Data)] = []
-
-        let contents = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-        for name in contents {
-            if let data = try? Data(contentsOf: dir.appendingPathComponent(name)) {
-                results.append(("exo_log/\(name)", data))
-            }
+    /// exo's own log of this run, and its output kept by the app (with the
+    /// copy kept when that was last emptied), which has earlier runs too and
+    /// says why exo couldn't start. exo's compressed logs of earlier runs are
+    /// left out: they can't be checked for prompts here, and the app's copy
+    /// covers those runs.
+    private func readLogs() -> [BugReportFile] {
+        let exoDirectory = ExoProcessController.exoDirectoryURL
+        let logDirectory = exoDirectory.appendingPathComponent("exo_log")
+        var urls: [(path: String, url: URL)] = []
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: logDirectory.path)) ?? []
+        for name in names.sorted() where !name.hasSuffix(".zst") {
+            urls.append(("exo_log/\(name)", logDirectory.appendingPathComponent(name)))
         }
+        let appLog = ExoProcessController.logFile
+        urls.append((appLog.url.lastPathComponent, appLog.url))
+        urls.append((appLog.rotatedURL.lastPathComponent, appLog.rotatedURL))
 
-        return results
+        return urls.compactMap { entry in
+            guard let data = try? Data(contentsOf: entry.url) else { return nil }
+            let text = redactor.scrub(String(decoding: data, as: UTF8.self))
+            return BugReportFile(path: entry.path, data: Data(text.utf8))
+        }
     }
 
-    private func readAllEventLogs() -> [(path: String, data: Data)] {
-        let eventLogDir = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".exo")
-            .appendingPathComponent("event_log")
-        var results: [(path: String, data: Data)] = []
-
-        // The master's on-disk event log, if it keeps one
-        for subdir in ["master"] {
-            let dir = eventLogDir.appendingPathComponent(subdir)
-            let contents =
-                (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-            for name in contents where name.hasPrefix("events.") {
-                if let data = try? Data(contentsOf: dir.appendingPathComponent(name)) {
-                    results.append(("event_log/\(subdir)/\(name)", data))
-                }
-            }
-        }
-
-        return results
-    }
-
-    private func captureIfconfig() async throws -> String {
+    private func captureIfconfig() throws -> String {
         let result = runCommand(["/sbin/ifconfig"])
         guard result.exitCode == 0 else {
             throw BugReportError.collectFailed(
@@ -214,8 +230,8 @@ struct BugReportService {
     private func readRDMADebugInfo() -> DebugInfo.RDMADebugInfo {
         DebugInfo.RDMADebugInfo(
             rdmaCtlStatus: safeRunCommand(["/usr/bin/rdma_ctl", "status"]),
-            ibvDevices: safeRunCommand(["/usr/bin/ibv_devices"]),
-            ibvDevinfo: safeRunCommand(["/usr/bin/ibv_devinfo"])
+            ibvDevices: safeRunCommand(["/usr/bin/ibv_devices"]).map(redactor.scrub),
+            ibvDevinfo: safeRunCommand(["/usr/bin/ibv_devinfo"]).map(redactor.scrub)
         )
     }
 
@@ -261,7 +277,7 @@ struct BugReportService {
         return nil
     }
 
-    private func fetch(url: URL) async throws -> Data? {
+    private func fetch(url: URL) async -> Data? {
         var request = URLRequest(url: url)
         request.timeoutInterval = 5
         do {
@@ -308,21 +324,18 @@ struct BugReportService {
 
     private func makeReportJson(
         timestamp: String,
-        hostName: String,
         ifconfig: String,
         debugInfo: DebugInfo,
         isManual: Bool,
         clusterTbBridgeStatus: [[String: Any]]?,
         userDescription: String? = nil
     ) -> Data? {
-        let system = readSystemMetadata()
         let exo = readExoMetadata()
         var payload: [String: Any] = [
             "timestamp": timestamp,
-            "host": hostName,
             "ifconfig": ifconfig,
             "debug": debugInfo.toDictionary(),
-            "system": system,
+            "system": BugReportSystemInfo.collect(run: safeRunCommand),
             "exo_version": exo.version as Any,
             "exo_commit": exo.commit as Any,
             "report_type": isManual ? "manual" : "automated",
@@ -333,7 +346,8 @@ struct BugReportService {
         if let desc = userDescription, !desc.isEmpty {
             payload["user_description"] = desc
         }
-        return try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted])
+        return try? JSONSerialization.data(
+            withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
     }
 
     /// Extracts cluster-wide Thunderbolt Bridge status from exo state JSON
@@ -362,82 +376,6 @@ struct BugReportService {
         return result.isEmpty ? nil : result
     }
 
-    private func readSystemMetadata() -> [String: Any] {
-        let hostname = safeRunCommand(["/bin/hostname"])
-        let computerName = safeRunCommand(["/usr/sbin/scutil", "--get", "ComputerName"])
-        let localHostName = safeRunCommand(["/usr/sbin/scutil", "--get", "LocalHostName"])
-        let hostNameCommand = safeRunCommand(["/usr/sbin/scutil", "--get", "HostName"])
-        let hardwareModel = safeRunCommand(["/usr/sbin/sysctl", "-n", "hw.model"])
-        let hardwareProfile = safeRunCommand(["/usr/sbin/system_profiler", "SPHardwareDataType"])
-        let hardwareUUID = hardwareProfile.flatMap(extractHardwareUUID)
-
-        let osVersion = safeRunCommand(["/usr/bin/sw_vers", "-productVersion"])
-        let osBuild = safeRunCommand(["/usr/bin/sw_vers", "-buildVersion"])
-        let kernel = safeRunCommand(["/usr/bin/uname", "-srv"])
-        let arch = safeRunCommand(["/usr/bin/uname", "-m"])
-
-        let routeInfo = safeRunCommand(["/sbin/route", "-n", "get", "default"])
-        let defaultInterface = routeInfo.flatMap(parseDefaultInterface)
-        let defaultIP = defaultInterface.flatMap { iface in
-            safeRunCommand(["/usr/sbin/ipconfig", "getifaddr", iface])
-        }
-        let defaultMac = defaultInterface.flatMap { iface in
-            safeRunCommand(["/sbin/ifconfig", iface]).flatMap(parseEtherAddress)
-        }
-
-        let user = safeRunCommand(["/usr/bin/whoami"])
-        let consoleUser = safeRunCommand(["/usr/bin/stat", "-f%Su", "/dev/console"])
-        let uptime = safeRunCommand(["/usr/bin/uptime"])
-        let diskRoot = safeRunCommand([
-            "/bin/sh", "-c", "/bin/df -h / | awk 'NR==2 {print $1, $2, $3, $4, $5}'",
-        ])
-
-        let interfacesList = safeRunCommand(["/usr/sbin/ipconfig", "getiflist"])
-        let interfacesAndIPs =
-            interfacesList?
-            .split(whereSeparator: { $0 == " " || $0 == "\n" })
-            .compactMap { iface -> [String: Any]? in
-                let name = String(iface)
-                guard let ip = safeRunCommand(["/usr/sbin/ipconfig", "getifaddr", name]) else {
-                    return nil
-                }
-                return ["name": name, "ip": ip]
-            } ?? []
-
-        let wifiSSID: String?
-        let airportPath =
-            "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport"
-        if FileManager.default.isExecutableFile(atPath: airportPath) {
-            wifiSSID = safeRunCommand([airportPath, "-I"]).flatMap(parseWifiSSID)
-        } else {
-            wifiSSID = nil
-        }
-
-        return [
-            "hostname": hostname as Any,
-            "computer_name": computerName as Any,
-            "local_hostname": localHostName as Any,
-            "host_name": hostNameCommand as Any,
-            "hardware_model": hardwareModel as Any,
-            "hardware_profile": hardwareProfile as Any,
-            "hardware_uuid": hardwareUUID as Any,
-            "os_version": osVersion as Any,
-            "os_build": osBuild as Any,
-            "kernel": kernel as Any,
-            "arch": arch as Any,
-            "default_interface": defaultInterface as Any,
-            "default_ip": defaultIP as Any,
-            "default_mac": defaultMac as Any,
-            "user": user as Any,
-            "console_user": consoleUser as Any,
-            "uptime": uptime as Any,
-            "disk_root": diskRoot as Any,
-            "interfaces_and_ips": interfacesAndIPs,
-            "ipconfig_getiflist": interfacesList as Any,
-            "wifi_ssid": wifiSSID as Any,
-        ]
-    }
-
     private func readExoMetadata(bundle: Bundle = .main) -> (version: String?, commit: String?) {
         let info = bundle.infoDictionary ?? [:]
         let tag = info["EXOBuildTag"] as? String
@@ -458,50 +396,9 @@ struct BugReportService {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private func extractHardwareUUID(from hardwareProfile: String) -> String? {
-        hardwareProfile
-            .split(separator: "\n")
-            .first { $0.contains("Hardware UUID") }?
-            .split(separator: ":")
-            .dropFirst()
-            .joined(separator: ":")
-            .trimmingCharacters(in: .whitespaces)
-    }
-
-    private func parseDefaultInterface(from routeOutput: String) -> String? {
-        for line in routeOutput.split(separator: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("interface: ") {
-                return trimmed.replacingOccurrences(of: "interface: ", with: "")
-            }
-        }
-        return nil
-    }
-
-    private func parseEtherAddress(from ifconfigOutput: String) -> String? {
-        for line in ifconfigOutput.split(separator: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("ether ") {
-                return trimmed.replacingOccurrences(of: "ether ", with: "")
-            }
-        }
-        return nil
-    }
-
-    private func parseWifiSSID(from airportOutput: String) -> String? {
-        for line in airportOutput.split(separator: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("SSID:") {
-                return trimmed.replacingOccurrences(of: "SSID:", with: "").trimmingCharacters(
-                    in: .whitespaces)
-            }
-        }
-        return nil
-    }
-
     private func runCommand(_ arguments: [String]) -> CommandResult {
         let process = Process()
-        process.launchPath = arguments.first
+        process.executableURL = URL(fileURLWithPath: arguments[0])
         process.arguments = Array(arguments.dropFirst())
 
         let stdout = Pipe()
@@ -514,16 +411,66 @@ struct BugReportService {
         } catch {
             return CommandResult(exitCode: -1, output: "", error: error.localizedDescription)
         }
-        process.waitUntilExit()
-
         let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
         let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
 
         return CommandResult(
             exitCode: process.terminationStatus,
             output: String(decoding: outputData, as: UTF8.self),
             error: String(decoding: errorData, as: UTF8.self)
         )
+    }
+}
+
+/// The facts about this Mac in a report's report.json, each kept because
+/// diagnosing a problem needs it. Not included: serial number, hardware
+/// UUID, user and computer names, Wi-Fi network name and MAC addresses.
+enum BugReportSystemInfo {
+    /// Every field a report can have, and why.
+    static let fields: [String: String] = [
+        "hardware_model": "Mac model identifier, for chip- and memory-specific bugs",
+        "os_version": "macOS version, for bugs specific to one macOS",
+        "os_build": "macOS build, to tell betas and updates apart",
+        "arch": "arm64, or x86_64 if EXO runs under Rosetta",
+        "uptime_seconds": "GPU and memory problems that build up until a restart",
+        "default_interface": "which interface reaches other devices and the internet",
+        "interfaces": "interface names and addresses, for discovery and connection problems",
+    ]
+
+    /// Reads the fields with `run`, which runs a command and returns its
+    /// trimmed output, or nil if it fails.
+    static func collect(
+        run: ([String]) -> String?,
+        uptime: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) -> [String: Any] {
+        var info: [String: Any] = ["uptime_seconds": Int(uptime)]
+        info["hardware_model"] = run(["/usr/sbin/sysctl", "-n", "hw.model"])
+        info["os_version"] = run(["/usr/bin/sw_vers", "-productVersion"])
+        info["os_build"] = run(["/usr/bin/sw_vers", "-buildVersion"])
+        info["arch"] = run(["/usr/bin/uname", "-m"])
+        info["default_interface"] = run(["/sbin/route", "-n", "get", "default"])
+            .flatMap(parseDefaultInterface)
+        info["interfaces"] =
+            run(["/usr/sbin/ipconfig", "getiflist"])?
+            .split(whereSeparator: { $0 == " " || $0 == "\n" })
+            .compactMap { name -> [String: String]? in
+                guard let ip = run(["/usr/sbin/ipconfig", "getifaddr", String(name)]) else {
+                    return nil
+                }
+                return ["name": String(name), "ip": ip]
+            } ?? []
+        return info
+    }
+
+    static func parseDefaultInterface(from routeOutput: String) -> String? {
+        for line in routeOutput.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("interface: ") {
+                return String(trimmed.dropFirst("interface: ".count))
+            }
+        }
+        return nil
     }
 }
 
