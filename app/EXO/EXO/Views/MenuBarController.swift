@@ -167,6 +167,7 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
             case .outdated: snapshot.thunderboltNetworking = .needsUpdate
             }
         }
+        snapshot.needsRestart = controller.needsRestart
         snapshot.updateVersion = updater.availableUpdateVersion
         return snapshot
     }
@@ -228,6 +229,8 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
             Task { await thunderboltBridgeService.disableThunderboltBridge() }
         case .setUpThunderboltNetworking:
             Task { await NetworkSetupHelper.offerSetUp() }
+        case .restartToApplySettings:
+            controller.restartToApplySettings()
         case .openDashboard:
             openDashboard()
         case .copyAPIURL:

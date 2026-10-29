@@ -7,7 +7,7 @@ import Testing
 struct UninstallAlertTests {
 
     @Test func uninstallKeepsDownloadedModelsUnlessUnticked() {
-        let (alert, keepModels) = SettingsView.makeUninstallAlert()
+        let (alert, keepModels) = UninstallEXO.makeAlert(modelsSize: nil)
 
         #expect(keepModels.state == .on)
         #expect(alert.accessoryView === keepModels)

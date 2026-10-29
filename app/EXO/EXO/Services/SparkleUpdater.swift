@@ -64,6 +64,26 @@ final class SparkleUpdater: NSObject, ObservableObject {
     var updater: SPUUpdater {
         controller.updater
     }
+
+    /// Settings › General › "Check for updates automatically". On unless the
+    /// user turned it off (SUEnableAutomaticChecks in Info.plist).
+    var automaticallyChecksForUpdates: Bool {
+        get { controller.updater.automaticallyChecksForUpdates }
+        set {
+            objectWillChange.send()
+            controller.updater.automaticallyChecksForUpdates = newValue
+        }
+    }
+
+    /// Settings › General › "Download and install updates automatically".
+    /// Off unless the user turns it on.
+    var automaticallyDownloadsUpdates: Bool {
+        get { controller.updater.automaticallyDownloadsUpdates }
+        set {
+            objectWillChange.send()
+            controller.updater.automaticallyDownloadsUpdates = newValue
+        }
+    }
 }
 
 private final class ExoUpdaterDelegate: NSObject, SPUUpdaterDelegate {
