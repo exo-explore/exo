@@ -1,4 +1,4 @@
-"""The worker isn't held up waiting for a busy runner to acknowledge a generation task."""
+"""The worker isn't held up waiting for a runner to acknowledge a task."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -110,22 +110,25 @@ async def test_generation_task_is_sent_without_waiting_for_the_runner() -> None:
 
 
 @pytest.mark.anyio
-async def test_other_tasks_still_wait_for_the_runner() -> None:
-    async with supervisor() as (sup, _):
+async def test_other_tasks_are_sent_without_waiting_for_the_runner_either() -> None:
+    async with supervisor() as (sup, sent):
         load = LoadModel(instance_id=BOUND.instance.instance_id)
-        returned = anyio.Event()
-
-        async def start() -> None:
+        with anyio.fail_after(2):
             await sup.start_task(load)
-            returned.set()
+        assert sent.receive().task_id == load.task_id
+        # Until the runner picks it up, its status is the one from before the task
+        assert sup.awaiting_acknowledgement
 
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(start)
-            await anyio.sleep(0.3)
-            assert not returned.is_set()
-            sup.pending[load.task_id].set()  # the runner acknowledges it
-            with anyio.fail_after(2):
-                await returned.wait()
+        sup.pending.pop(load.task_id).set()  # the runner acknowledges it
+        assert not sup.awaiting_acknowledgement
+
+
+@pytest.mark.anyio
+async def test_a_generation_task_is_not_awaited_for_acknowledgement() -> None:
+    async with supervisor() as (sup, _):
+        with anyio.fail_after(2):
+            await sup.start_task(generation())
+        assert not sup.awaiting_acknowledgement
 
 
 @pytest.mark.anyio
