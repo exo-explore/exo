@@ -318,8 +318,12 @@ class Runner:
         import gc
 
         gc.collect()
-        self.send_task_status(task.task_id, TaskStatus.Complete)
-        self.update_status(RunnerShutdown())
+        try:
+            self.send_task_status(task.task_id, TaskStatus.Complete)
+            self.update_status(RunnerShutdown())
+        except ClosedResourceError:
+            # The supervisor stops listening as soon as it has the acknowledgement
+            self.current_status = RunnerShutdown()
 
     def submit_generation(self, task: GenerationTask):
         assert isinstance(self.generator, Engine)
