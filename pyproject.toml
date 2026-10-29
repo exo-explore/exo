@@ -1,7 +1,7 @@
 [project]
 name = "exo"
 version = "0.3.70"
-description = "Exo"
+description = "EXO connects your devices into one AI cluster."
 readme = "README.md"
 requires-python = "==3.13.*"
 dependencies = [

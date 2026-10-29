@@ -68,58 +68,109 @@ exo includes a built-in dashboard for managing your cluster and chatting with mo
 
 ## Quick Start
 
-Devices running exo automatically discover each other, without needing any manual configuration. Each device provides an API and a dashboard for interacting with your cluster (runs at `http://localhost:52415`).
+Devices running exo find each other automatically, without any manual configuration, when they are on the same network and run the same version of exo (see [Adding another Mac](#adding-another-mac)). Each device provides an API and a dashboard for interacting with your cluster (runs at `http://localhost:52415`).
 
 You can run exo with the macOS app, the easiest way on a Mac, or from source on macOS or Linux.
 
 ### macOS App
 
-exo ships a macOS app that runs in the background on your Mac.
+exo ships a macOS app that runs in the background, in your Mac's menu bar.
 
 <img src="docs/imgs/macos-app-one-macbook.png" alt="exo macOS App - running on a MacBook" width="35%" />
 
-The macOS app requires macOS Tahoe 26.2 or later.
+The app needs a Mac with Apple silicon and macOS Sequoia 15.1 or later. [RDMA over Thunderbolt](#enabling-rdma-on-macos) needs macOS Tahoe 26.2 or later.
 
-Download the latest build here: [EXO-latest.dmg](https://assets.exolabs.net/EXO-latest.dmg).
+Download the latest version: [EXO-latest.dmg](https://assets.exolabs.net/EXO-latest.dmg). Open it, drag EXO to your Applications folder, and open EXO from there. The first time, macOS asks whether you want to open an app downloaded from the internet: click **Open**.
 
-You can also install the latest build with Homebrew:
+You can also install it with Homebrew:
 
 ```bash
 brew install --cask exo
 ```
 
-The app will ask for permission to modify system settings and install a new Network profile. Improvements to this are being worked on.
+#### What EXO asks for, and why
 
-**Custom Namespace for Cluster Isolation:**
+- **Local Network access.** macOS asks whether EXO may find devices on your local network. EXO needs this to find your other devices running exo and share the work with them. If you said no, turn EXO on in System Settings → Privacy & Security → Local Network, then quit and reopen EXO.
+- **Thunderbolt network setup (optional, needs your administrator password).** EXO offers to set up networking for Thunderbolt in its menu when Macs are connected with Thunderbolt cables; you can also do it in Settings › Cluster. Macs that share a Wi-Fi or Ethernet network don't need it. If you agree, EXO installs a small system service (`io.exo.networksetup`) that:
+  - creates a network location called `exo` and switches this Mac to it;
+  - gives each Thunderbolt port its own network service, which gets an address automatically;
+  - turns off Thunderbolt Bridge, which can flood the network with packets when three or more Macs are cabled in a loop.
 
-The macOS app includes a custom namespace feature that allows you to isolate your exo cluster from others on the same network. This is configured through the `EXO_ZENOH_NAMESPACE` setting:
+  The service runs when your Mac starts and about every 30 minutes, to keep these settings in place. The `exo` location starts with default settings, so anything you changed in your usual location (such as a fixed IP address, DNS servers or proxies) doesn't apply while it's in use. To undo the setup, [uninstall EXO](#uninstalling-the-macos-app). To undo it but keep EXO, run the uninstall script described there: it restores your network settings and keeps your downloaded models, and EXO asks again before it sets up the network.
+- **Opening at login.** EXO's welcome window has **Open EXO at login** ticked, so your Mac is ready to work with the others after a restart. Untick it there, or change it later in EXO's Settings › General or in System Settings → General → Login Items & Extensions.
+- **Notifications.** EXO doesn't ask at launch. When an update is ready to install, it leaves a quiet notification in Notification Center; you can turn these off in System Settings → Notifications. You can always check for updates in EXO's menu or Settings.
 
-- **Use cases**:
-  - Running multiple separate exo clusters on the same network
-  - Isolating development/testing clusters from production clusters
-  - Preventing accidental cluster joining
+#### Adding another Mac
 
-- **Configuration**: Access this setting in the app's Advanced settings (or set the `EXO_ZENOH_NAMESPACE` environment variable when running from source)
+1. Install EXO on the other Mac and open it.
+2. Put both Macs on the same local network (Wi-Fi or Ethernet), or connect them with a Thunderbolt cable.
+3. Make sure both Macs run the same version of exo. Devices running different versions don't join each other.
 
-The namespace is logged on startup for debugging purposes.
+The new Mac shows up in the dashboard within a few seconds.
 
-#### Uninstalling the macOS App
+To see which version a Mac runs:
 
-The recommended way to uninstall is through the app itself: click the menu bar icon → Advanced → Uninstall. This cleanly removes all system components.
+- in the app: choose **About EXO** from the menu bar icon, or open **Settings** › **General**;
+- from source: run `uv run exo --version`.
 
-If you've already deleted the app, you can run the standalone uninstaller script:
+The app and a source checkout number their versions differently. The app uses its release number (such as 1.0.71), while a source checkout uses the version in `pyproject.toml` (such as 0.3.70). Because the default [cluster name](#cluster-name) is the version, an app and a source checkout don't join each other by default. To mix them, give every device the same cluster name.
+
+If a Mac doesn't show up:
+
+- check that both Macs run the same version of exo;
+- check that EXO is turned on in System Settings → Privacy & Security → Local Network on both Macs;
+- guest Wi-Fi and some office networks stop devices from seeing each other: try Ethernet or a Thunderbolt cable instead;
+- when exo sees another device that can't join (a different version or cluster name), it notes this in its log, `~/.exo/exo_log/exo.log`.
+
+#### Updating
+
+EXO checks for updates by itself and tells you when one is ready. You can also use **Check for Updates** in EXO's menu or Settings. A Homebrew installation updates itself the same way.
+
+**Update every Mac in your cluster.** Devices running different versions of exo don't join each other, so a Mac you haven't updated yet drops out of the cluster until you update it too.
+
+From source, pull the latest code, rebuild the dashboard and run `uv sync` again, on every device.
+
+#### Cluster name
+
+Devices join each other only when they use the same cluster name (in the CLI, the "namespace"). By default the cluster name is the exo version, which is why every device needs the same version.
+
+To run separate clusters on one network, for example a test cluster next to your main one, give each cluster its own name:
+
+- in the app: open **Settings** › **Cluster** from the menu bar icon and fill in **Cluster name** (leave it on Automatic for the default);
+- from source: run `uv run exo --namespace my-cluster`, or set `EXO_ZENOH_NAMESPACE=my-cluster`.
+
+A custom name replaces the version, so devices with the same custom name try to connect even when their versions differ. Keep them on the same version of exo. The cluster name in use is logged at startup ("Discovery namespace: …").
+
+#### Uninstalling the macOS app
+
+The easiest way is in the app: click the EXO icon in the menu bar, open **Settings** › **General**, and click **Uninstall EXO…**. Enter your administrator password when asked. EXO then:
+
+- removes its network setup service and the `exo` network location, switches your Mac back to the Automatic location and turns Thunderbolt Bridge back on;
+- removes its login item;
+- deletes its data folder, `~/.exo`, but keeps downloaded models in `~/.exo/models` unless you untick **Keep downloaded models**;
+- moves EXO.app to the Trash.
+
+If you've already deleted EXO.app, or removed it with Homebrew, run the uninstall script. You don't need a copy of this repository:
 
 ```bash
-sudo ./app/EXO/uninstall-exo.sh
+curl -fsSLO https://raw.githubusercontent.com/exo-explore/exo/main/app/EXO/uninstall-exo.sh
+sudo bash uninstall-exo.sh                   # keeps downloaded models
+sudo bash uninstall-exo.sh --delete-models   # deletes them too
 ```
 
-This removes:
-- Network setup LaunchDaemon
-- Network configuration script
-- Log files
-- The "exo" network location
+The script removes the network setup service, switches your Mac back to the Automatic location, turns Thunderbolt Bridge back on (recreating it if the network setup removed it), and deletes `~/.exo` except downloaded models. It can't remove the login item: if EXO is still listed in System Settings → General → Login Items & Extensions, remove it there.
 
-**Note:** You'll need to manually remove EXO from Login Items in System Settings → General → Login Items.
+What each way removes:
+
+| Way | Network settings (if you agreed to the Thunderbolt setup) | `~/.exo` | Downloaded models (`~/.exo/models`) |
+|---|---|---|---|
+| **Uninstall EXO** in Settings | Service removed, back to the Automatic location, Thunderbolt Bridge back on | Deleted | Kept, unless you untick **Keep downloaded models** |
+| `uninstall-exo.sh` | Service removed, back to the Automatic location, Thunderbolt Bridge back on | Deleted | Kept, unless you pass `--delete-models` |
+| `brew uninstall --cask exo` | Service removed, but your Mac stays on the `exo` location with Thunderbolt Bridge off | Kept | Kept |
+| `brew uninstall --zap --cask exo` | Same as `brew uninstall`. Also deletes the app's preferences and caches in `~/Library` | Kept (deleted only if empty) | Kept |
+| Moving EXO.app to the Trash | The service removes itself within about 30 minutes, but your Mac stays on the `exo` location with Thunderbolt Bridge off | Kept | Kept |
+
+After `brew uninstall` or moving EXO.app to the Trash, run the uninstall script to restore your network settings and remove `~/.exo`.
 
 ### Run from Source (macOS)
 

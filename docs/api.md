@@ -14,18 +14,16 @@ http://localhost:52415
 
 ## 1. General / Meta Endpoints
 
-### Get Master Node ID
+### Get This Node's ID
 
 **GET** `/node_id`
 
-Returns the identifier of the current master node.
+Returns the ID of the node that serves this API (this device, not necessarily the master), as a bare JSON string. A node picks a new random ID each time EXO starts.
 
 **Response (example):**
 
 ```json
-{
-  "node_id": "node-1234"
-}
+"3f9c2a7e1b5d4c8e9a0f6b2d7c4e1a3b"
 ```
 
 ### Get Cluster State
