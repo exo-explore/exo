@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { exoYellow } from "$lib/utils/brand_colors";
   import type {
     DownloadProgress,
     NodeInfo,
@@ -508,7 +509,7 @@
   <div
     class="bg-exo-dark-gray/60 border {canFit
       ? 'border-exo-yellow/20 group-hover:border-exo-yellow/40'
-      : 'border-red-500/20'} p-3 transition-all duration-200 group-hover:shadow-[0_0_15px_rgba(255,215,0,0.1)]"
+      : 'border-red-500/20'} p-3 transition-all duration-200 group-hover:shadow-[0_0_15px_color-mix(in_srgb,var(--exo-yellow)_10%,transparent)]"
   >
     <!-- Model Name & Memory Required -->
     <div class="flex items-start justify-between gap-2 mb-2">
@@ -658,7 +659,7 @@
       >
         <!-- Scanline effect -->
         <div
-          class="absolute inset-0 bg-[repeating-linear-gradient(0deg,transparent,transparent_2px,rgba(255,215,0,0.02)_2px,rgba(255,215,0,0.02)_4px)] pointer-events-none"
+          class="absolute inset-0 bg-[repeating-linear-gradient(0deg,transparent,transparent_2px,color-mix(in_srgb,var(--exo-yellow)_2%,transparent)_2px,color-mix(in_srgb,var(--exo-yellow)_2%,transparent)_4px)] pointer-events-none"
         ></div>
 
         <svg
@@ -736,7 +737,7 @@
                   y1={node.y}
                   x2={node2.x}
                   y2={node2.y}
-                  stroke={node.isUsed && node2.isUsed ? "#FFD700" : "#374151"}
+                  stroke={node.isUsed && node2.isUsed ? exoYellow() : "#374151"}
                   stroke-width="1"
                   stroke-dasharray={node.isUsed && node2.isUsed ? "4,2" : "2,4"}
                   opacity={node.isUsed && node2.isUsed ? 0.4 : 0.15}
@@ -867,7 +868,7 @@
                     height={node.iconSize * 0.65}
                     rx="2"
                     fill="none"
-                    stroke={node.isUsed ? "#FFD700" : "#4B5563"}
+                    stroke={node.isUsed ? exoYellow() : "#4B5563"}
                     stroke-width="1.5"
                   />
                   <!-- Screen area (memory fill container) -->
@@ -896,7 +897,7 @@
                         node.modelFillHeight}
                       width={node.iconSize - 8}
                       height={node.modelFillHeight}
-                      fill="#FFD700"
+                      fill={exoYellow()}
                       filter="url(#memGlow-{filterId})"
                       class="animate-pulse-slow"
                     />
@@ -908,7 +909,7 @@
                       0.68} L {node.iconSize - 2} {node.iconSize *
                       0.78} L 2 {node.iconSize * 0.78} Z"
                     fill="none"
-                    stroke={node.isUsed ? "#FFD700" : "#4B5563"}
+                    stroke={node.isUsed ? exoYellow() : "#4B5563"}
                     stroke-width="1.5"
                   />
                 </g>
@@ -925,7 +926,7 @@
                     height={node.iconSize - 4}
                     rx="4"
                     fill="none"
-                    stroke={node.isUsed ? "#FFD700" : "#4B5563"}
+                    stroke={node.isUsed ? exoYellow() : "#4B5563"}
                     stroke-width="1.5"
                   />
                   <!-- Memory fill background -->
@@ -953,7 +954,7 @@
                       width={node.iconSize - 8}
                       height={(node.iconSize - 8) *
                         ((node.newPercent - node.currentPercent) / 100)}
-                      fill="#FFD700"
+                      fill={exoYellow()}
                       filter="url(#memGlow-{filterId})"
                       class="animate-pulse-slow"
                     />
@@ -972,7 +973,7 @@
                     height={node.iconSize * 0.4}
                     rx="3"
                     fill="none"
-                    stroke={node.isUsed ? "#FFD700" : "#4B5563"}
+                    stroke={node.isUsed ? exoYellow() : "#4B5563"}
                     stroke-width="1.5"
                   />
                   <!-- Memory fill background -->
@@ -1002,7 +1003,7 @@
                       height={node.iconSize *
                         0.36 *
                         ((node.newPercent - node.currentPercent) / 100)}
-                      fill="#FFD700"
+                      fill={exoYellow()}
                       filter="url(#memGlow-{filterId})"
                       class="animate-pulse-slow"
                     />
@@ -1021,8 +1022,8 @@
                       0.75} {node.iconSize /
                       2},{node.iconSize} 0,{node.iconSize *
                       0.75} 0,{node.iconSize * 0.25}"
-                    fill={node.isUsed ? "rgba(255,215,0,0.1)" : "#0a0a0a"}
-                    stroke={node.isUsed ? "#FFD700" : "#4B5563"}
+                    fill={node.isUsed ? exoYellow(0.1) : "#0a0a0a"}
+                    stroke={node.isUsed ? exoYellow() : "#4B5563"}
                     stroke-width="1.5"
                   />
                 </g>
@@ -1037,7 +1038,7 @@
                 fill={node.isUsed
                   ? node.newPercent > 90
                     ? "#f87171"
-                    : "#FFD700"
+                    : exoYellow()
                   : "#4B5563"}
               >
                 {node.newPercent.toFixed(0)}%

@@ -275,7 +275,7 @@
           <!-- Assistant message header -->
           <div class="flex items-center gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
             <div
-              class="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-exo-yellow rounded-full shadow-[0_0_10px_rgba(255,215,0,0.5)]"
+              class="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-exo-yellow rounded-full shadow-[0_0_10px_color-mix(in_srgb,var(--exo-yellow)_50%,transparent)]"
             ></div>
             <span
               class="text-sm sm:text-xs text-exo-yellow tracking-[0.15em] sm:tracking-[0.2em] uppercase font-medium"

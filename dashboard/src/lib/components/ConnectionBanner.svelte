@@ -14,7 +14,7 @@
   >
     <div class="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
     <span class="text-xs font-mono text-red-300 tracking-wider uppercase">
-      Connection lost &mdash; Reconnecting to backend&hellip;
+      Connection lost &mdash; Reconnecting to EXO&hellip;
     </span>
   </div>
 {/if}

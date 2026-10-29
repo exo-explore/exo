@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { exoYellow } from "$lib/utils/brand_colors";
   import {
     TopologyGraph,
     ChatForm,
@@ -64,7 +65,6 @@
     thunderboltBridgeCycles,
     nodeThunderboltBridge,
     nodeIdentities,
-    isConnected,
     type DownloadProgress,
     type NodeInfo,
     type PlacementPreview,
@@ -3315,25 +3315,8 @@
     }
   }
 
-  // ── Connection status toasts ──
-  let previousConnectionStatus: boolean | null = null;
-
-  $effect(() => {
-    const connected = isConnected();
-    if (previousConnectionStatus !== null) {
-      if (previousConnectionStatus && !connected) {
-        addToast({
-          type: "warning",
-          message: "Connection to server lost",
-          persistent: true,
-        });
-      } else if (!previousConnectionStatus && connected) {
-        dismissByMessage("Connection to server lost");
-        addToast({ type: "success", message: "Connection restored" });
-      }
-    }
-    previousConnectionStatus = connected;
-  });
+  // A lost connection to EXO is shown once, by ConnectionBanner (in the
+  // layout, so on every page); no toast as well
 
   const suggestedPrompts = [
     "Write a poem about the ocean",
@@ -5142,8 +5125,7 @@
                   text-anchor="middle"
                   style="font-size: 14px; font-family: 'SF Mono', ui-monospace, monospace;"
                 >
-                  <tspan fill="rgba(255,215,0,0.9)"
-                    >{userDeviceInfo.memoryGB}</tspan
+                  <tspan fill={exoYellow(0.9)}>{userDeviceInfo.memoryGB}</tspan
                   ><tspan fill="rgba(255,255,255,0.4)">{" "}GB</tspan>
                 </text>
               </g>
@@ -5188,7 +5170,7 @@
                   text-anchor="middle"
                   style="font-size: 14px; font-family: 'SF Mono', ui-monospace, monospace;"
                 >
-                  <tspan fill="rgba(255,215,0,0.9)">{SIMULATED_STUDIO_GB}</tspan
+                  <tspan fill={exoYellow(0.9)}>{SIMULATED_STUDIO_GB}</tspan
                   ><tspan fill="rgba(255,255,255,0.4)">{" "}GB</tspan>
                 </text>
                 <text
@@ -5257,7 +5239,7 @@
                 x={($device1X + $device2X) / 2}
                 y={130}
                 text-anchor="middle"
-                fill="rgba(255,215,0,0.7)"
+                fill={exoYellow(0.7)}
                 style="font-size: 14px; font-family: 'SF Mono', ui-monospace, monospace; font-weight: 500; letter-spacing: 0.02em;"
                 opacity={$combinedLabelOpacity}
               >
@@ -5496,8 +5478,7 @@
               style="transition: transform 0.2s ease, box-shadow 0.3s ease, filter 0.2s ease; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; letter-spacing: 0.02em;"
               onmouseenter={(e) => {
                 e.currentTarget.style.filter = "brightness(1.08)";
-                e.currentTarget.style.boxShadow =
-                  "0 0 30px rgba(255,215,0,0.2)";
+                e.currentTarget.style.boxShadow = `0 0 30px ${exoYellow(0.2)}`;
               }}
               onmouseleave={(e) => {
                 e.currentTarget.style.filter = "brightness(1)";
@@ -6182,7 +6163,7 @@
               <!-- Panel Header -->
               <div class="flex items-center gap-2 mb-4">
                 <div
-                  class="w-2 h-2 bg-exo-yellow rounded-full shadow-[0_0_8px_rgba(255,215,0,0.6)] animate-pulse"
+                  class="w-2 h-2 bg-exo-yellow rounded-full shadow-[0_0_8px_color-mix(in_srgb,var(--exo-yellow)_60%,transparent)] animate-pulse"
                 ></div>
                 <h3
                   class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase"
@@ -6945,7 +6926,7 @@
                         >
                           <span
                             class="rounded-full transition-all {isSelected
-                              ? 'w-6 h-6 bg-exo-yellow shadow-[0_0_10px_rgba(255,215,0,0.6)]'
+                              ? 'w-6 h-6 bg-exo-yellow shadow-[0_0_10px_color-mix(in_srgb,var(--exo-yellow)_60%,transparent)]'
                               : isValid
                                 ? 'w-4 h-4 bg-exo-light-gray/70 mt-1'
                                 : 'w-3 h-3 bg-exo-medium-gray/50 mt-1.5'}"
@@ -7363,7 +7344,7 @@
                 <!-- Panel Header -->
                 <div class="flex items-center gap-2 mb-4">
                   <div
-                    class="w-2 h-2 bg-exo-yellow rounded-full shadow-[0_0_8px_rgba(255,215,0,0.6)] animate-pulse"
+                    class="w-2 h-2 bg-exo-yellow rounded-full shadow-[0_0_8px_color-mix(in_srgb,var(--exo-yellow)_60%,transparent)] animate-pulse"
                   ></div>
                   <h3
                     class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase"
