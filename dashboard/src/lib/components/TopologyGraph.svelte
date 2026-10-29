@@ -302,6 +302,9 @@
       ip: string;
       ifaceLabel: string;
       missingIface: boolean;
+      latencyMs?: number;
+      bandwidthCapacityMbps?: number;
+      usedBandwidthMbps?: number;
     };
     type PairEntry = {
       a: string;
@@ -358,6 +361,9 @@
         ip,
         ifaceLabel,
         missingIface,
+        latencyMs: edge.latencyMs,
+        bandwidthCapacityMbps: edge.bandwidthCapacityMbps,
+        usedBandwidthMbps: edge.usedBandwidthMbps,
       });
       pairMap.set(key, entry);
     });
@@ -368,13 +374,54 @@
       if (!posA || !posB) return;
 
       // Base dashed line
-      linksGroup
+      const baseLine = linksGroup
         .append("line")
         .attr("x1", posA.x)
         .attr("y1", posA.y)
         .attr("x2", posB.x)
         .attr("y2", posB.y)
         .attr("class", "graph-link");
+
+      // Extract telemetry information if available (TODO #4 and #5)
+      const connWithTelemetry =
+        entry.connections.find(
+          (c) =>
+            (c.latencyMs !== undefined && c.latencyMs > 0) ||
+            (c.usedBandwidthMbps !== undefined && c.usedBandwidthMbps > 0),
+        ) || entry.connections[0];
+
+      const latencyVal = connWithTelemetry?.latencyMs;
+      const bwUsageVal = connWithTelemetry?.usedBandwidthMbps;
+      const bwCapVal = connWithTelemetry?.bandwidthCapacityMbps;
+
+      const latencyStr =
+        latencyVal !== undefined && latencyVal > 0
+          ? `${latencyVal.toFixed(1)} ms`
+          : undefined;
+      const bwUsageStr =
+        bwUsageVal !== undefined && bwUsageVal > 0
+          ? `${bwUsageVal.toFixed(1)} MB/s`
+          : undefined;
+      const bwCapStr =
+        bwCapVal !== undefined && bwCapVal > 0
+          ? bwCapVal >= 1000
+            ? `${(bwCapVal / 1000).toFixed(0)} Gbps`
+            : `${bwCapVal.toFixed(0)} Mbps`
+          : undefined;
+
+      const tooltipParts: string[] = [];
+      const linkNames = entry.connections
+        .map(
+          (c) =>
+            `${getNodeDisplayName(c.from)} \u2192 ${getNodeDisplayName(c.to)} (${c.ifaceLabel})`,
+        )
+        .join(", ");
+      tooltipParts.push(`Link: ${linkNames}`);
+      if (latencyStr) tooltipParts.push(`Latency (RTT): ${latencyStr}`);
+      if (bwUsageStr) tooltipParts.push(`Bandwidth Usage: ${bwUsageStr}`);
+      if (bwCapStr) tooltipParts.push(`Link Capacity: ${bwCapStr}`);
+
+      baseLine.append("title").text(tooltipParts.join("\n"));
 
       // Calculate midpoint and direction for arrows
       const dx = posB.x - posA.x;
@@ -415,6 +462,39 @@
           .attr("stroke", "none")
           .attr("fill", "none")
           .attr("marker-end", "url(#arrowhead)");
+      }
+
+      // Render link telemetry badge at midpoint if telemetry is available (TODO #4 and #5)
+      if (latencyStr || bwUsageStr) {
+        const badgeParts = [bwUsageStr, latencyStr].filter(Boolean);
+        const badgeText = badgeParts.join(" · ");
+        const badgeGroup = linksGroup
+          .append("g")
+          .attr("class", "link-telemetry-badge")
+          .attr("transform", `translate(${mx}, ${my})`);
+
+        const badgeWidth = badgeText.length * 6.2 + 14;
+        badgeGroup
+          .append("rect")
+          .attr("x", -badgeWidth / 2)
+          .attr("y", -9)
+          .attr("width", badgeWidth)
+          .attr("height", 18)
+          .attr("rx", 9)
+          .attr("fill", "rgba(18, 18, 24, 0.88)")
+          .attr("stroke", "rgba(255, 255, 255, 0.18)")
+          .attr("stroke-width", "0.75");
+
+        badgeGroup
+          .append("text")
+          .attr("text-anchor", "middle")
+          .attr("dominant-baseline", "central")
+          .attr("font-size", 9)
+          .attr("font-family", "SF Mono, Menlo, monospace")
+          .attr("fill", "rgba(255, 255, 255, 0.85)")
+          .text(badgeText);
+
+        badgeGroup.append("title").text(tooltipParts.join("\n"));
       }
 
       // Collect debug labels for later positioning at edges
@@ -493,7 +573,13 @@
         quadrantEdges.forEach((edge) => {
           edge.connections.forEach((conn) => {
             const arrow = getArrow(conn.from, conn.to);
-            const label = `${arrow} ${conn.ip} ${conn.ifaceLabel}`;
+            let label = `${arrow} ${conn.ip} ${conn.ifaceLabel}`;
+            if (conn.latencyMs !== undefined && conn.latencyMs > 0) {
+              label += ` \u00b7 ${conn.latencyMs.toFixed(1)}ms`;
+            }
+            if (conn.usedBandwidthMbps !== undefined && conn.usedBandwidthMbps > 0) {
+              label += ` \u00b7 ${conn.usedBandwidthMbps.toFixed(1)}MB/s`;
+            }
             debugLabelsGroup
               .append("text")
               .attr("x", baseX)
