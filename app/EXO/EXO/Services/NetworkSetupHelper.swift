@@ -357,7 +357,7 @@ enum NetworkSetupHelper {
             .joined(separator: "\n")
     }
 
-    private static func makeUninstallScript() -> String {
+    static func makeUninstallScript() -> String {
         """
         set -euo pipefail
 
@@ -390,42 +390,72 @@ enum NetworkSetupHelper {
           networksetup -deletelocation exo >/dev/null 2>&1 || true
         } || true
 
-        # Re-enable any Thunderbolt Bridge service if it exists
-        # We find it dynamically by looking for bridges containing Thunderbolt interfaces
-        find_and_enable_thunderbolt_bridge() {
-          # Get Thunderbolt interface devices from hardware ports
-          tb_devices=$(networksetup -listallhardwareports 2>/dev/null | awk '
-            /^Hardware Port:/ { port = tolower(substr($0, 16)) }
-            /^Device:/ { if (port ~ /thunderbolt/) print substr($0, 9) }
-          ') || true
-          [ -z "$tb_devices" ] && return 0
-
-          # For each bridge device, check if it contains Thunderbolt interfaces
-          for bridge in bridge0 bridge1 bridge2; do
-            members=$(ifconfig "$bridge" 2>/dev/null | awk '/member:/ {print $2}') || true
-            [ -z "$members" ] && continue
-
-            for tb_dev in $tb_devices; do
-              if echo "$members" | grep -qx "$tb_dev"; then
-                # Find the service name for this bridge device
-                service_name=$(networksetup -listnetworkserviceorder 2>/dev/null | awk -v dev="$bridge" '
-                  /^\\([0-9*]/ { gsub(/^\\([0-9*]+\\) /, ""); svc = $0 }
-                  /Device:/ && $0 ~ dev { print svc; exit }
-                ') || true
-                if [ -n "$service_name" ]; then
-                  networksetup -setnetworkserviceenabled "$service_name" on 2>/dev/null || true
-                  return 0
-                fi
-              fi
-            done
-          done
-          return 0
-        }
-        find_and_enable_thunderbolt_bridge || true
+        \(restoreThunderboltBridgeScript)
 
         echo "EXO network components removed successfully"
         """
     }
+
+    /// Puts Thunderbolt Bridge back once the Mac is on Automatic again; part
+    /// of the uninstall script. macOS bridges the Mac's Thunderbolt ports as
+    /// bridge0, and the setup script deletes that interface (not just the
+    /// service), so the "Thunderbolt Bridge" service is left with no
+    /// interface. This recreates the interface the way macOS defines it (the
+    /// Thunderbolt ports, with `__AUTO__ = thunderbolt-bridge`) and enables
+    /// the service. A failure here doesn't stop the rest of the uninstall.
+    static let restoreThunderboltBridgeScript = """
+        BRIDGE_DEVICE="bridge0"
+        NETWORK_PREFS="/Library/Preferences/SystemConfiguration/preferences.plist"
+
+        # The service in the current location that uses bridge0, found by
+        # device so a renamed or localised service is found too.
+        bridge_service() {
+          networksetup -listnetworkserviceorder 2>/dev/null | awk -v device="Device: $BRIDGE_DEVICE)" '
+            /^\\([0-9*]+\\) / { service = $0; sub(/^\\([0-9*]+\\) /, "", service) }
+            index($0, device) { print service; exit }
+          '
+        }
+
+        # The Mac's Thunderbolt ports (en2, en3, ...), not counting bridges.
+        thunderbolt_ports() {
+          networksetup -listallhardwareports 2>/dev/null | awk '
+            /^Hardware Port:/ { port = tolower(substr($0, 16)) }
+            /^Device:/ { device = substr($0, 9); if (port ~ /thunderbolt/ && device !~ /^bridge/) print device }
+          '
+        }
+
+        TB_BRIDGE_SERVICE="$(bridge_service)" || TB_BRIDGE_SERVICE=""
+        if [ -n "$TB_BRIDGE_SERVICE" ] &&
+          ! /usr/libexec/PlistBuddy -c "Print :VirtualNetworkInterfaces:Bridge:$BRIDGE_DEVICE" "$NETWORK_PREFS" >/dev/null 2>&1; then
+          TB_PORTS="$(thunderbolt_ports | tr '\\n' ' ')" || TB_PORTS=""
+          if [ -n "$(printf '%s' "$TB_PORTS" | tr -d ' ')" ]; then
+            # Leaving the exo location leaves the Thunderbolt ports down, and
+            # a port that is down can't join a bridge.
+            for port in $TB_PORTS; do
+              ifconfig "$port" up 2>/dev/null || true
+            done
+            scutil --prefs >/dev/null <<EOF_BRIDGE || true
+        d.init
+        d.add Interfaces * $TB_PORTS
+        set /VirtualNetworkInterfaces/Bridge/$BRIDGE_DEVICE
+        d.init
+        d.add __AUTO__ thunderbolt-bridge
+        set /VirtualNetworkInterfaces/Bridge/$BRIDGE_DEVICE/Options
+        commit
+        apply
+        quit
+        EOF_BRIDGE
+          fi
+        fi
+        # Disabled services are listed with a leading "*".
+        if [ -z "$TB_BRIDGE_SERVICE" ] &&
+          networksetup -listallnetworkservices 2>/dev/null | sed 's/^\\*//' | grep -x "Thunderbolt Bridge" >/dev/null; then
+          TB_BRIDGE_SERVICE="Thunderbolt Bridge"
+        fi
+        if [ -n "$TB_BRIDGE_SERVICE" ]; then
+          networksetup -setnetworkserviceenabled "$TB_BRIDGE_SERVICE" on 2>/dev/null || true
+        fi
+        """
 
     /// Direct install without GUI (requires root).
     /// Returns true on success, false on failure.
@@ -482,15 +512,19 @@ enum NetworkSetupHelper {
         }
     }
 
-    private static func runShellAsAdmin(_ script: String) throws {
+    /// AppleScript that runs `script` with `do shell script`, which hands it
+    /// to /bin/sh.
+    static func appleScriptSource(running script: String, asAdministrator: Bool) -> String {
         let escapedScript =
             script
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
+        return "do shell script \"\(escapedScript)\""
+            + (asAdministrator ? " with administrator privileges" : "")
+    }
 
-        let appleScriptSource = """
-            do shell script "\(escapedScript)" with administrator privileges
-            """
+    private static func runShellAsAdmin(_ script: String) throws {
+        let appleScriptSource = appleScriptSource(running: script, asAdministrator: true)
 
         guard let appleScript = NSAppleScript(source: appleScriptSource) else {
             throw NetworkSetupError.scriptCreationFailed
