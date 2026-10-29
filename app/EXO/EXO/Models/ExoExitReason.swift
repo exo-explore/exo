@@ -33,7 +33,7 @@ enum ExoExitReason: Equatable {
         case .alreadyRunning(let pid):
             let which = pid.map { " (PID \($0))" } ?? ""
             return
-                "Another exo is already running on this Mac\(which). Quit it, then click Restart."
+                "Another exo is already running on this Mac\(which). Quit it, then choose Restart EXO."
         case .signal(let signal) where signal == SIGKILL:
             return "exo was killed (signal \(signal))."
         case .signal(let signal) where [SIGTERM, SIGINT, SIGHUP].contains(signal):

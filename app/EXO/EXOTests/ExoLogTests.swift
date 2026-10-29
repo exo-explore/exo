@@ -118,7 +118,7 @@ struct ExoExitReasonTests {
         #expect(exitReason == .alreadyRunning(pid: 4242))
         #expect(
             exitReason.message
-                == "Another exo is already running on this Mac (PID 4242). Quit it, then click Restart."
+                == "Another exo is already running on this Mac (PID 4242). Quit it, then choose Restart EXO."
         )
     }
 
@@ -129,7 +129,7 @@ struct ExoExitReasonTests {
         #expect(exitReason == .alreadyRunning(pid: nil))
         #expect(
             exitReason.message
-                == "Another exo is already running on this Mac. Quit it, then click Restart.")
+                == "Another exo is already running on this Mac. Quit it, then choose Restart EXO.")
     }
 
     @Test func otherErrorsGiveTheExitCode() {

@@ -51,6 +51,11 @@ final class ExoProcessController: ObservableObject {
 
     @Published private(set) var status: Status = .stopped
     @Published private(set) var lastError: String?
+    /// Whether the exo that failed had been running (answering) first: a
+    /// crash, rather than a failed start. Set before `status` changes.
+    private(set) var failedAfterRunning = false
+    /// Whether the current exo has answered since it was started.
+    private var hasAnsweredSinceLaunch = false
     @Published var customNamespace: String = {
         return UserDefaults.standard.string(forKey: customNamespaceKey) ?? ""
     }()
@@ -202,6 +207,7 @@ final class ExoProcessController: ObservableObject {
             cancelPendingLaunch()
             status = .starting
             lastError = nil
+            hasAnsweredSinceLaunch = false
             let runtimeURL = try resolveRuntimeDirectory()
             runtimeDirectoryURL = runtimeURL
 
@@ -247,6 +253,7 @@ final class ExoProcessController: ObservableObject {
                             status: proc.terminationStatus,
                             output: logFile.text(from: logOffset)
                         )
+                        self.failedAfterRunning = self.hasAnsweredSinceLaunch
                         self.status = .failed(message: reason.message)
                         self.lastError = reason.message
                     }
@@ -259,6 +266,7 @@ final class ExoProcessController: ObservableObject {
             startLogRotation()
         } catch {
             process = nil
+            failedAfterRunning = false
             status = .failed(message: "Couldn't start exo: \(error.localizedDescription)")
             lastError = error.localizedDescription
         }
@@ -321,6 +329,7 @@ final class ExoProcessController: ObservableObject {
             guard ready, let self, self.process === child, self.status == .starting else {
                 return
             }
+            self.hasAnsweredSinceLaunch = true
             self.status = .running
         }
     }
