@@ -421,7 +421,7 @@
 				INFOPLIST_KEY_EXOBuildCommit = "$(EXO_BUILD_COMMIT)";
 				INFOPLIST_KEY_EXOBuildTag = "$(EXO_BUILD_TAG)";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "EXO needs to run a signed network setup script with administrator privileges.";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2024–2026 EXO Labs";
 				INFOPLIST_KEY_SUEnableAutomaticChecks = YES;
 				INFOPLIST_KEY_SUFeedURL = "$(SPARKLE_FEED_URL)";
 				INFOPLIST_KEY_SUPublicEDKey = "$(SPARKLE_ED25519_PUBLIC)";
@@ -458,7 +458,7 @@
 				INFOPLIST_KEY_EXOBuildCommit = "$(EXO_BUILD_COMMIT)";
 				INFOPLIST_KEY_EXOBuildTag = "$(EXO_BUILD_TAG)";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "EXO needs to run a signed network setup script with administrator privileges.";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2024–2026 EXO Labs";
 				INFOPLIST_KEY_SUEnableAutomaticChecks = YES;
 				INFOPLIST_KEY_SUFeedURL = "$(SPARKLE_FEED_URL)";
 				INFOPLIST_KEY_SUPublicEDKey = "$(SPARKLE_ED25519_PUBLIC)";

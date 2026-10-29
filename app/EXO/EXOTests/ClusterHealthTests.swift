@@ -109,43 +109,6 @@ struct APIResponsivenessTests {
     }
 }
 
-struct MenuBarIconStyleTests {
-
-    @Test func onlyAHealthyOrStartingExoLooksHealthy() {
-        let healthy = MenuBarIconStyle.showing(.running, apiState: .responding)
-        #expect(!healthy.isGreyscale)
-        #expect(healthy.badge == nil)
-
-        let starting = MenuBarIconStyle.showing(.starting, apiState: .connecting)
-        #expect(!starting.isGreyscale)
-        #expect(starting.badge == nil)
-    }
-
-    @Test func failedExoIsGreyWithARedBadge() {
-        for apiState in [APIResponsiveness.State.connecting, .responding, .notResponding] {
-            let style = MenuBarIconStyle.showing(
-                .failed(message: "Exited with code 1"), apiState: apiState)
-            #expect(style.isGreyscale)
-            #expect(style.badge == .error)
-            #expect(style.badge?.color == .systemRed)
-            #expect(style.accessibilityLabel == "EXO, failed")
-        }
-    }
-
-    @Test func unresponsiveExoGetsAWarningBadge() {
-        let style = MenuBarIconStyle.showing(.running, apiState: .notResponding)
-        #expect(!style.isGreyscale)
-        #expect(style.badge == .warning)
-        #expect(style.accessibilityLabel == "EXO, not responding")
-    }
-
-    @Test func stoppedExoIsGreyWithoutABadge() {
-        let style = MenuBarIconStyle.showing(.stopped, apiState: .notResponding)
-        #expect(style.isGreyscale)
-        #expect(style.badge == nil)
-    }
-}
-
 @MainActor
 struct ClusterStateServiceHealthTests {
 

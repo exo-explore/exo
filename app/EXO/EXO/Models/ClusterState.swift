@@ -5,7 +5,6 @@ import Foundation
 struct ClusterState: Decodable {
     let instances: [String: ClusterInstance]
     let runners: [String: RunnerStatusSummary]
-    let tasks: [String: ClusterTask]
     let topology: Topology?
     let downloads: [String: [NodeDownloadStatus]]
     let thunderboltBridgeCycles: [[String]]
@@ -43,9 +42,6 @@ struct ClusterState: Decodable {
         let rawInstances = try container.decode([String: TaggedInstance].self, forKey: .instances)
         self.instances = rawInstances.mapValues(\.instance)
         self.runners = try container.decode([String: RunnerStatusSummary].self, forKey: .runners)
-        let rawTasks =
-            try container.decodeIfPresent([String: TaggedTask].self, forKey: .tasks) ?? [:]
-        self.tasks = rawTasks.compactMapValues(\.task)
         self.topology = try container.decodeIfPresent(Topology.self, forKey: .topology)
         let rawDownloads =
             try container.decodeIfPresent([String: [TaggedNodeDownload]].self, forKey: .downloads)
@@ -76,7 +72,6 @@ struct ClusterState: Decodable {
         case instances
         case runners
         case topology
-        case tasks
         case downloads
         case thunderboltBridgeCycles
         case nodeIdentities
@@ -255,16 +250,35 @@ private struct TaggedNodeDownload: Decodable {
 struct NodeDownloadPayload: Decodable {
     let nodeId: String?
     let downloadProgress: DownloadProgress?
+    /// Tagged by kind, e.g. {"PipelineShardMetadata": {"modelCard": ...}}.
+    let shardMetadata: [String: ShardMetadataPayload]?
+}
+
+struct ShardMetadataPayload: Decodable {
+    struct ModelCard: Decodable {
+        let modelId: String?
+    }
+
+    let modelCard: ModelCard?
 }
 
 struct NodeDownloadStatus {
     let nodeId: String
+    /// The model being downloaded.
+    let modelId: String?
     let progress: DownloadProgress?
 
     init?(statusKey: String, payload: NodeDownloadPayload) {
         guard let nodeId = payload.nodeId else { return nil }
         self.nodeId = nodeId
+        self.modelId = payload.shardMetadata?.values.first?.modelCard?.modelId
         self.progress = statusKey == "DownloadOngoing" ? payload.downloadProgress : nil
+    }
+
+    init(nodeId: String, modelId: String?, progress: DownloadProgress?) {
+        self.nodeId = nodeId
+        self.modelId = modelId
+        self.progress = progress
     }
 }
 
@@ -287,190 +301,4 @@ struct FileDownloadProgress: Decodable {
     let downloadedBytes: ByteValue
     let speed: Double?
     let etaMs: Int64?
-}
-
-// MARK: - Tasks
-
-struct ClusterTask {
-    enum Kind {
-        case chatCompletion
-    }
-
-    let id: String
-    let status: TaskStatus
-    let instanceId: String?
-    let kind: Kind
-    let modelName: String?
-    let promptPreview: String?
-    let errorMessage: String?
-    let parameters: TextGenerationTaskParameters?
-
-    var sortPriority: Int {
-        switch status {
-        case .running:
-            return 0
-        case .pending:
-            return 1
-        case .complete:
-            return 2
-        case .failed:
-            return 3
-        case .unknown:
-            return 4
-        }
-    }
-}
-
-private struct TaggedTask: Decodable {
-    let task: ClusterTask?
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        let payloads = try container.decode([String: ClusterTaskPayload].self)
-        guard let entry = payloads.first else {
-            task = nil
-            return
-        }
-        task = ClusterTask(kindKey: entry.key, payload: entry.value)
-    }
-}
-
-struct ClusterTaskPayload: Decodable {
-    let taskId: String?
-    let taskStatus: TaskStatus?
-    let instanceId: String?
-    let commandId: String?
-    let taskParams: TextGenerationTaskParameters?
-    let errorType: String?
-    let errorMessage: String?
-}
-
-struct TextGenerationTaskParameters: Decodable, Equatable {
-    let model: String?
-    let messages: [ChatCompletionMessage]?
-    let maxTokens: Int?
-    let stream: Bool?
-    let temperature: Double?
-    let topP: Double?
-
-    private enum CodingKeys: String, CodingKey {
-        case model
-        case messages
-        case maxTokens
-        case stream
-        case temperature
-        case topP
-    }
-
-    func promptPreview() -> String? {
-        guard let messages else { return nil }
-        if let userMessage = messages.last(where: {
-            $0.role?.lowercased() == "user" && ($0.content?.isEmpty == false)
-        }) {
-            return userMessage.content
-        }
-        return messages.last?.content
-    }
-
-}
-
-struct ChatCompletionMessage: Decodable, Equatable {
-    let role: String?
-    let content: String?
-}
-
-extension ClusterTask {
-    init?(kindKey: String, payload: ClusterTaskPayload) {
-        guard let id = payload.taskId else { return nil }
-        let status = payload.taskStatus ?? .unknown
-        switch kindKey {
-        case "TextGeneration":
-            self.init(
-                id: id,
-                status: status,
-                instanceId: payload.instanceId,
-                kind: .chatCompletion,
-                modelName: payload.taskParams?.model,
-                promptPreview: payload.taskParams?.promptPreview(),
-                errorMessage: payload.errorMessage,
-                parameters: payload.taskParams
-            )
-        default:
-            return nil
-        }
-    }
-}
-
-enum TaskStatus: String, Decodable {
-    case pending = "Pending"
-    case running = "Running"
-    case complete = "Complete"
-    case failed = "Failed"
-    case unknown
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        let value = try container.decode(String.self)
-        self = TaskStatus(rawValue: value) ?? .unknown
-    }
-
-    var displayLabel: String {
-        switch self {
-        case .pending, .running, .complete, .failed:
-            return rawValue
-        case .unknown:
-            return "Unknown"
-        }
-    }
-}
-
-// MARK: - Derived summaries
-
-struct ClusterOverview {
-    let totalRam: Double
-    let usedRam: Double
-    let nodeCount: Int
-    let instanceCount: Int
-}
-
-struct NodeSummary: Identifiable {
-    let id: String
-    let friendlyName: String
-    let model: String
-    let usedRamGB: Double
-    let totalRamGB: Double
-    let gpuUsagePercent: Double
-    let temperatureCelsius: Double
-}
-
-struct InstanceSummary: Identifiable {
-    let id: String
-    let modelId: String
-    let nodeCount: Int
-    let statusText: String
-}
-
-extension ClusterState {
-    func overview() -> ClusterOverview {
-        var total: Double = 0
-        var available: Double = 0
-        for profile in nodeProfiles.values {
-            if let totalBytes = profile.memory?.ramTotal?.inBytes {
-                total += Double(totalBytes)
-            }
-            if let availableBytes = profile.memory?.ramAvailable?.inBytes {
-                available += Double(availableBytes)
-            }
-        }
-        let totalGB = total / 1_073_741_824.0
-        let usedGB = max(total - available, 0) / 1_073_741_824.0
-        return ClusterOverview(
-            totalRam: totalGB,
-            usedRam: usedGB,
-            nodeCount: nodeProfiles.count,
-            instanceCount: instances.count
-        )
-    }
-
-    func availableModels() -> [ModelOption] { [] }
 }

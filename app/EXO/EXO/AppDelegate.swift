@@ -12,6 +12,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Stops exo and returns once it has exited. Set by `EXOApp`.
     static var stopExoBeforeQuitting: (@MainActor () async -> Void)?
+    /// Shows something when EXO.app is opened again while it runs. Set by
+    /// `EXOApp`.
+    static var onReopen: (@MainActor () -> Void)?
+
+    /// Opening EXO.app from Finder or Spotlight while it runs. The menu bar
+    /// icon can be hidden (by the notch, or under System Settings › Menu
+    /// Bar), so this must show something rather than nothing.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool)
+        -> Bool
+    {
+        Self.onReopen?()
+        return false
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Self.launchKind = AppLaunchKind.ofCurrentAppleEvent()
