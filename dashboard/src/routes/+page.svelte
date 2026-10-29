@@ -268,7 +268,7 @@
     return node?.friendly_name || nodeId.slice(0, 8) + "...";
   }
 
-  // Helper to get the thunderbolt bridge service name from a cycle
+  // Helper to get the thunderbolt bridge service name from a loop (cycle in the API)
   function getTbBridgeServiceName(cycle: string[]): string {
     // Try to find service name from any node in the cycle
     for (const nodeId of cycle) {
@@ -396,7 +396,7 @@
   const titleOpacity = tweened(0, { duration: 500, easing: cubicOut });
   const subtitleOpacity = tweened(0, { duration: 500, easing: cubicOut });
 
-  // ── Step 1: "Your EXO Network" — show real topology ──
+  // ── Step 1: "Your cluster" — show real topology ──
   $effect(() => {
     if (onboardingStep === 1) {
       showContinueButton = false;
@@ -495,7 +495,7 @@
     }
   });
 
-  // ── Step 3: "exo splits the model" — model block appears, splits ──
+  // ── Step 3: "EXO splits the model" — model block appears, splits ──
   $effect(() => {
     if (onboardingStep === 3) {
       showContinueButton = false;
@@ -506,7 +506,7 @@
       titleOpacity.set(0, { duration: 250 });
       subtitleOpacity.set(0, { duration: 250 });
       setTimeout(() => {
-        stepTitle = "exo splits models across devices";
+        stepTitle = "EXO splits models across devices";
         titleOpacity.set(1, { duration: 400 });
         subtitleOpacity.set(1, { duration: 400 });
       }, 250);
@@ -531,7 +531,7 @@
     }
   });
 
-  // ── Step 4: "A device disconnects... relaunch on the remaining devices" ──
+  // ── Step 4: "A device disconnects... start it again on the remaining devices" ──
   $effect(() => {
     if (onboardingStep === 4) {
       showContinueButton = false;
@@ -560,13 +560,13 @@
         modelBlockOpacity.set(0.25); // The model stops with the device
       }, 1600);
 
-      // Phase 2: Relaunch on what is left — crossfade title + subtitle
+      // Phase 2: Start again on what is left — crossfade title + subtitle
       const t4 = setTimeout(() => {
         titleOpacity.set(0, { duration: 250 });
         subtitleOpacity.set(0, { duration: 250 });
       }, 2550);
       const t4b = setTimeout(() => {
-        stepTitle = "Relaunch on the remaining devices";
+        stepTitle = "Start it again on the remaining devices";
         titleOpacity.set(1, { duration: 400 });
         subtitleOpacity.set(1, { duration: 400 });
       }, 2800);
@@ -577,7 +577,7 @@
       const t6 = setTimeout(() => {
         modelSplitProgress.set(0);
         modelBlockY.set(20); // Lift up while merging
-        modelBlockOpacity.set(1); // Relaunched on the remaining device
+        modelBlockOpacity.set(1); // Started again on the remaining device
         connectionIsRed.set(0);
       }, 3700);
       const t7 = setTimeout(() => {
@@ -745,7 +745,7 @@
   const ONBOARDING_FAILED_GIVE_UP_MS = 45_000;
 
   function getOnboardingModelName(): string {
-    return onboardingModelId?.split("/").pop() ?? onboardingModelId ?? "Model";
+    return onboardingModelId ? getModelDisplayName(onboardingModelId) : "Model";
   }
 
   function resetOnboardingLaunchTracking() {
@@ -854,7 +854,7 @@
       });
       if (!response.ok) {
         const errorText = await readApiErrorMessage(response);
-        onboardingError = `Failed to launch: ${errorText}`;
+        onboardingError = `Couldn't start ${getModelDisplayName(modelId)}: ${errorText}`;
         onboardingStep = 6;
         return;
       }
@@ -1321,10 +1321,11 @@
     );
   }
 
-  // Same labels as the Interconnect options under Advanced Options
+  // What a connection type is called everywhere: the Connection options
+  // under Advanced Options, the start cards and the running-model cards
   const RUNTIME_LABELS: Record<InstanceMeta, string> = {
-    MlxRing: "TCP/IP",
-    MlxJaccl: "RDMA (Fast)",
+    MlxRing: "Standard (TCP/IP)",
+    MlxJaccl: "RDMA over Thunderbolt",
   };
 
   // Plain-language version of a placement error reported by the backend.
@@ -1660,10 +1661,13 @@
         console.error("Failed to launch instance:", errorText);
         addToast({
           type: "error",
-          message: `Failed to launch model: ${errorText}`,
+          message: `Couldn't start ${getModelDisplayName(modelId)}: ${errorText}`,
         });
       } else {
-        addToast({ type: "info", message: `Launching model...` });
+        addToast({
+          type: "info",
+          message: `Starting ${getModelDisplayName(modelId)}…`,
+        });
         // Always auto-select the newly launched model so the user chats to what they just launched
         setSelectedChatModel(modelId);
         userForcedIdle = false;
@@ -1691,7 +1695,7 @@
       console.error("Error launching instance:", error);
       addToast({
         type: "error",
-        message: "Failed to launch model. Check console for details.",
+        message: `Couldn't start ${getModelDisplayName(modelId)}. The browser console has details.`,
       });
     } finally {
       launchingModelId = null;
@@ -2063,7 +2067,7 @@
     | "Downloading"
     | "Starting"
     | "Ready"
-    | "Error"
+    | "Failed"
     | "Stopping";
 
   function getInstanceStatusLabel(statusText: string): InstanceStatusLabel {
@@ -2075,7 +2079,7 @@
       case "RUNNING":
         return "Ready";
       case "FAILED":
-        return "Error";
+        return "Failed";
       case "SHUTDOWN":
       case "SHUTTING DOWN":
         return "Stopping";
@@ -2085,32 +2089,55 @@
     }
   }
 
-  // Derive instance status from runners
-  // Get color class for a status
-  function getStatusColor(statusText: string): string {
-    switch (statusText) {
-      case "FAILED":
-        return "text-red-400";
-      case "SHUTDOWN":
-      case "SHUTTING DOWN":
-        return "text-gray-400";
-      case "DOWNLOADING":
-        return "text-blue-400";
-      case "LOADING":
-      case "WARMING UP":
-      case "CONNECTING":
-      case "CONNECTED":
-      case "INITIALIZING":
-        return "text-yellow-400";
-      case "RUNNING":
-        return "text-teal-400";
-      case "READY":
-      case "LOADED":
-        return "text-green-400";
-      default:
-        return "text-exo-light-gray";
+  // One colour per status, the same everywhere a running model is shown and
+  // always next to the status word: Downloading blue, Starting yellow, Ready
+  // green, Failed red, Stopping grey. Full class names, so Tailwind keeps them.
+  const STATUS_COLORS: Record<
+    InstanceStatusLabel,
+    {
+      text: string;
+      badge: string;
+      dot: string;
+      corner: string;
+      card: string;
     }
-  }
+  > = {
+    Downloading: {
+      text: "text-blue-400",
+      badge: "bg-blue-500/15 text-blue-400",
+      dot: "bg-blue-400 animate-pulse",
+      corner: "border-blue-500/50",
+      card: "border-blue-500/30 border-l-blue-400 group-hover:border-blue-500/50",
+    },
+    Starting: {
+      text: "text-yellow-400",
+      badge: "bg-yellow-500/15 text-yellow-400",
+      dot: "bg-yellow-400 animate-pulse",
+      corner: "border-yellow-500/50",
+      card: "border-yellow-500/30 border-l-yellow-400 group-hover:border-yellow-500/50",
+    },
+    Ready: {
+      text: "text-green-400",
+      badge: "bg-green-500/15 text-green-400",
+      dot: "bg-green-400",
+      corner: "border-green-500/50",
+      card: "border-green-500/30 border-l-green-400 group-hover:border-green-500/50",
+    },
+    Failed: {
+      text: "text-red-400",
+      badge: "bg-red-500/15 text-red-400",
+      dot: "bg-red-400",
+      corner: "border-red-500/50",
+      card: "border-red-500/30 border-l-red-400 group-hover:border-red-500/50",
+    },
+    Stopping: {
+      text: "text-gray-400",
+      badge: "bg-gray-500/15 text-gray-400",
+      dot: "bg-gray-400",
+      corner: "border-gray-500/50",
+      card: "border-gray-500/30 border-l-gray-400 group-hover:border-gray-500/50",
+    },
+  };
 
   // How a runner fails when another runner of its instance stops: the ring or
   // JACCL connection to it breaks. The reason is on the other device.
@@ -2335,8 +2362,7 @@
   async function deleteInstance(instanceId: string) {
     // Get the model ID of the instance being deleted before we delete it
     const deletedInstanceModelId = getInstanceModelId(instanceData[instanceId]);
-    const shortName =
-      deletedInstanceModelId.split("/").pop() ?? deletedInstanceModelId;
+    const shortName = getModelDisplayName(deletedInstanceModelId);
     if (!confirm(`Stop ${shortName}? Downloaded files are kept.`)) return;
     const wasSelected = selectedChatModel() === deletedInstanceModelId;
 
@@ -2404,6 +2430,18 @@
     return [null, null];
   }
 
+  // What people call a model: its base model ("Llama 3.2 1B"), or the end of
+  // its repo id when the catalogue doesn't name it. The repo id stays in
+  // tooltips and details.
+  function getModelDisplayName(modelId: string): string {
+    const model = models.find((m) => m.id === modelId);
+    return model?.base_model || modelId.split("/").pop() || modelId;
+  }
+
+  function getModelQuantization(modelId: string): string | null {
+    return models.find((m) => m.id === modelId)?.quantization || null;
+  }
+
   // Get model ID from an instance
   function getInstanceModelId(instanceWrapped: unknown): string {
     const [, instance] = getTagged(instanceWrapped);
@@ -2412,7 +2450,7 @@
     return inst.shardAssignments?.modelId || "Unknown Model";
   }
 
-  // Get instance details: type (MLX Ring/IBV), sharding (Pipeline/Tensor), and node names
+  // Get instance details: connection label, sharding (Pipeline/Tensor), and node names
   function getInstanceInfo(instanceWrapped: unknown): {
     instanceType: string;
     sharding: string;
@@ -2431,10 +2469,12 @@
       };
     }
 
-    // Instance type from tag
+    // Connection type from tag, with the same labels as the launch panel
     let instanceType = "Unknown";
-    if (instanceTag === "MlxRingInstance") instanceType = "MLX Ring";
-    else if (instanceTag === "MlxJacclInstance") instanceType = "MLX RDMA";
+    if (instanceTag === "MlxRingInstance")
+      instanceType = RUNTIME_LABELS.MlxRing;
+    else if (instanceTag === "MlxJacclInstance")
+      instanceType = RUNTIME_LABELS.MlxJaccl;
 
     const inst = instance as {
       shardAssignments?: {
@@ -2831,8 +2871,8 @@
   const instanceCount = $derived(Object.keys(instanceData).length);
 
   // ── "Add a device" hint ──
-  // A device that stays alone usually means the other Mac isn't running exo,
-  // is on another network, or runs another exo version (devices only find
+  // A device that stays alone usually means the other Mac isn't running EXO,
+  // is on another network, or runs another EXO version (devices only find
   // each other on the same version). Wait a while first: peers can take a
   // few seconds to show up after startup.
   const ADD_DEVICE_HINT_DISMISSED_KEY = "exo-add-device-hint-dismissed";
@@ -2908,7 +2948,7 @@
 
         const modelId = getInstanceModelId(instanceData[id]);
         const shortName = modelId
-          ? (modelId.split("/").pop() ?? modelId)
+          ? getModelDisplayName(modelId)
           : id.slice(0, 8);
 
         // Downloading -> non-downloading, non-failure = download complete
@@ -2919,7 +2959,7 @@
         ) {
           addToast({
             type: "success",
-            message: `Download complete: ${shortName}`,
+            message: `${shortName} downloaded`,
           });
         }
 
@@ -2930,7 +2970,7 @@
             currentStatus === "LOADED" ||
             currentStatus === "RUNNING")
         ) {
-          addToast({ type: "success", message: `Model ready: ${shortName}` });
+          addToast({ type: "success", message: `${shortName} is ready` });
         }
 
         if (currentStatus === "READY" || currentStatus === "RUNNING") {
@@ -2950,7 +2990,7 @@
 
         // Any -> Shutdown
         if (prevStatus !== "SHUTDOWN" && currentStatus === "SHUTDOWN") {
-          addToast({ type: "info", message: `Model shut down: ${shortName}` });
+          addToast({ type: "info", message: `${shortName} stopped` });
         }
       }
 
@@ -2974,8 +3014,8 @@
         addToast({
           type: "error",
           message: reason
-            ? `Model failed: ${shortName} — ${reason}`
-            : `Model failed: ${shortName}`,
+            ? `${shortName} failed: ${reason}`
+            : `${shortName} failed`,
         });
       }
     }
@@ -3016,11 +3056,11 @@
           : null,
       };
     }
-    // A model that is back (relaunched from anywhere) no longer needs its
-    // "stopped" toasts, whose Relaunch would start a duplicate
+    // A model that is back (started again from anywhere) no longer needs its
+    // "stopped" toasts, whose Start again would start a duplicate
     for (const [id, instance] of Object.entries(current)) {
       if (previousInstanceSnapshot[id]) continue;
-      const shortName = instance.modelId.split("/").pop() ?? instance.modelId;
+      const shortName = getModelDisplayName(instance.modelId);
       dismissByMessage(lostInstanceMessage(shortName, true));
       dismissByMessage(lostInstanceMessage(shortName, false));
     }
@@ -3029,12 +3069,12 @@
       if (current[id] || userDeletedInstanceIds.delete(id)) continue;
       if (lost.modelId === "Unknown" || lost.modelId === "Unknown Model")
         continue;
-      const shortName = lost.modelId.split("/").pop() ?? lost.modelId;
+      const shortName = getModelDisplayName(lost.modelId);
       const deviceLeft =
         connectedNodeIds.size > 0 &&
         lost.nodeIds.some((nodeId) => !connectedNodeIds.has(nodeId));
       if (!deviceLeft && lost.failed) {
-        // The worker gave up after retrying; relaunching would fail the same way
+        // The worker gave up after retrying; starting again would fail the same way
         addToast({
           type: "error",
           message: lost.failureReason
@@ -3048,7 +3088,7 @@
         message: lostInstanceMessage(shortName, deviceLeft),
         persistent: deviceLeft,
         action: {
-          label: "Relaunch",
+          label: "Start again",
           onClick: () => relaunchLostModel(lost.modelId),
         },
       });
@@ -3062,17 +3102,20 @@
       : `${shortName} stopped`;
   }
 
-  // Relaunch a lost model on the devices that are left. Only takes over the
-  // chat view when it's the model being chatted with.
+  // Start a lost model again on the devices that are left. Only takes over
+  // the chat view when it's the model being chatted with.
   async function relaunchLostModel(modelId: string) {
     if (selectedChatModel() === modelId) {
       launchModelForChat(modelId, "picker", true);
       return;
     }
-    const shortName = modelId.split("/").pop() ?? modelId;
-    // Already relaunched (from the picker, another tab or another toast)
+    const shortName = getModelDisplayName(modelId);
+    // Already started again (from the picker, another tab or another toast)
     if (hasExistingInstance(modelId)) {
-      addToast({ type: "info", message: `${shortName} is already launched` });
+      addToast({
+        type: "info",
+        message: `${shortName} has already been started`,
+      });
       return;
     }
     try {
@@ -3082,7 +3125,7 @@
       if (!res.ok) {
         addToast({
           type: "error",
-          message: `Couldn't relaunch ${shortName} (HTTP ${res.status})`,
+          message: `Couldn't start ${shortName} again (HTTP ${res.status})`,
         });
         return;
       }
@@ -3093,7 +3136,7 @@
       if (!placement) {
         addToast({
           type: "error",
-          message: `Couldn't relaunch ${shortName}: it doesn't fit on the devices that are left`,
+          message: `Couldn't start ${shortName} again: it doesn't fit on the devices that are left`,
         });
         return;
       }
@@ -3105,16 +3148,16 @@
       if (!launchRes.ok) {
         addToast({
           type: "error",
-          message: `Couldn't relaunch ${shortName} (HTTP ${launchRes.status})`,
+          message: `Couldn't start ${shortName} again (HTTP ${launchRes.status})`,
         });
         return;
       }
       recordRecentLaunch(modelId);
-      addToast({ type: "info", message: `Relaunching ${shortName}…` });
+      addToast({ type: "info", message: `Starting ${shortName} again…` });
     } catch (error) {
       addToast({
         type: "error",
-        message: `Couldn't relaunch ${shortName}: ${error}`,
+        message: `Couldn't start ${shortName} again: ${error}`,
       });
     }
   }
@@ -3306,7 +3349,7 @@
       return instanceCount === 0 ? "Select a model to get started." : null;
     }
     if (hasExistingInstance(modelId)) return null;
-    const name = modelId.split("/").pop() ?? modelId;
+    const name = getModelDisplayName(modelId);
     const onDisk = getModelDownloadStatus(modelId).perNode.some(
       (node) => node.status === "completed",
     );
@@ -3418,7 +3461,7 @@
         addToast({
           type: "error",
           message: reason
-            ? `Can't launch ${modelId.split("/").pop() ?? modelId}: ${reason}`
+            ? `Can't start ${getModelDisplayName(modelId)}: ${reason}`
             : "No valid placement found for this model",
         });
         chatLaunchState = "idle";
@@ -3434,7 +3477,7 @@
       if (!launchRes.ok) {
         addToast({
           type: "error",
-          message: `Failed to launch: ${await readApiErrorMessage(launchRes)}`,
+          message: `Couldn't start ${getModelDisplayName(modelId)}: ${await readApiErrorMessage(launchRes)}`,
         });
         chatLaunchState = "idle";
         return false;
@@ -3491,7 +3534,7 @@
       addToast({
         type: "error",
         message: chosenModelId
-          ? `${chosenModelId.split("/").pop()} is no longer available`
+          ? `${getModelDisplayName(chosenModelId)} is no longer available`
           : "No model fits in your available memory",
       });
       restoreChatDraft(content, files);
@@ -3552,7 +3595,7 @@
         addToast({
           type: "error",
           message: reason
-            ? `Can't launch ${autoModel.id.split("/").pop() ?? autoModel.id}: ${reason}`
+            ? `Can't start ${getModelDisplayName(autoModel.id)}: ${reason}`
             : "No valid placement found",
         });
         chatLaunchState = "idle";
@@ -3613,7 +3656,7 @@
       if (!launchRes.ok) {
         addToast({
           type: "error",
-          message: `Failed to launch: ${await readApiErrorMessage(launchRes)}`,
+          message: `Couldn't start ${getModelDisplayName(autoModel.id)}: ${await readApiErrorMessage(launchRes)}`,
         });
         chatLaunchState = "idle";
         return;
@@ -3681,7 +3724,7 @@
     );
     const formatGB = (gb: number) =>
       gb >= 10 ? `${Math.round(gb)}` : gb.toFixed(1);
-    const shortName = (id: string) => id.split("/").pop() ?? id;
+    const shortName = getModelDisplayName;
     return new Promise((resolve) => {
       downloadChoicePrompt = {
         modelName: shortName(modelId),
@@ -4174,7 +4217,7 @@
     saveLaunchDefaults();
   }
 
-  // Remembered non-default launch settings, shown while Advanced Options is closed
+  // Remembered non-default start settings, shown while Advanced Options is closed
   const customLaunchSettingsLabel = $derived.by(() => {
     if (
       selectedSharding === "Pipeline" &&
@@ -4258,7 +4301,7 @@
               />
             </svg>
             <span class="text-sm font-mono text-yellow-200">
-              THUNDERBOLT BRIDGE CYCLE DETECTED
+              THUNDERBOLT BRIDGE LOOP DETECTED
             </span>
           </div>
 
@@ -4267,16 +4310,16 @@
             class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
           >
             <p class="text-xs text-white/80 mb-2">
-              A network routing cycle was detected between nodes connected via
-              Thunderbolt Bridge. This can cause connectivity issues.
+              A Thunderbolt Bridge loop was detected between devices connected
+              with Thunderbolt. This can cause connectivity issues.
             </p>
             <p class="text-xs text-white/60 mb-2">
-              <span class="text-yellow-300">Affected nodes:</span>
+              <span class="text-yellow-300">Affected devices:</span>
               {cycle.map(getNodeName).join(" → ")}
             </p>
             <p class="text-xs text-white/60 mb-1">
-              <span class="text-yellow-300">To fix:</span> Disable the Thunderbolt
-              Bridge on one of the affected nodes:
+              <span class="text-yellow-300">To fix:</span> Turn off Thunderbolt Bridge
+              on one of the affected devices:
             </p>
             <button
               type="button"
@@ -4339,11 +4382,11 @@
             class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
           >
             <p class="text-xs text-white/80 mb-2">
-              Nodes in this cluster are running different macOS versions. This
-              may cause inference compatibility issues.
+              Devices in this cluster are running different macOS versions. This
+              may cause compatibility issues when running models.
             </p>
             <div class="text-xs text-white/60 mb-2">
-              <span class="text-yellow-300">Node versions:</span>
+              <span class="text-yellow-300">macOS versions:</span>
               {#each macosVersionMismatch as node}
                 <div class="ml-2">
                   {node.friendlyName} — macOS {node.version} ({node.buildVersion})
@@ -4351,7 +4394,7 @@
               {/each}
             </div>
             <p class="text-xs text-white/60">
-              <span class="text-yellow-300">Suggested action:</span> Update all nodes
+              <span class="text-yellow-300">Suggested action:</span> Update all devices
               to the same macOS version for best compatibility.
             </p>
           </div>
@@ -4405,8 +4448,8 @@
             class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
           >
             <p class="text-xs text-white/80 mb-2">
-              Thunderbolt 5 hardware detected on multiple nodes. Enable RDMA for
-              significantly faster inter-node communication.
+              Thunderbolt 5 hardware detected on multiple devices. Enable RDMA
+              for much faster communication between devices.
             </p>
             <p class="text-xs text-white/60 mb-1.5">
               <span class="text-yellow-300">To enable:</span>
@@ -4414,7 +4457,7 @@
             <ol
               class="text-xs text-white/60 list-decimal list-inside space-y-0.5 mb-1.5"
             >
-              <li>Connect nodes with TB5 cables</li>
+              <li>Connect devices with Thunderbolt 5 cables</li>
               <li>Boot to Recovery (hold power 10s → Options)</li>
               <li>Open Terminal from the Utilities menu</li>
               <li>
@@ -4689,7 +4732,7 @@
       {#if tbBridgeCycles.length > 0}
         <div
           class="flex items-center gap-1.5 px-2 py-1 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm"
-          title="Thunderbolt Bridge cycle detected"
+          title="Thunderbolt Bridge loop detected"
         >
           <svg
             class="w-3.5 h-3.5 text-yellow-400"
@@ -4704,7 +4747,7 @@
               d={warningIconPath}
             />
           </svg>
-          <span class="text-[10px] font-mono text-yellow-200">TB CYCLE</span>
+          <span class="text-[10px] font-mono text-yellow-200">TB LOOP</span>
         </div>
       {/if}
       {#if macosVersionMismatch}
@@ -4733,7 +4776,7 @@
       {#if tb5WithoutRdma && !tb5InfoDismissed}
         <div
           class="flex items-center gap-1.5 px-2 py-1 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm"
-          title="Thunderbolt 5 detected — RDMA not enabled. Enable for faster inter-node communication."
+          title="Thunderbolt 5 detected — RDMA not enabled. Enable it for faster communication between devices."
         >
           <svg
             class="w-3.5 h-3.5 text-yellow-400"
@@ -4853,7 +4896,7 @@
               style="opacity: {$logoOpacity}; max-height: {$logoOpacity *
                 80}px; overflow: hidden; transition: max-height 0.6s cubic-bezier(0.4, 0, 0.2, 1);"
             >
-              <img src="/exo-logo.png" alt="exo" class="w-36 mx-auto mb-10" />
+              <img src="/exo-logo.png" alt="EXO" class="w-36 mx-auto mb-10" />
             </div>
 
             <!-- Title — single element, text updates instantly -->
@@ -4877,8 +4920,8 @@
                 The model is automatically distributed. Each device handles a
                 piece.
               {:else if onboardingStep === 4}
-                {stepTitle === "Relaunch on the remaining devices"
-                  ? "Models using that device stop. You can relaunch them on the devices that are left."
+                {stepTitle === "Start it again on the remaining devices"
+                  ? "Models using that device stop. You can start them again on the devices that are left."
                   : "Devices can leave anytime. Laptops close, machines restart."}
               {:else}
                 &nbsp;
@@ -4893,7 +4936,7 @@
               class="absolute left-0 right-0 text-center text-lg text-white/50 font-light tracking-wide z-10"
               style="top: 20px; opacity: {$deviceCountOpacity}; font-family: -apple-system, 'SF Pro Display', system-ui, sans-serif; pointer-events: none;"
             >
-              Your EXO Network
+              Your cluster
             </p>
 
             <!-- Step 1: Real topology graph -->
@@ -5438,7 +5481,7 @@
             </h1>
             {#if onboardingModelId}
               <p class="text-sm text-white/40 font-sans">
-                {onboardingModelId.split("/").pop() ?? onboardingModelId}
+                {getModelDisplayName(onboardingModelId)}
               </p>
             {/if}
           </div>
@@ -5502,7 +5545,7 @@
             </h1>
             {#if onboardingModelId}
               <p class="text-sm text-white/40 font-sans">
-                {onboardingModelId.split("/").pop() ?? onboardingModelId}
+                {getModelDisplayName(onboardingModelId)}
               </p>
             {/if}
           </div>
@@ -5564,14 +5607,14 @@
         >
           <img
             src="/exo-logo.png"
-            alt="exo"
+            alt="EXO"
             class="w-28 mb-6"
             style="opacity: 0.8;"
           />
 
           {#if onboardingModelId}
             <p class="text-sm text-white/40 font-mono mb-6">
-              {onboardingModelId.split("/").pop() ?? onboardingModelId}
+              {getModelDisplayName(onboardingModelId)}
             </p>
           {/if}
 
@@ -5726,9 +5769,7 @@
             class="px-3 py-1.5 text-xs text-exo-yellow border border-exo-yellow/40 hover:bg-exo-yellow/10 rounded cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-exo-yellow"
           >
             Use {downloadChoicePrompt.alternativeName}
-            ({downloadChoicePrompt.alternativeRunning
-              ? "running"
-              : "downloaded"})
+            ({downloadChoicePrompt.alternativeRunning ? "ready" : "downloaded"})
           </button>
         {/if}
         <button
@@ -5927,9 +5968,9 @@
                 </svg>
                 <p class="flex-1 text-xs leading-relaxed text-white/60">
                   <span class="text-white/80">Only this device so far.</span>
-                  To add another, install exo on it and start it on the same network
+                  To add another, install EXO on it and start it on the same network
                   (or connect them with a Thunderbolt cable). Devices connect only
-                  when they run the same version of exo.
+                  when they run the same version of EXO.
                 </p>
                 <button
                   type="button"
@@ -5984,19 +6025,19 @@
           </div>
         </div>
 
-        <!-- Mobile Right Sidebar Drawer (Instances) -->
+        <!-- Mobile Right Sidebar Drawer (running models) -->
         {#if mobileRightOpen}
           <!-- Overlay backdrop -->
           <button
             type="button"
             class="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
             onclick={() => setMobileRightSidebarOpen(false)}
-            aria-label="Close instances panel"
+            aria-label="Close running models panel"
           ></button>
           <!-- Drawer panel -->
           <aside
             class="fixed right-0 top-0 bottom-0 w-80 bg-exo-dark-gray border-l border-exo-yellow/10 z-50 flex flex-col md:hidden overflow-y-auto"
-            aria-label="Instance controls mobile"
+            aria-label="Running models and start a model"
           >
             {@render rightSidebarContent()}
           </aside>
@@ -6005,7 +6046,7 @@
         <!-- Right Sidebar: Instance Controls (wider on welcome page for better visibility) - Desktop only -->
         <aside
           class="hidden md:flex w-80 border-l border-exo-yellow/10 bg-exo-dark-gray flex-col flex-shrink-0"
-          aria-label="Instance controls"
+          aria-label="Running models and start a model"
         >
           {@render rightSidebarContent()}
         </aside>
@@ -6022,7 +6063,7 @@
                 <h3
                   class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase"
                 >
-                  Instances
+                  Running models
                 </h3>
                 <div
                   class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"
@@ -6040,17 +6081,13 @@
                   )}
                   {@const statusText = downloadInfo.statusText}
                   {@const statusLabel = getInstanceStatusLabel(statusText)}
-                  {@const isDownloading = downloadInfo.isDownloading}
-                  {@const isFailed = statusText === "FAILED"}
+                  {@const statusColors = STATUS_COLORS[statusLabel]}
                   {@const isLoading = statusText === "LOADING"}
                   {@const isWarmingUp = statusText === "WARMING UP"}
-                  {@const isReady =
-                    statusText === "READY" || statusText === "LOADED"}
-                  {@const isRunning = statusText === "RUNNING"}
                   <!-- Instance Card -->
                   {@const instanceModelId = getInstanceModelId(instance)}
                   {@const instanceModelName =
-                    instanceModelId.split("/").pop() || instanceModelId}
+                    getModelDisplayName(instanceModelId)}
                   {@const instanceInfo = getInstanceInfo(instance)}
                   {@const instanceConnections =
                     getInstanceConnections(instance)}
@@ -6085,78 +6122,36 @@
                   >
                     <!-- Corner accents -->
                     <div
-                      class="absolute -top-px -left-px w-2 h-2 border-l border-t {isDownloading
-                        ? 'border-blue-500/50'
-                        : isFailed
-                          ? 'border-red-500/50'
-                          : isLoading
-                            ? 'border-yellow-500/50'
-                            : isReady
-                              ? 'border-green-500/50'
-                              : 'border-teal-500/50'}"
+                      class="absolute -top-px -left-px w-2 h-2 border-l border-t {statusColors.corner}"
                     ></div>
                     <div
-                      class="absolute -top-px -right-px w-2 h-2 border-r border-t {isDownloading
-                        ? 'border-blue-500/50'
-                        : isFailed
-                          ? 'border-red-500/50'
-                          : isLoading
-                            ? 'border-yellow-500/50'
-                            : isReady
-                              ? 'border-green-500/50'
-                              : 'border-teal-500/50'}"
+                      class="absolute -top-px -right-px w-2 h-2 border-r border-t {statusColors.corner}"
                     ></div>
                     <div
-                      class="absolute -bottom-px -left-px w-2 h-2 border-l border-b {isDownloading
-                        ? 'border-blue-500/50'
-                        : isFailed
-                          ? 'border-red-500/50'
-                          : isLoading
-                            ? 'border-yellow-500/50'
-                            : isReady
-                              ? 'border-green-500/50'
-                              : 'border-teal-500/50'}"
+                      class="absolute -bottom-px -left-px w-2 h-2 border-l border-b {statusColors.corner}"
                     ></div>
                     <div
-                      class="absolute -bottom-px -right-px w-2 h-2 border-r border-b {isDownloading
-                        ? 'border-blue-500/50'
-                        : isFailed
-                          ? 'border-red-500/50'
-                          : isLoading
-                            ? 'border-yellow-500/50'
-                            : isReady
-                              ? 'border-green-500/50'
-                              : 'border-teal-500/50'}"
+                      class="absolute -bottom-px -right-px w-2 h-2 border-r border-b {statusColors.corner}"
                     ></div>
 
                     <div
-                      class="bg-exo-dark-gray/60 border border-l-2 transition-all duration-200 group-hover:bg-exo-dark-gray/80 {isDownloading
-                        ? 'border-blue-500/30 border-l-blue-400 group-hover:border-blue-500/50'
-                        : isFailed
-                          ? 'border-red-500/30 border-l-red-400 group-hover:border-red-500/50'
-                          : isLoading
-                            ? 'border-exo-yellow/30 border-l-yellow-400 group-hover:border-exo-yellow/50'
-                            : isReady
-                              ? 'border-green-500/30 border-l-green-400 group-hover:border-green-500/50'
-                              : 'border-teal-500/30 border-l-teal-400 group-hover:border-teal-500/50'} p-3"
+                      class="bg-exo-dark-gray/60 border border-l-2 transition-all duration-200 group-hover:bg-exo-dark-gray/80 {statusColors.card} p-3"
                     >
                       <div class="flex justify-between items-start mb-2 pl-2">
                         <div class="flex items-center gap-2 min-w-0">
                           <div
-                            class="w-1.5 h-1.5 flex-shrink-0 {isDownloading
-                              ? 'bg-blue-400 animate-pulse'
-                              : isFailed
-                                ? 'bg-red-400'
-                                : isLoading
-                                  ? 'bg-yellow-400 animate-pulse'
-                                  : isReady
-                                    ? 'bg-green-400'
-                                    : 'bg-teal-400'} rounded-full shadow-[0_0_6px_currentColor]"
+                            class="w-1.5 h-1.5 flex-shrink-0 {statusColors.dot} rounded-full shadow-[0_0_6px_currentColor]"
                           ></div>
                           <span
                             class="text-exo-yellow font-mono text-sm truncate"
                             title={instanceModelId}>{instanceModelName}</span
                           >
+                          {#if getModelQuantization(instanceModelId)}
+                            <span
+                              class="flex-shrink-0 text-white/40 font-mono text-[10px]"
+                              >{getModelQuantization(instanceModelId)}</span
+                            >
+                          {/if}
                         </div>
                         <button
                           title="Stop this model. Downloaded files are kept."
@@ -6173,21 +6168,13 @@
                       </div>
                       <div class="pl-2">
                         <div
-                          class="flex items-center gap-2 text-white/60 text-xs font-mono"
+                          class="flex flex-wrap items-center gap-x-2 gap-y-1 text-white/60 text-xs font-mono"
                         >
                           <span
                             >{instanceInfo.sharding} &middot; {instanceInfo.instanceType}</span
                           >
                           <span
-                            class="px-1.5 py-0.5 text-[10px] tracking-wider uppercase rounded transition-all duration-300 {isDownloading
-                              ? 'bg-blue-500/15 text-blue-400'
-                              : isFailed
-                                ? 'bg-red-500/15 text-red-400'
-                                : isLoading
-                                  ? 'bg-yellow-500/15 text-yellow-400'
-                                  : isReady
-                                    ? 'bg-green-500/15 text-green-400'
-                                    : 'bg-teal-500/15 text-teal-400'}"
+                            class="px-1.5 py-0.5 text-[10px] tracking-wider uppercase rounded transition-all duration-300 {statusColors.badge}"
                           >
                             {statusLabel}
                           </span>
@@ -6444,24 +6431,21 @@
                           {/if}
                           <div class="mt-2 space-y-1">
                             <div
-                              class="text-xs text-blue-400 font-mono tracking-wider"
+                              class="text-xs text-blue-400 font-mono tracking-wider uppercase"
                             >
-                              DOWNLOADING
+                              Downloading
                             </div>
                             <p
                               class="text-[11px] text-white/50 leading-relaxed"
                             >
-                              Downloading model files. Model runs on your
-                              devices so needs to be downloaded before you can
-                              chat.
+                              EXO downloads the model to your devices before you
+                              can chat with it.
                             </p>
                           </div>
                         {:else}
                           <div class="mt-1 space-y-1">
                             <div
-                              class="text-xs {getStatusColor(
-                                downloadInfo.statusText,
-                              )} font-mono tracking-wider uppercase"
+                              class="text-xs {statusColors.text} font-mono tracking-wider uppercase"
                             >
                               {statusLabel}
                               {#if debugEnabled && statusText !== statusLabel.toUpperCase()}
@@ -6505,16 +6489,16 @@
                                 <p
                                   class="text-[11px] text-white/50 leading-relaxed"
                                 >
-                                  Loading model into memory...
+                                  Loading into memory…
                                 </p>
                               {/if}
                             {:else if isWarmingUp}
                               <p
                                 class="text-[11px] text-white/50 leading-relaxed"
                               >
-                                Warming up...
+                                Almost ready…
                               </p>
-                            {:else if isReady || isRunning}
+                            {:else if statusLabel === "Ready"}
                               <p
                                 class="text-[11px] text-green-400/70 leading-relaxed"
                               >
@@ -6549,7 +6533,7 @@
               <h3
                 class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase"
               >
-                Load Model
+                Start a model
               </h3>
               <div
                 class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"
@@ -6582,7 +6566,11 @@
                         class="flex items-center gap-2 text-exo-light-gray truncate"
                       >
                         <span class="truncate"
-                          >{foundModel.name || foundModel.id}</span
+                          >{getModelDisplayName(
+                            foundModel.id,
+                          )}{foundModel.quantization
+                            ? ` · ${foundModel.quantization}`
+                            : ""}</span
                         >
                       </span>
                       <span class="text-white/50 text-xs flex-shrink-0"
@@ -6607,7 +6595,11 @@
                         class="flex items-center gap-2 text-exo-light-gray truncate"
                       >
                         <span class="truncate"
-                          >{runModel.name || runModel.id}</span
+                          >{getModelDisplayName(
+                            runModel.id,
+                          )}{runModel.quantization
+                            ? ` · ${runModel.quantization}`
+                            : ""}</span
                         >
                       </span>
                       <span class="text-white/50 text-xs flex-shrink-0"
@@ -6670,7 +6662,7 @@
                 {#if !showAdvancedOptions && customLaunchSettingsLabel}
                   <span
                     class="normal-case tracking-normal text-left text-exo-yellow/80 border border-exo-yellow/30 rounded px-1.5 py-0.5"
-                    title="Remembered launch settings"
+                    title="Your saved settings for starting a model"
                   >
                     {customLaunchSettingsLabel}
                   </span>
@@ -6679,10 +6671,10 @@
 
               {#if showAdvancedOptions}
                 <div class="mt-3 space-y-3 pl-1" in:fade={{ duration: 150 }}>
-                  <!-- Sharding Strategy -->
+                  <!-- Split by (sharding) -->
                   <div>
                     <div class="text-xs text-white/50 font-mono mb-2">
-                      Sharding Strategy:
+                      Split by:
                     </div>
                     <div class="flex gap-2">
                       <button
@@ -6734,12 +6726,12 @@
                     </div>
                   </div>
 
-                  <!-- Interconnect -->
+                  <!-- Connection (instance type) -->
                   <div>
                     <div class="text-xs text-white/50 font-mono mb-2">
-                      Interconnect:
+                      Connection:
                     </div>
-                    <div class="flex gap-2">
+                    <div class="flex flex-wrap gap-2 whitespace-nowrap">
                       <button
                         onclick={() => {
                           selectedInstanceType = "MlxRing";
@@ -6761,7 +6753,7 @@
                             ></span>
                           {/if}
                         </span>
-                        TCP/IP
+                        {RUNTIME_LABELS.MlxRing}
                       </button>
                       <button
                         onclick={() => {
@@ -6784,15 +6776,15 @@
                             ></span>
                           {/if}
                         </span>
-                        RDMA (Fast)
+                        {RUNTIME_LABELS.MlxJaccl}
                       </button>
                     </div>
                   </div>
 
-                  <!-- Minimum Devices -->
+                  <!-- Devices to use (minimum nodes) -->
                   <div>
                     <div class="text-xs text-white/50 font-mono mb-2">
-                      Minimum Devices:
+                      Devices to use:
                     </div>
                     <!-- Discrete slider track with drag support -->
                     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -6960,8 +6952,7 @@
                 <!-- Model name -->
                 {#if pendingChatModelId}
                   <p class="text-sm text-white font-mono tracking-wide">
-                    {pendingChatModelId.split("/").pop()?.replace(/-/g, " ") ||
-                      pendingChatModelId}
+                    {getModelDisplayName(pendingChatModelId)}
                   </p>
                 {/if}
 
@@ -6973,7 +6964,7 @@
                     <p
                       class="text-xs text-exo-light-gray font-mono uppercase tracking-wider"
                     >
-                      Preparing to launch&hellip;
+                      Starting&hellip;
                     </p>
                   </div>
                 {:else if chatLaunchState === "downloading"}
@@ -6981,7 +6972,7 @@
                     <div
                       class="flex items-center justify-between text-xs font-mono"
                     >
-                      <span class="text-exo-yellow uppercase tracking-wider"
+                      <span class="text-blue-400 uppercase tracking-wider"
                         >Downloading</span
                       >
                       {#if chatLaunchDownload}
@@ -6994,7 +6985,7 @@
                       class="w-full h-2 bg-exo-dark-gray rounded-full overflow-hidden border border-exo-medium-gray/30"
                     >
                       <div
-                        class="h-full bg-gradient-to-r from-exo-yellow/80 to-exo-yellow rounded-full transition-all duration-300"
+                        class="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all duration-300"
                         style="width: {chatLaunchDownload?.percentage ?? 0}%"
                       ></div>
                     </div>
@@ -7024,7 +7015,7 @@
                       class="flex items-center justify-between text-xs font-mono"
                     >
                       <span class="text-exo-yellow uppercase tracking-wider"
-                        >Loading model</span
+                        >Loading into memory</span
                       >
                       {#if chatLaunchLoadProgress}
                         <span class="text-exo-light-gray tabular-nums">
@@ -7226,7 +7217,7 @@
                   TOPOLOGY
                 </div>
                 <span class="text-xs text-white/70 tabular-nums"
-                  >{nodeCount} {nodeCount === 1 ? "NODE" : "NODES"}</span
+                  >{nodeCount} {nodeCount === 1 ? "DEVICE" : "DEVICES"}</span
                 >
               </div>
 
@@ -7253,7 +7244,7 @@
                   <h3
                     class="text-xs text-exo-yellow font-mono tracking-[0.2em] uppercase"
                   >
-                    Instances
+                    Running models
                   </h3>
                   <div
                     class="flex-1 h-px bg-gradient-to-r from-exo-yellow/30 to-transparent"
@@ -7269,17 +7260,13 @@
                     )}
                     {@const statusText = downloadInfo.statusText}
                     {@const statusLabel = getInstanceStatusLabel(statusText)}
-                    {@const isDownloading = downloadInfo.isDownloading}
-                    {@const isFailed = statusText === "FAILED"}
+                    {@const statusColors = STATUS_COLORS[statusLabel]}
                     {@const isLoading = statusText === "LOADING"}
                     {@const isWarmingUp = statusText === "WARMING UP"}
-                    {@const isReady =
-                      statusText === "READY" || statusText === "LOADED"}
-                    {@const isRunning = statusText === "RUNNING"}
                     <!-- Instance Card -->
                     {@const instanceModelId = getInstanceModelId(instance)}
                     {@const instanceModelName =
-                      instanceModelId.split("/").pop() || instanceModelId}
+                      getModelDisplayName(instanceModelId)}
                     {@const instanceInfo = getInstanceInfo(instance)}
                     {@const instanceConnections =
                       getInstanceConnections(instance)}
@@ -7313,78 +7300,36 @@
                     >
                       <!-- Corner accents -->
                       <div
-                        class="absolute -top-px -left-px w-2 h-2 border-l border-t {isDownloading
-                          ? 'border-blue-500/50'
-                          : isFailed
-                            ? 'border-red-500/50'
-                            : isLoading
-                              ? 'border-yellow-500/50'
-                              : isReady
-                                ? 'border-green-500/50'
-                                : 'border-teal-500/50'}"
+                        class="absolute -top-px -left-px w-2 h-2 border-l border-t {statusColors.corner}"
                       ></div>
                       <div
-                        class="absolute -top-px -right-px w-2 h-2 border-r border-t {isDownloading
-                          ? 'border-blue-500/50'
-                          : isFailed
-                            ? 'border-red-500/50'
-                            : isLoading
-                              ? 'border-yellow-500/50'
-                              : isReady
-                                ? 'border-green-500/50'
-                                : 'border-teal-500/50'}"
+                        class="absolute -top-px -right-px w-2 h-2 border-r border-t {statusColors.corner}"
                       ></div>
                       <div
-                        class="absolute -bottom-px -left-px w-2 h-2 border-l border-b {isDownloading
-                          ? 'border-blue-500/50'
-                          : isFailed
-                            ? 'border-red-500/50'
-                            : isLoading
-                              ? 'border-yellow-500/50'
-                              : isReady
-                                ? 'border-green-500/50'
-                                : 'border-teal-500/50'}"
+                        class="absolute -bottom-px -left-px w-2 h-2 border-l border-b {statusColors.corner}"
                       ></div>
                       <div
-                        class="absolute -bottom-px -right-px w-2 h-2 border-r border-b {isDownloading
-                          ? 'border-blue-500/50'
-                          : isFailed
-                            ? 'border-red-500/50'
-                            : isLoading
-                              ? 'border-yellow-500/50'
-                              : isReady
-                                ? 'border-green-500/50'
-                                : 'border-teal-500/50'}"
+                        class="absolute -bottom-px -right-px w-2 h-2 border-r border-b {statusColors.corner}"
                       ></div>
 
                       <div
-                        class="bg-exo-dark-gray/60 border border-l-2 {isDownloading
-                          ? 'border-blue-500/30 border-l-blue-400'
-                          : isFailed
-                            ? 'border-red-500/30 border-l-red-400'
-                            : isLoading
-                              ? 'border-exo-yellow/30 border-l-yellow-400'
-                              : isReady
-                                ? 'border-green-500/30 border-l-green-400'
-                                : 'border-teal-500/30 border-l-teal-400'} p-3"
+                        class="bg-exo-dark-gray/60 border border-l-2 {statusColors.card} p-3"
                       >
                         <div class="flex justify-between items-start mb-2 pl-2">
                           <div class="flex items-center gap-2 min-w-0">
                             <div
-                              class="w-1.5 h-1.5 flex-shrink-0 {isDownloading
-                                ? 'bg-blue-400 animate-pulse'
-                                : isFailed
-                                  ? 'bg-red-400'
-                                  : isLoading
-                                    ? 'bg-yellow-400 animate-pulse'
-                                    : isReady
-                                      ? 'bg-green-400'
-                                      : 'bg-teal-400'} rounded-full shadow-[0_0_6px_currentColor]"
+                              class="w-1.5 h-1.5 flex-shrink-0 {statusColors.dot} rounded-full shadow-[0_0_6px_currentColor]"
                             ></div>
                             <span
                               class="text-exo-yellow font-mono text-sm truncate"
                               title={instanceModelId}>{instanceModelName}</span
                             >
+                            {#if getModelQuantization(instanceModelId)}
+                              <span
+                                class="flex-shrink-0 text-white/40 font-mono text-[10px]"
+                                >{getModelQuantization(instanceModelId)}</span
+                              >
+                            {/if}
                           </div>
                           <button
                             title="Stop this model. Downloaded files are kept."
@@ -7401,21 +7346,13 @@
                         </div>
                         <div class="pl-2">
                           <div
-                            class="flex items-center gap-2 text-white/60 text-xs font-mono"
+                            class="flex flex-wrap items-center gap-x-2 gap-y-1 text-white/60 text-xs font-mono"
                           >
                             <span
                               >{instanceInfo.sharding} &middot; {instanceInfo.instanceType}</span
                             >
                             <span
-                              class="px-1.5 py-0.5 text-[10px] tracking-wider uppercase rounded transition-all duration-300 {isDownloading
-                                ? 'bg-blue-500/15 text-blue-400'
-                                : isFailed
-                                  ? 'bg-red-500/15 text-red-400'
-                                  : isLoading
-                                    ? 'bg-yellow-500/15 text-yellow-400'
-                                    : isReady
-                                      ? 'bg-green-500/15 text-green-400'
-                                      : 'bg-teal-500/15 text-teal-400'}"
+                              class="px-1.5 py-0.5 text-[10px] tracking-wider uppercase rounded transition-all duration-300 {statusColors.badge}"
                             >
                               {statusLabel}
                             </span>
@@ -7680,24 +7617,21 @@
                             {/if}
                             <div class="mt-2 space-y-1">
                               <div
-                                class="text-xs text-blue-400 font-mono tracking-wider"
+                                class="text-xs text-blue-400 font-mono tracking-wider uppercase"
                               >
-                                DOWNLOADING
+                                Downloading
                               </div>
                               <p
                                 class="text-[11px] text-white/50 leading-relaxed"
                               >
-                                Downloading model files. Model runs on your
-                                devices so needs to be downloaded before you can
-                                chat.
+                                EXO downloads the model to your devices before
+                                you can chat with it.
                               </p>
                             </div>
                           {:else}
                             <div class="mt-1 space-y-1">
                               <div
-                                class="text-xs {getStatusColor(
-                                  downloadInfo.statusText,
-                                )} font-mono tracking-wider uppercase"
+                                class="text-xs {statusColors.text} font-mono tracking-wider uppercase"
                               >
                                 {statusLabel}
                                 {#if debugEnabled && statusText !== statusLabel.toUpperCase()}
@@ -7742,16 +7676,16 @@
                                   <p
                                     class="text-[11px] text-white/50 leading-relaxed"
                                   >
-                                    Loading model into memory...
+                                    Loading into memory…
                                   </p>
                                 {/if}
                               {:else if isWarmingUp}
                                 <p
                                   class="text-[11px] text-white/50 leading-relaxed"
                                 >
-                                  Warming up...
+                                  Almost ready…
                                 </p>
-                              {:else if isReady || isRunning}
+                              {:else if statusLabel === "Ready"}
                                 <p
                                   class="text-[11px] text-green-400/70 leading-relaxed"
                                 >

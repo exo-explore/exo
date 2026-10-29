@@ -412,7 +412,7 @@
         Integrations
       </h1>
       <p class="text-exo-light-gray/60 text-sm">
-        Connect external tools to your exo cluster.
+        Connect external tools to your EXO cluster.
       </p>
     </div>
 
@@ -515,7 +515,7 @@
         <IntegrationCard
           title="Shell Command"
           subtitle="Run in terminal"
-          description="Launch Claude Code with exo as the backend. Paste this into your terminal."
+          description="Launch Claude Code with EXO as the backend. Paste this into your terminal."
           config={claudeShellCommand}
           language="bash"
         />
@@ -568,7 +568,7 @@
         <IntegrationCard
           title="Shell Command"
           subtitle="Run in terminal"
-          description="Launch Codex with exo as the backend."
+          description="Launch Codex with EXO as the backend."
           config={codexShellCommand}
           language="bash"
         />
@@ -616,13 +616,13 @@
         <IntegrationCard
           title="Models Config"
           subtitle="~/.pi/agent/models.json"
-          description="Register exo as a custom provider in pi. Create or edit this file, then run pi and pick an exo model via /model. Install pi with: npm install -g @mariozechner/pi-coding-agent"
+          description="Register EXO as a custom provider in pi. Create or edit this file, then run pi and pick an EXO model via /model. Install pi with: npm install -g @mariozechner/pi-coding-agent"
           config={piModelsJson}
         />
         <IntegrationCard
           title="Shell Command"
           subtitle="Run in terminal"
-          description="Launch pi directly with the exo provider and model selected."
+          description="Launch pi directly with the EXO provider and model selected."
           config={piShellCommand}
           language="bash"
         />
@@ -666,20 +666,20 @@
         <IntegrationCard
           title="3. Add OpenAI Credential"
           subtitle="n8n UI → Credentials"
-          description="Create an OpenAI credential pointing at your exo cluster."
+          description="Create an OpenAI credential pointing at your EXO cluster."
           config={n8nCredentialSteps}
         />
         <IntegrationCard
           title="4. Build a Workflow"
           subtitle="n8n UI → Workflows"
-          description="Create a workflow that uses your exo-powered model."
+          description="Create a workflow that uses your EXO-powered model."
           config={n8nWorkflowSteps}
         />
       {:else if activeTab === "Firefox"}
         <IntegrationCard
           title="Firefox AI Chatbot"
           subtitle="about:config"
-          description="Use the exo dashboard as Firefox's built-in AI chatbot. Requires Firefox 130+."
+          description="Use the EXO dashboard as Firefox's built-in AI chatbot. Requires Firefox 130+."
           config={firefoxConfig}
         />
       {/if}
