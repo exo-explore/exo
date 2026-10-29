@@ -6,6 +6,7 @@ from subprocess import CalledProcessError
 import psutil
 from anyio import run_process
 
+from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import InterfaceType, NetworkInterfaceInfo
 
 
@@ -35,6 +36,20 @@ async def get_os_build_version() -> str:
         return "Unknown"
 
     return process.stdout.decode("utf-8", errors="replace").strip() or "Unknown"
+
+
+def get_gpu_working_set() -> Memory | None:
+    """The most memory this Mac's GPU should use: Metal's recommended working set, which is
+    also the limit a runner wires its model's memory up to. None without Metal."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        import mlx.core as mx
+    except ImportError:
+        return None
+    if not mx.metal.is_available():
+        return None
+    return Memory.from_bytes(int(mx.device_info()["max_recommended_working_set_size"]))
 
 
 async def get_friendly_name() -> str:

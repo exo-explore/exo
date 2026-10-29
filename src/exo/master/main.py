@@ -497,6 +497,7 @@ class Master:
                                 download_status=self.state.downloads,
                                 node_rdma_ctl=self.state.node_rdma_ctl,
                                 runners=self.state.runners,
+                                node_identities=self.state.node_identities,
                             )
                             transition_events = get_transition_events(
                                 self.state.instances, placement, self.state.tasks
