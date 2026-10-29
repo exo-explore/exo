@@ -4,7 +4,6 @@ import Foundation
 import os.log
 
 private let customNamespaceKey = "EXOCustomNamespace"
-private let hfTokenKey = "EXOHFToken"
 private let hfEndpointKey = "EXOHFEndpoint"
 private let enableImageModelsKey = "EXOEnableImageModels"
 private let offlineModeKey = "EXOOfflineMode"
@@ -56,6 +55,8 @@ final class ExoProcessController: ObservableObject {
     // MARK: Settings that exo reads when it starts
 
     private let defaults: UserDefaults
+    /// Where the Hugging Face token is kept; see `HuggingFaceToken`.
+    private let tokenKeychain: KeychainPassword
 
     @Published var customNamespace: String {
         didSet {
@@ -65,7 +66,13 @@ final class ExoProcessController: ObservableObject {
     }
     @Published var hfToken: String {
         didSet {
-            defaults.set(hfToken, forKey: hfTokenKey)
+            do {
+                try HuggingFaceToken.save(hfToken, to: tokenKeychain)
+            } catch {
+                Self.logger.error(
+                    "Couldn't save the Hugging Face token: \(error.localizedDescription, privacy: .public)"
+                )
+            }
             settingsDidChange()
         }
     }
@@ -165,13 +172,15 @@ final class ExoProcessController: ObservableObject {
     init(
         readinessProbe: @escaping () async -> Bool = { await ExoReadiness.answers() },
         previousExoIsRunning: @escaping () -> Bool = { ExoPidLock.isHeld() },
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        tokenKeychain: KeychainPassword = HuggingFaceToken.keychain
     ) {
         self.readinessProbe = readinessProbe
         self.previousExoIsRunning = previousExoIsRunning
         self.defaults = defaults
+        self.tokenKeychain = tokenKeychain
         customNamespace = defaults.string(forKey: customNamespaceKey) ?? ""
-        hfToken = defaults.string(forKey: hfTokenKey) ?? ""
+        hfToken = HuggingFaceToken.load(from: tokenKeychain, migrating: defaults)
         hfEndpoint = defaults.string(forKey: hfEndpointKey) ?? ""
         enableImageModels = defaults.bool(forKey: enableImageModelsKey)
         offlineMode = defaults.bool(forKey: offlineModeKey)

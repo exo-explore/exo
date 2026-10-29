@@ -7,8 +7,9 @@ enum UninstallEXO {
     private static let logger = Logger(subsystem: "io.exo.EXO", category: "Uninstall")
 
     /// Asks, then removes EXO's network service, its data in ~/.exo (keeping
-    /// downloaded models unless the user unticks that) and its login item,
-    /// moves the app to the Trash and quits.
+    /// downloaded models unless the user unticks that), its login item, its
+    /// Hugging Face token and its preferences, moves the app to the Trash and
+    /// quits.
     ///
     /// The network service is removed first, while exo keeps running: it is
     /// the step that needs an administrator password, so cancelling the
@@ -40,8 +41,15 @@ enum UninstallEXO {
             logger.error(
                 "Couldn't remove all of ~/.exo: \(error.localizedDescription, privacy: .public)")
         }
+        do {
+            try HuggingFaceToken.keychain.delete()
+        } catch {
+            logger.error(
+                "Couldn't delete the Hugging Face token: \(error.localizedDescription, privacy: .public)"
+            )
+        }
         LaunchAtLoginHelper.disable()
-        StartupPreferences().resetForUninstall()
+        removePreferences()
         moveAppToTrash()
         quitSoon()
     }
@@ -61,7 +69,8 @@ enum UninstallEXO {
         let alert = NSAlert()
         alert.messageText = "Uninstall EXO?"
         alert.informativeText =
-            "EXO and its network service will be removed, and EXO will be moved to the Trash."
+            "EXO, its network service and its settings will be removed, and EXO will be moved "
+            + "to the Trash."
         alert.alertStyle = .warning
 
         var keepTitle = "Keep downloaded models"
@@ -128,6 +137,23 @@ enum UninstallEXO {
             at: exoDirectory, includingPropertiesForKeys: nil, options: [])
         for entry in contents where entry.lastPathComponent != "models" {
             try? fileManager.removeItem(at: entry)
+        }
+    }
+
+    /// Removes all of EXO's preferences, so that installing it again starts
+    /// afresh. Windows are closed first, because a window saves its frame
+    /// there when it closes, and the removal is repeated as the app quits, in
+    /// case anything saved one since.
+    private static func removePreferences() {
+        guard let domain = Bundle.main.bundleIdentifier else { return }
+        for window in NSApp.windows where window.styleMask.contains(.titled) {
+            window.close()
+        }
+        UserDefaults.standard.removePersistentDomain(forName: domain)
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { _ in
+            UserDefaults.standard.removePersistentDomain(forName: domain)
         }
     }
 
