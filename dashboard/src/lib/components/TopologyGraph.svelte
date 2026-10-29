@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { exoYellow } from "$lib/utils/brand_colors";
   import { onMount, onDestroy } from "svelte";
   import * as d3 from "d3";
   import {
@@ -133,29 +134,26 @@
     const midTemp = 57.5; // Temp for pure yellow
     const hotTemp = 75; // Temp for pure red
 
-    const coolColor = { r: 93, g: 173, b: 226 }; // #5DADE2 (Blue)
-    const midColor = { r: 255, g: 215, b: 0 }; // #FFD700 (Yellow)
-    const hotColor = { r: 244, g: 67, b: 54 }; // #F44336 (Red)
+    const coolColor = "#5DADE2"; // Blue
+    const midColor = exoYellow();
+    const hotColor = "#F44336"; // Red
 
-    let r: number, g: number, b: number;
+    // Blend linearly (in sRGB) between the two nearest colours
+    const blend = (from: string, to: string, ratio: number) =>
+      `color-mix(in srgb, ${to} ${(ratio * 100).toFixed(1)}%, ${from})`;
 
-    if (temp <= coolTemp) {
-      ({ r, g, b } = coolColor);
-    } else if (temp <= midTemp) {
-      const ratio = (temp - coolTemp) / (midTemp - coolTemp);
-      r = Math.round(coolColor.r * (1 - ratio) + midColor.r * ratio);
-      g = Math.round(coolColor.g * (1 - ratio) + midColor.g * ratio);
-      b = Math.round(coolColor.b * (1 - ratio) + midColor.b * ratio);
-    } else if (temp < hotTemp) {
-      const ratio = (temp - midTemp) / (hotTemp - midTemp);
-      r = Math.round(midColor.r * (1 - ratio) + hotColor.r * ratio);
-      g = Math.round(midColor.g * (1 - ratio) + hotColor.g * ratio);
-      b = Math.round(midColor.b * (1 - ratio) + hotColor.b * ratio);
-    } else {
-      ({ r, g, b } = hotColor);
+    if (temp <= coolTemp) return coolColor;
+    if (temp <= midTemp) {
+      return blend(
+        coolColor,
+        midColor,
+        (temp - coolTemp) / (midTemp - coolTemp),
+      );
     }
-
-    return `rgb(${r}, ${g}, ${b})`;
+    if (temp < hotTemp) {
+      return blend(midColor, hotColor, (temp - midTemp) / (hotTemp - midTemp));
+    }
+    return hotColor;
   }
 
   function renderGraph() {
@@ -221,7 +219,7 @@
         .attr("y", centerY)
         .attr("text-anchor", "middle")
         .attr("dominant-baseline", "middle")
-        .attr("fill", "rgba(255,215,0,0.4)")
+        .attr("fill", exoYellow(0.4))
         .attr("font-size", isMinimized ? 10 : 12)
         .attr("font-family", "SF Mono, monospace")
         .attr("letter-spacing", "0.1em")
@@ -565,22 +563,22 @@
 
       // Holographic wireframe colors - bright yellow for filter, subtle yellow for hover, grey for filtered out
       const wireColor = isInFilter
-        ? "rgba(255,215,0,1)" // Bright yellow for filter selection
+        ? exoYellow() // Bright yellow for filter selection
         : isHovered
-          ? "rgba(255,215,0,0.7)" // Subtle yellow for hover
+          ? exoYellow(0.7) // Subtle yellow for hover
           : isHighlighted
-            ? "rgba(255,215,0,0.9)" // Yellow for instance highlight
+            ? exoYellow(0.9) // Yellow for instance highlight
             : isFilteredOut
               ? "rgba(140,140,140,0.6)" // Grey for filtered out
               : "rgba(179,179,179,0.8)"; // Default
       const wireColorBright = "rgba(255,255,255,0.9)";
       const fillColor = isInFilter
-        ? "rgba(255,215,0,0.25)"
+        ? exoYellow(0.25)
         : isHovered
-          ? "rgba(255,215,0,0.12)"
+          ? exoYellow(0.12)
           : isHighlighted
-            ? "rgba(255,215,0,0.15)"
-            : "rgba(255,215,0,0.08)";
+            ? exoYellow(0.15)
+            : exoYellow(0.08);
       const strokeWidth = isInFilter
         ? 3
         : isHovered
@@ -589,7 +587,7 @@
             ? 2.5
             : 1.5;
       const screenFill = "rgba(0,20,40,0.9)";
-      const glowColor = "rgba(255,215,0,0.3)";
+      const glowColor = exoYellow(0.3);
 
       const nodeG = nodesGroup
         .append("g")
@@ -671,7 +669,7 @@
             )
             .attr("width", iconBaseWidth)
             .attr("height", memFillActualHeight)
-            .attr("fill", "rgba(255,215,0,0.75)")
+            .attr("fill", exoYellow(0.75))
             .attr("clip-path", `url(#${studioClipId})`);
         }
 
@@ -754,7 +752,7 @@
             )
             .attr("width", iconBaseWidth)
             .attr("height", memFillActualHeight)
-            .attr("fill", "rgba(255,215,0,0.75)")
+            .attr("fill", exoYellow(0.75))
             .attr("clip-path", `url(#${miniClipId})`);
         }
 
@@ -842,7 +840,7 @@
             )
             .attr("width", screenWidth - screenBezel * 2)
             .attr("height", memFillActualHeight)
-            .attr("fill", "rgba(255,215,0,0.85)")
+            .attr("fill", exoYellow(0.85))
             .attr("clip-path", `url(#${screenClipId})`);
         }
 
@@ -1033,7 +1031,7 @@
           .attr("y", nameY)
           .attr("text-anchor", "middle")
           .attr("dominant-baseline", "middle")
-          .attr("fill", "#FFD700")
+          .attr("fill", exoYellow())
           .attr("font-size", fontSize)
           .attr("font-weight", 500)
           .attr("font-family", "SF Mono, Monaco, monospace")
@@ -1050,7 +1048,7 @@
           .attr("font-family", "SF Mono, Monaco, monospace");
         memText
           .append("tspan")
-          .attr("fill", "rgba(255,215,0,0.9)")
+          .attr("fill", exoYellow(0.9))
           .text(`${formatBytes(ramUsed)}`);
         memText
           .append("tspan")
@@ -1075,7 +1073,7 @@
           .attr("x", nodeInfo.x)
           .attr("y", nameY)
           .attr("text-anchor", "middle")
-          .attr("fill", "#FFD700")
+          .attr("fill", exoYellow())
           .attr("font-size", fontSize)
           .attr("font-family", "SF Mono, Monaco, monospace")
           .text(shortName);
@@ -1087,7 +1085,7 @@
           .attr("x", nodeInfo.x)
           .attr("y", statsY)
           .attr("text-anchor", "middle")
-          .attr("fill", "rgba(255,215,0,0.7)")
+          .attr("fill", exoYellow(0.7))
           .attr("font-size", fontSize * 0.85)
           .attr("font-family", "SF Mono, Monaco, monospace")
           .text(
@@ -1108,7 +1106,7 @@
           .attr("x", nodeInfo.x)
           .attr("y", nameY)
           .attr("text-anchor", "middle")
-          .attr("fill", "#FFD700")
+          .attr("fill", exoYellow())
           .attr("font-size", fontSize)
           .attr("font-weight", "500")
           .attr("font-family", "SF Mono, Monaco, monospace")
@@ -1125,7 +1123,7 @@
           .attr("font-family", "SF Mono, Monaco, monospace");
         memTextMini
           .append("tspan")
-          .attr("fill", "rgba(255,215,0,0.9)")
+          .attr("fill", exoYellow(0.9))
           .text(`${formatBytes(ramUsed)}`);
         memTextMini
           .append("tspan")

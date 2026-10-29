@@ -668,7 +668,7 @@
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    background: #ffd700;
+    background: var(--exo-yellow);
     cursor: pointer;
     border: none;
   }
@@ -677,7 +677,7 @@
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    background: #ffd700;
+    background: var(--exo-yellow);
     cursor: pointer;
     border: none;
   }

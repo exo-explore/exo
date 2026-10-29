@@ -556,14 +556,14 @@
     font-size: 1.5rem;
     font-weight: 700;
     margin: 1.5rem 0 0.75rem 0;
-    color: var(--exo-yellow, #ffd700);
+    color: var(--exo-yellow);
   }
 
   .markdown-content :global(h2) {
     font-size: 1.25rem;
     font-weight: 600;
     margin: 1.25rem 0 0.5rem 0;
-    color: var(--exo-yellow, #ffd700);
+    color: var(--exo-yellow);
   }
 
   .markdown-content :global(h3) {
@@ -591,8 +591,8 @@
 
   /* Inline code */
   .markdown-content :global(.inline-code) {
-    background: rgba(255, 215, 0, 0.1);
-    color: var(--exo-yellow, #ffd700);
+    background: color-mix(in srgb, var(--exo-yellow) 10%, transparent);
+    color: var(--exo-yellow);
     padding: 0.125rem 0.375rem;
     border-radius: 0.25rem;
     font-family:
@@ -602,7 +602,7 @@
 
   /* Links */
   .markdown-content :global(a) {
-    color: var(--exo-yellow, #ffd700);
+    color: var(--exo-yellow);
     text-decoration: underline;
     text-underline-offset: 2px;
   }
@@ -634,10 +634,10 @@
 
   /* Blockquotes */
   .markdown-content :global(blockquote) {
-    border-left: 3px solid var(--exo-yellow, #ffd700);
+    border-left: 3px solid var(--exo-yellow);
     padding: 0.5rem 1rem;
     margin: 1rem 0;
-    background: rgba(255, 215, 0, 0.05);
+    background: color-mix(in srgb, var(--exo-yellow) 5%, transparent);
     border-radius: 0 0.25rem 0.25rem 0;
   }
 
@@ -650,8 +650,8 @@
   }
 
   .markdown-content :global(th) {
-    background: rgba(255, 215, 0, 0.1);
-    border: 1px solid rgba(255, 215, 0, 0.2);
+    background: color-mix(in srgb, var(--exo-yellow) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--exo-yellow) 20%, transparent);
     padding: 0.5rem;
     text-align: left;
     font-weight: 600;
@@ -674,7 +674,7 @@
     margin: 1rem 0;
     border-radius: 0.5rem;
     overflow: hidden;
-    border: 1px solid rgba(255, 215, 0, 0.2);
+    border: 1px solid color-mix(in srgb, var(--exo-yellow) 20%, transparent);
     background: rgba(0, 0, 0, 0.4);
   }
 
@@ -683,12 +683,13 @@
     justify-content: space-between;
     align-items: center;
     padding: 0.5rem 0.75rem;
-    background: rgba(255, 215, 0, 0.05);
-    border-bottom: 1px solid rgba(255, 215, 0, 0.1);
+    background: color-mix(in srgb, var(--exo-yellow) 5%, transparent);
+    border-bottom: 1px solid
+      color-mix(in srgb, var(--exo-yellow) 10%, transparent);
   }
 
   .markdown-content :global(.code-language) {
-    color: var(--exo-yellow, #ffd700);
+    color: var(--exo-yellow);
     font-size: 0.7rem;
     font-weight: 500;
     text-transform: uppercase;
@@ -711,7 +712,7 @@
   }
 
   .markdown-content :global(.copy-code-btn:hover) {
-    color: var(--exo-yellow, #ffd700);
+    color: var(--exo-yellow);
   }
 
   .markdown-content :global(.copy-code-btn.copied) {
@@ -790,7 +791,7 @@
     margin: 1rem 0;
     border-radius: 0.5rem;
     overflow: hidden;
-    border: 1px solid rgba(255, 215, 0, 0.15);
+    border: 1px solid color-mix(in srgb, var(--exo-yellow) 15%, transparent);
     background: rgba(0, 0, 0, 0.3);
     transition:
       border-color 0.2s ease,
@@ -798,8 +799,8 @@
   }
 
   .markdown-content :global(.math-display-wrapper:hover) {
-    border-color: rgba(255, 215, 0, 0.25);
-    box-shadow: 0 0 12px rgba(255, 215, 0, 0.08);
+    border-color: color-mix(in srgb, var(--exo-yellow) 25%, transparent);
+    box-shadow: 0 0 12px color-mix(in srgb, var(--exo-yellow) 8%, transparent);
   }
 
   /* Display math header - hidden by default, slides in on hover */
@@ -808,8 +809,9 @@
     justify-content: space-between;
     align-items: center;
     padding: 0.375rem 0.75rem;
-    background: rgba(255, 215, 0, 0.03);
-    border-bottom: 1px solid rgba(255, 215, 0, 0.08);
+    background: color-mix(in srgb, var(--exo-yellow) 3%, transparent);
+    border-bottom: 1px solid
+      color-mix(in srgb, var(--exo-yellow) 8%, transparent);
     opacity: 0;
     max-height: 0;
     padding-top: 0;
@@ -828,7 +830,7 @@
   }
 
   .markdown-content :global(.math-label) {
-    color: rgba(255, 215, 0, 0.7);
+    color: color-mix(in srgb, var(--exo-yellow) 70%, transparent);
     font-size: 0.65rem;
     font-weight: 500;
     text-transform: uppercase;
@@ -859,7 +861,7 @@
   }
 
   .markdown-content :global(.copy-math-btn:hover) {
-    color: var(--exo-yellow, #ffd700);
+    color: var(--exo-yellow);
   }
 
   .markdown-content :global(.copy-math-btn.copied) {
@@ -884,13 +886,13 @@
   }
 
   .markdown-content :global(.math-display-content::-webkit-scrollbar-thumb) {
-    background: rgba(255, 215, 0, 0.2);
+    background: color-mix(in srgb, var(--exo-yellow) 20%, transparent);
     border-radius: 3px;
   }
 
   .markdown-content
     :global(.math-display-content::-webkit-scrollbar-thumb:hover) {
-    background: rgba(255, 215, 0, 0.35);
+    background: color-mix(in srgb, var(--exo-yellow) 35%, transparent);
   }
 
   .markdown-content :global(.math-display-content .katex-display) {
@@ -911,7 +913,7 @@
   }
 
   .markdown-content :global(.math-inline:hover) {
-    background: rgba(255, 215, 0, 0.05);
+    background: color-mix(in srgb, var(--exo-yellow) 5%, transparent);
   }
 
   /* Dark theme KaTeX overrides */
@@ -984,7 +986,8 @@
     margin: 1rem 0;
     padding: 1rem 1.25rem;
     background: rgba(255, 255, 255, 0.02);
-    border-left: 3px solid rgba(255, 215, 0, 0.4);
+    border-left: 3px solid
+      color-mix(in srgb, var(--exo-yellow) 40%, transparent);
     border-radius: 0 0.375rem 0.375rem 0;
   }
 
@@ -1020,14 +1023,14 @@
   .markdown-content :global(.latex-theorem) {
     margin: 1rem 0;
     padding: 1rem 1.25rem;
-    background: rgba(255, 215, 0, 0.03);
-    border: 1px solid rgba(255, 215, 0, 0.15);
+    background: color-mix(in srgb, var(--exo-yellow) 3%, transparent);
+    border: 1px solid color-mix(in srgb, var(--exo-yellow) 15%, transparent);
     border-radius: 0.375rem;
   }
 
   .markdown-content :global(.latex-theorem-header) {
     font-weight: 700;
-    color: var(--exo-yellow, #ffd700);
+    color: var(--exo-yellow);
     margin-bottom: 0.5rem;
   }
 
@@ -1053,9 +1056,9 @@
     margin: 1rem 0;
     padding: 1.5rem 2rem;
     background: rgba(255, 255, 255, 0.02);
-    border: 1px dashed rgba(255, 215, 0, 0.25);
+    border: 1px dashed color-mix(in srgb, var(--exo-yellow) 25%, transparent);
     border-radius: 0.5rem;
-    color: rgba(255, 215, 0, 0.6);
+    color: color-mix(in srgb, var(--exo-yellow) 60%, transparent);
     font-size: 0.875rem;
   }
 
