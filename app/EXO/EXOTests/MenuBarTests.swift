@@ -260,13 +260,14 @@ struct MenuBarMenuTests {
         snapshot.localNetworkAccessOff = true
         snapshot.thunderboltBridgeLoop = true
         snapshot.thunderboltNetworking = .notSetUp
+        snapshot.needsRestart = true
         snapshot.updateVersion = "1.0.73"
         #expect(
             titles(MenuBarMenu.fixItRows(for: snapshot)) == [
                 "Local Network Access Is Off", "Open Privacy & Security Settings…",
                 "Thunderbolt Bridge Loop Detected", "Turn Off Thunderbolt Bridge…",
                 "Thunderbolt Networking Isn't Set Up", "Set Up Thunderbolt Networking…",
-                "Install Update (EXO 1.0.73)…",
+                "Restart EXO to Apply Settings", "Install Update (EXO 1.0.73)…",
             ])
 
         snapshot.thunderboltNetworking = .needsUpdate
@@ -277,6 +278,28 @@ struct MenuBarMenuTests {
         snapshot.exo = .stopped
         #expect(
             !titles(MenuBarMenu.fixItRows(for: snapshot)).contains("Local Network Access Is Off"))
+    }
+
+    @Test func changedSettingsOfferARestartUntilExoHasThem() {
+        var snapshot = MenuBarSnapshot(exo: .running)
+        #expect(
+            command("Restart EXO to Apply Settings", in: MenuBarMenu.entries(for: snapshot)) == nil)
+
+        snapshot.needsRestart = true
+        let entries = MenuBarMenu.entries(for: snapshot)
+        guard
+            case .command(_, let action, let enabled, _, _) = command(
+                "Restart EXO to Apply Settings", in: entries)
+        else {
+            Issue.record("no Restart EXO to Apply Settings item")
+            return
+        }
+        #expect(action == .restartToApplySettings)
+        #expect(enabled)
+        // A fix-it row: after the status lines and submenus, before Open Dashboard.
+        let restart = titles(entries).firstIndex(of: "Restart EXO to Apply Settings") ?? 0
+        let dashboard = titles(entries).firstIndex(of: "Open Dashboard") ?? 0
+        #expect(restart < dashboard)
     }
 
     @Test func settingsAndQuitHaveTheirStandardShortcuts() {

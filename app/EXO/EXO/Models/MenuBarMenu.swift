@@ -27,6 +27,9 @@ struct MenuBarSnapshot: Equatable {
     /// A Thunderbolt Bridge loop that this Mac is part of.
     var thunderboltBridgeLoop = false
     var thunderboltNetworking: ThunderboltNetworking = .fine
+    /// Settings that exo reads when it starts have changed, and restarting
+    /// it would stop models on this Mac, so the user decides when.
+    var needsRestart = false
     var updateVersion: String?
 }
 
@@ -36,6 +39,7 @@ enum MenuCommand: Equatable {
     case openLocalNetworkSettings
     case turnOffThunderboltBridge
     case setUpThunderboltNetworking
+    case restartToApplySettings
     case openDashboard
     case copyAPIURL
     case startExo
@@ -170,6 +174,9 @@ enum MenuBarMenu {
                 .status("Thunderbolt Networking Needs an Update"),
                 .command("Update Thunderbolt Networking…", .setUpThunderboltNetworking),
             ]
+        }
+        if snapshot.needsRestart {
+            rows.append(.command("Restart EXO to Apply Settings", .restartToApplySettings))
         }
         if let version = snapshot.updateVersion {
             rows.append(.command("Install Update (EXO \(version))…", .installUpdate))
