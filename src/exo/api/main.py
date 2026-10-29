@@ -138,6 +138,12 @@ from exo.api.types.openai_responses import (
     ResponsesResponse,
 )
 from exo.master.image_store import ImageStore
+from exo.master.placement import (
+    memory_once_loaded,
+    shard_beyond_memory,
+    shard_bytes,
+    usable_memory,
+)
 from exo.master.placement import place_instance as get_instance_placements
 from exo.routing.event_router import NodeEventReceiver
 from exo.shared.apply import apply
@@ -198,7 +204,6 @@ from exo.shared.types.events import (
     TracesMerged,
 )
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
-from exo.shared.types.memory import Memory
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
@@ -500,14 +505,18 @@ class API:
     ) -> CreateInstanceResponse:
         instance = payload.instance
         model_card = await ModelCard.load(instance.shard_assignments.model_id)
-        required_memory = model_card.storage_size
-        available_memory = self._calculate_total_available_memory()
-
-        if required_memory > available_memory:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Insufficient memory to create instance. Required: {required_memory.in_gb:.1f}GB, Available: {available_memory.in_gb:.1f}GB",
+        # Each node has to hold its own shard: memory free elsewhere is no use to it
+        node_memory = usable_memory(
+            memory_once_loaded(
+                self.state.node_memory, self.state.instances, self.state.runners
             )
+        )
+        if (
+            shortfall := shard_beyond_memory(
+                instance.shard_assignments, node_memory, self.state.node_identities
+            )
+        ) is not None:
+            raise HTTPException(status_code=400, detail=shortfall)
 
         command = CreateInstance(
             instance=instance,
@@ -545,6 +554,7 @@ class API:
                 download_status=self.state.downloads,
                 node_rdma_ctl=self.state.node_rdma_ctl,
                 runners=self.state.runners,
+                node_identities=self.state.node_identities,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -611,6 +621,7 @@ class API:
                     download_status=self.state.downloads,
                     node_rdma_ctl=self.state.node_rdma_ctl,
                     runners=self.state.runners,
+                    node_identities=self.state.node_identities,
                 )
             except ValueError as exc:
                 if (model_card.model_id, sharding, instance_meta, 0) not in seen:
@@ -651,14 +662,11 @@ class API:
             shard_assignments = instance.shard_assignments
             placement_node_ids = list(shard_assignments.node_to_runner.keys())
 
-            memory_delta_by_node: dict[str, int] = {}
-            if placement_node_ids:
-                total_bytes = model_card.storage_size.in_bytes
-                per_node = total_bytes // len(placement_node_ids)
-                remainder = total_bytes % len(placement_node_ids)
-                for index, node_id in enumerate(sorted(placement_node_ids, key=str)):
-                    extra = 1 if index < remainder else 0
-                    memory_delta_by_node[str(node_id)] = per_node + extra
+            # Each node's share: pipeline gives a node layers in proportion to its memory
+            memory_delta_by_node = {
+                str(node_id): shard_bytes(shard_assignments.runner_to_shard[runner_id])
+                for node_id, runner_id in shard_assignments.node_to_runner.items()
+            }
 
             if (
                 model_card.model_id,
@@ -1830,15 +1838,6 @@ class API:
     async def ollama_version(self) -> dict[str, str]:
         """Returns version information for Ollama API compatibility."""
         return {"version": "1.0.0"}
-
-    def _calculate_total_available_memory(self) -> Memory:
-        """Calculate total available memory across all nodes in bytes."""
-        total_available = Memory()
-
-        for memory in self.state.node_memory.values():
-            total_available += memory.ram_available
-
-        return total_available
 
     async def get_models(self, status: str | None = Query(default=None)) -> ModelList:
         """Returns list of available models, optionally filtered by being downloaded."""

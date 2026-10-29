@@ -34,6 +34,7 @@ from exo.utils.task_group import TaskGroup
 from .macmon import MacmonMetrics
 from .system_info import (
     get_friendly_name,
+    get_gpu_working_set,
     get_model_and_chip,
     get_network_interfaces,
     get_os_build_version,
@@ -404,6 +405,7 @@ class InfoGatherer:
     info_sender: Sender[GatheredInfo]
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
     _psutil_enabled: bool = field(init=False, default=False)
+    _gpu_working_set: Memory | None = field(init=False, default=None)
 
     async def _can_read_macmon_metrics(self, macmon_path: str) -> bool:
         try:
@@ -442,6 +444,10 @@ class InfoGatherer:
         return True
 
     async def run(self):
+        try:
+            self._gpu_working_set = await to_thread.run_sync(get_gpu_working_set)
+        except Exception as e:
+            logger.opt(exception=e).warning("Error reading the GPU's working set")
         async with self._tg as tg:
             if IS_DARWIN:
                 tg.start_soon(self._monitor_macmon, 1)
@@ -521,7 +527,10 @@ class InfoGatherer:
         while True:
             try:
                 await self.info_sender.send(
-                    MemoryUsage.from_psutil(override_memory=override_memory)
+                    MemoryUsage.from_psutil(
+                        override_memory=override_memory,
+                        gpu_working_set=self._gpu_working_set,
+                    )
                 )
             except Exception as e:
                 logger.opt(exception=e).warning("Error gathering memory usage")
@@ -610,7 +619,9 @@ class InfoGatherer:
                                 delimiter=b"\n", max_bytes=8 * 1024
                             )
                             text = data.decode("utf-8", errors="replace").strip()
-                            metrics = MacmonMetrics.from_raw_json(text)
+                            metrics = MacmonMetrics.from_raw_json(
+                                text, self._gpu_working_set
+                            )
                         await self.info_sender.send(metrics)
             except TimeoutError:
                 logger.warning(

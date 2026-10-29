@@ -291,8 +291,8 @@ def test_get_instance_placements_one_node_not_fit() -> None:
             cic, topology, {}, node_memory, node_network, _metal_only(node_memory)
         )
     assert str(error.value) == (
-        "Not enough memory: test-model needs 0.0 GB, but connected nodes have at most "
-        "0.0 GB free between them"
+        "Not enough memory: test-model needs 0.0 GB, but connected nodes can use at most "
+        "0.0 GB between them"
     )
 
 
@@ -403,8 +403,8 @@ def test_placement_says_how_much_memory_is_free() -> None:
         )
 
     assert str(error.value) == (
-        "Not enough memory: test-model needs 2.0 GB, but connected nodes have at most "
-        "0.8 GB free between them"
+        "Not enough memory: test-model needs 2.0 GB, but connected nodes can use at most "
+        "0.8 GB between them"
     )
 
 

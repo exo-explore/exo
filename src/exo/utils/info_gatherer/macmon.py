@@ -2,6 +2,7 @@ from typing import Self
 
 from pydantic import BaseModel
 
+from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import MemoryUsage, SystemPerformanceProfile
 from exo.utils.pydantic_ext import TaggedModel
 
@@ -48,7 +49,9 @@ class MacmonMetrics(TaggedModel):
     memory: MemoryUsage
 
     @classmethod
-    def from_raw(cls, raw: RawMacmonMetrics) -> Self:
+    def from_raw(
+        cls, raw: RawMacmonMetrics, gpu_working_set: Memory | None = None
+    ) -> Self:
         return cls(
             system_profile=SystemPerformanceProfile(
                 gpu_usage=raw.gpu_usage[1],
@@ -62,9 +65,10 @@ class MacmonMetrics(TaggedModel):
                 ram_available=(raw.memory.ram_total - raw.memory.ram_usage),
                 swap_total=raw.memory.swap_total,
                 swap_available=(raw.memory.swap_total - raw.memory.swap_usage),
+                gpu_working_set=gpu_working_set,
             ),
         )
 
     @classmethod
-    def from_raw_json(cls, json: str) -> Self:
-        return cls.from_raw(RawMacmonMetrics.model_validate_json(json))
+    def from_raw_json(cls, json: str, gpu_working_set: Memory | None = None) -> Self:
+        return cls.from_raw(RawMacmonMetrics.model_validate_json(json), gpu_working_set)
