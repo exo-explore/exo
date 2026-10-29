@@ -297,6 +297,12 @@ class Node:
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "quantize":
+        from exo.cli.commands.quantize import main as quantize_main
+
+        quantize_main(sys.argv[2:])
+        return
+
     # Parse args first => --help or bad args don't require PID-locking
     args = Args.parse()
 
