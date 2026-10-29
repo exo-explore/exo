@@ -8,7 +8,13 @@
   import { debugMode, topologyData } from "$lib/stores/app.svelte";
 
   interface Props {
-    model: { id: string; name?: string; storage_size_megabytes?: number };
+    model: {
+      id: string;
+      name?: string;
+      base_model?: string;
+      quantization?: string;
+      storage_size_megabytes?: number;
+    };
     isLaunching?: boolean;
     downloadStatus?: {
       isDownloading: boolean;
@@ -28,7 +34,7 @@
     tags?: string[];
     apiPreview?: PlacementPreview | null;
     modelIdOverride?: string | null;
-    /** An instance of this model already exists, so launching adds a second copy */
+    /** An instance of this model already exists, so starting adds a second copy */
     existingInstance?: "running" | "starting" | null;
   }
 
@@ -45,6 +51,15 @@
     modelIdOverride = null,
     existingInstance = null,
   }: Props = $props();
+
+  // Display name ("Llama 3.2 1B · 4bit"); the repo id is shown under it
+  const displayName = $derived(
+    model.base_model
+      ? model.quantization
+        ? `${model.base_model} · ${model.quantization}`
+        : model.base_model
+      : model.name || model.id,
+  );
 
   // Estimate memory requirements from model name
   // Uses regex with word boundaries to avoid false matches like '4bit' matching '4b'
@@ -501,9 +516,9 @@
         <div class="flex items-center gap-2">
           <div
             class="text-exo-yellow text-xs font-mono tracking-wide truncate"
-            title={model.name || model.id}
+            title={model.id}
           >
-            {model.name || model.id}
+            {displayName}
           </div>
           {#if huggingFaceModelId}
             <a
@@ -545,7 +560,7 @@
             </div>
           {/if}
         </div>
-        {#if model.name && model.name !== model.id}
+        {#if displayName !== model.id}
           <div
             class="text-xs text-exo-light-gray font-mono truncate mt-0.5"
             title={model.id}
@@ -578,13 +593,13 @@
       <span
         class="px-1.5 py-0.5 text-xs font-mono tracking-wider uppercase bg-exo-medium-gray/30 text-exo-light-gray border border-exo-medium-gray/40"
         title={runtime === "MlxRing"
-          ? "Ring: standard networking. Works over any connection (Wi-Fi, Ethernet, Thunderbolt)."
-          : "RDMA: direct memory access over Thunderbolt. Significantly faster for multi-device inference."}
+          ? "Standard (TCP/IP): works over any connection (Wi-Fi, Ethernet, Thunderbolt)."
+          : "RDMA over Thunderbolt: direct memory access between devices. Much faster when a model is split across devices."}
       >
         {runtime === "MlxRing"
-          ? "MLX Ring"
+          ? "Standard (TCP/IP)"
           : runtime === "MlxJaccl"
-            ? "MLX RDMA"
+            ? "RDMA over Thunderbolt"
             : runtime}
       </span>
     </div>
@@ -1041,7 +1056,7 @@
       </p>
     {/if}
 
-    <!-- Launch Button -->
+    <!-- Start Button -->
     <button
       onclick={onLaunch}
       disabled={isLaunching || !canFit}
@@ -1057,14 +1072,14 @@
           <span
             class="w-2 h-2 border border-exo-yellow border-t-transparent rounded-full animate-spin"
           ></span>
-          LAUNCHING...
+          Starting…
         </span>
       {:else if !canFit}
         INSUFFICIENT MEMORY
       {:else if existingInstance}
-        ▸ LAUNCH ANOTHER COPY
+        ▸ Start another copy
       {:else}
-        ▸ LAUNCH
+        ▸ Start
       {/if}
     </button>
   </div>
