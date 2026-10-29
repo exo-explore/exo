@@ -2541,8 +2541,11 @@
       (iface.addresses || []).some((addr) => addr === ip),
     );
     if (matchFromInterfaces?.name) {
+      const typeTag = matchFromInterfaces.type
+        ? ` (${matchFromInterfaces.type})`
+        : "";
       return {
-        label: `${matchFromInterfaces.name} on ${getNodeLabel(nodeId)}`,
+        label: `${matchFromInterfaces.name}${typeTag} on ${getNodeLabel(nodeId)}`,
         missing: false,
       };
     }
@@ -2550,7 +2553,12 @@
     // Fallback to derived ip_to_interface map
     const mapped = node.ip_to_interface?.[ip];
     if (mapped && mapped.trim().length > 0) {
-      return { label: `${mapped} on ${getNodeLabel(nodeId)}`, missing: false };
+      const type = node.ip_to_interface_type?.[ip];
+      const typeTag = type ? ` (${type})` : "";
+      return {
+        label: `${mapped}${typeTag} on ${getNodeLabel(nodeId)}`,
+        missing: false,
+      };
     }
 
     return { label: "?", missing: true };

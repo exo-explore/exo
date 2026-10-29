@@ -38,8 +38,10 @@ export interface NodeInfo {
   network_interfaces?: Array<{
     name?: string;
     addresses?: string[];
+    type?: string;
   }>;
   ip_to_interface?: Record<string, string>;
+  ip_to_interface_type?: Record<string, string>;
   macmon_info?: {
     memory?: {
       ram_usage: number;
@@ -61,6 +63,15 @@ export interface TopologyEdge {
   target: string;
   sendBackIp?: string;
   sendBackInterface?: string;
+  connectionType?: string;
+  connectionCategory?:
+    | "tb5"
+    | "tb"
+    | "ethernet"
+    | "wifi"
+    | "rdma"
+    | "virtual"
+    | "unknown";
   sourceRdmaIface?: string;
   sinkRdmaIface?: string;
 }
@@ -116,6 +127,9 @@ interface RawNetworkInterfaceInfo {
   ipv6?: string;
   ipAddresses?: string[];
   ips?: string[];
+  interfaceType?: string;
+  interface_type?: string;
+  type?: string;
 }
 
 interface RawNodeNetworkInfo {
@@ -384,6 +398,7 @@ interface GranularNodeState {
 function transformNetworkInterface(iface: RawNetworkInterfaceInfo): {
   name?: string;
   addresses: string[];
+  type?: string;
 } {
   const addresses: string[] = [];
   if (iface.ipAddress && typeof iface.ipAddress === "string") {
@@ -409,9 +424,12 @@ function transformNetworkInterface(iface: RawNetworkInterfaceInfo): {
   if (iface.ipv4 && typeof iface.ipv4 === "string") addresses.push(iface.ipv4);
   if (iface.ipv6 && typeof iface.ipv6 === "string") addresses.push(iface.ipv6);
 
+  const rawType = iface.interfaceType || iface.interface_type || iface.type;
+
   return {
     name: iface.name,
     addresses: Array.from(new Set(addresses)),
+    type: rawType,
   };
 }
 
@@ -439,9 +457,13 @@ function transformTopology(
     const networkInterfaces = rawInterfaces.map(transformNetworkInterface);
 
     const ipToInterface: Record<string, string> = {};
+    const ipToInterfaceType: Record<string, string> = {};
     for (const iface of networkInterfaces) {
       for (const addr of iface.addresses || []) {
         ipToInterface[addr] = iface.name ?? "";
+        if (iface.type) {
+          ipToInterfaceType[addr] = iface.type;
+        }
       }
     }
 
@@ -453,6 +475,7 @@ function transformTopology(
       },
       network_interfaces: networkInterfaces,
       ip_to_interface: ipToInterface,
+      ip_to_interface_type: ipToInterfaceType,
       macmon_info: {
         memory: {
           ram_usage: ramUsage,
@@ -483,6 +506,16 @@ function transformTopology(
           let sendBackIp: string | undefined;
           let sourceRdmaIface: string | undefined;
           let sinkRdmaIface: string | undefined;
+          let connectionType: string = "Unknown";
+          let connectionCategory:
+            | "tb5"
+            | "tb"
+            | "ethernet"
+            | "wifi"
+            | "rdma"
+            | "virtual"
+            | "unknown" = "unknown";
+
           if (edge && typeof edge === "object" && "sinkMultiaddr" in edge) {
             const multiaddr = edge.sinkMultiaddr;
             if (multiaddr) {
@@ -499,11 +532,70 @@ function transformTopology(
             sinkRdmaIface = edge.sinkRdmaIface;
           }
 
+          if (sourceRdmaIface || sinkRdmaIface) {
+            connectionType = "RDMA";
+            connectionCategory = "rdma";
+          } else if (sendBackIp) {
+            const cleanIp =
+              sendBackIp.includes(":") && !sendBackIp.includes("[")
+                ? sendBackIp.split(":")[0]
+                : sendBackIp;
+            const srcType =
+              nodes[source]?.ip_to_interface_type?.[cleanIp] ||
+              nodes[source]?.ip_to_interface_type?.[sendBackIp];
+            const sinkType =
+              nodes[sink]?.ip_to_interface_type?.[cleanIp] ||
+              nodes[sink]?.ip_to_interface_type?.[sendBackIp];
+            const rawType = (srcType || sinkType || "").toLowerCase();
+
+            if (
+              rawType === "tb5" ||
+              rawType.includes("tb5") ||
+              rawType.includes("thunderbolt 5")
+            ) {
+              connectionType = "TB5";
+              connectionCategory = "tb5";
+            } else if (
+              rawType === "thunderbolt" ||
+              rawType.includes("thunderbolt") ||
+              rawType.startsWith("tb")
+            ) {
+              connectionType = "Thunderbolt";
+              connectionCategory = "tb";
+            } else if (rawType === "wifi") {
+              connectionType = "WiFi";
+              connectionCategory = "wifi";
+            } else if (rawType === "ethernet" || rawType === "maybe_ethernet") {
+              connectionType = "Ethernet";
+              connectionCategory = "ethernet";
+            } else if (rawType === "rdma") {
+              connectionType = "RDMA";
+              connectionCategory = "rdma";
+            } else if (rawType === "virtual") {
+              connectionType = "Virtual";
+              connectionCategory = "virtual";
+            } else {
+              // Heuristic IP fallback (e.g. 192.168.100.x or 169.254.x.x link-local for thunderbolt bridges)
+              if (
+                cleanIp.startsWith("192.168.100.") ||
+                cleanIp.startsWith("169.254.")
+              ) {
+                connectionType = "Thunderbolt";
+                connectionCategory = "tb";
+              } else {
+                connectionType = "Ethernet";
+                connectionCategory = "ethernet";
+              }
+            }
+          }
+
           if (nodes[source] && nodes[sink] && source !== sink) {
             edges.push({
               source,
               target: sink,
               sendBackIp,
+              connectionType,
+              connectionCategory,
               sourceRdmaIface,
               sinkRdmaIface,
             });
