@@ -15,7 +15,7 @@
 	<key>EXOBugReportPresignedUrlEndpoint</key>
 	<string>https://reports.exolabs.net/presigned-urls</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>EXO needs local network access to discover and connect to other devices in your cluster for distributed AI inference.</string>
+	<string>EXO finds and connects to your other Macs running EXO, so they can share memory and run larger models together.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_p2p._tcp</string>

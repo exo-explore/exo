@@ -15,6 +15,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Shows something when EXO.app is opened again while it runs. Set by
     /// `EXOApp`.
     static var onReopen: (@MainActor () -> Void)?
+    /// Runs once the app has finished launching, e.g. to show the welcome
+    /// window. Set by `EXOApp`.
+    static var onFinishLaunching: (@MainActor () -> Void)?
+    /// The first-run welcome window, kept alive while it is shown.
+    static var welcomeWindow: WelcomeWindowController?
+    /// Whether to launch as a regular app (Dock icon, activated like any app
+    /// the user opens) rather than a menu-bar-only one, for the welcome
+    /// window. Must be set before launching finishes; macOS doesn't make a
+    /// menu-bar-only app active when Finder or Spotlight opens it.
+    static var launchAsRegularApp = false
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        if Self.launchAsRegularApp {
+            NSApp.setActivationPolicy(.regular)
+        }
+    }
 
     /// Opening EXO.app from Finder or Spotlight while it runs. The menu bar
     /// icon can be hidden (by the notch, or under System Settings › Menu
@@ -31,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Self.logger.notice(
             "EXO was opened \(Self.launchKind == .atLogin ? "at login" : "manually", privacy: .public)"
         )
+        Self.onFinishLaunching?()
     }
 
     /// Quitting EXO (from its menu, with a Quit Apple Event, at logout, or
