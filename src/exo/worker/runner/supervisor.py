@@ -1,9 +1,10 @@
 import codecs
 import contextlib
 import signal
+import sys
 from dataclasses import dataclass, field
 from os import PathLike
-from typing import Callable, Self
+from typing import Callable, Self, final
 
 import anyio
 from anyio import (
@@ -15,6 +16,7 @@ from anyio import (
 from loguru import logger
 
 from exo.shared.constants import EXO_RUNNER_STDERR_LOG, EXO_RUNNER_STDOUT_LOG
+from exo.shared.models.model_cards import ModelCard
 from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -25,8 +27,11 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.tasks import (
     CANCEL_ALL_TASKS,
+    ConnectToGroup,
     ImageEdits,
     ImageGeneration,
+    LoadModel,
+    StartWarmup,
     Task,
     TaskId,
     TaskStatus,
@@ -34,10 +39,13 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runners import (
+    RunnerConnected,
     RunnerConnecting,
     RunnerFailed,
     RunnerIdle,
+    RunnerLoaded,
     RunnerLoading,
+    RunnerReady,
     RunnerRunning,
     RunnerShuttingDown,
     RunnerStatus,
@@ -63,6 +71,75 @@ RUNNER_WATCH_INTERVAL = 5.0
 # A generating runner reports a token every step and progress every prefill chunk, so this
 # long without a word means it is stuck (its instance's runners can wait on each other forever)
 RUNNER_STALL_TIMEOUT = 90.0
+
+# How long a runner may take over each step on its way to serving. Every step waits on things
+# outside the runner (the instance's other runners, the disk, MLX), and a runner that will never
+# get through one would hold its instance, and every request for it, forever: one that takes
+# longer is stopped and failed, and the worker starts it again (with backoff, up to
+# EXO_MAX_INSTANCE_RETRIES times). The bounds are far above what these steps take, to catch a
+# runner that is stuck, never one that is slow.
+#
+# Starting the process and importing MLX and the model code: seconds, longer from a cold disk.
+RUNNER_START_TIMEOUT = 300.0
+# A runner is only told to connect once all of its instance's runners have started, so it waits
+# for the others to be told as well (a round trip through the master) and for the sockets or RDMA
+# connections to come up: seconds.
+RUNNER_CONNECT_TIMEOUT = 120.0
+# Loading reads the runner's share of the weights, then waits for the slowest runner of the
+# instance. This allows for reading the whole model at 20 MB/s, slower than a hard disk on USB 2,
+# plus RUNNER_LOAD_TIMEOUT_BASE for the tokenizer and the rest.
+RUNNER_LOAD_TIMEOUT_BASE = 300.0
+SLOWEST_DISK_BYTES_PER_SECOND = 20_000_000
+# Warming up runs a short prompt and 50 tokens through the instance, and each token reads every
+# weight, so it takes time in proportion to the model, at a rate that depends on where MLX
+# computes. On a Mac's GPU: an M4 Pro decodes a 0.7 GB model at about 260 tokens a second, so 50
+# tokens take about 0.3s per GB of model; this allows 5s per GB (a 100 GB model gets about 18
+# minutes). On the CPU, MLX took about 4 minutes per GB of model on a 20-core Arm machine; this
+# allows 1000s per GB. Both plus RUNNER_WARMUP_TIMEOUT_BASE for compiling kernels and the barriers.
+RUNNER_WARMUP_TIMEOUT_BASE = 600.0
+SLOWEST_METAL_WARMUP_BYTES_PER_SECOND = 200_000_000
+SLOWEST_CPU_WARMUP_BYTES_PER_SECOND = 1_000_000
+# On a Mac, MLX computes on the GPU through Metal (exo runs on Apple silicon only). Elsewhere a
+# runner computes on the CPU, or on a GPU with MLX's CUDA build; telling which would mean importing
+# MLX, so the bound allows for the CPU.
+MLX_USES_METAL = sys.platform == "darwin"
+
+
+def runner_load_timeout(model_card: ModelCard) -> float:
+    return (
+        RUNNER_LOAD_TIMEOUT_BASE
+        + model_card.storage_size.in_bytes / SLOWEST_DISK_BYTES_PER_SECOND
+    )
+
+
+def runner_warmup_timeout(model_card: ModelCard, on_metal: bool) -> float:
+    rate = (
+        SLOWEST_METAL_WARMUP_BYTES_PER_SECOND
+        if on_metal
+        else SLOWEST_CPU_WARMUP_BYTES_PER_SECOND
+    )
+    return RUNNER_WARMUP_TIMEOUT_BASE + model_card.storage_size.in_bytes / rate
+
+
+@final
+class RunnerStoppedError(Exception):
+    """Why the supervisor stopped a runner that was still running"""
+
+
+@dataclass(frozen=True)
+class _Step:
+    """A step on the runner's way to serving that the supervisor is waiting for it to finish"""
+
+    description: str
+    finished_at: type[RunnerStatus]
+    timeout: float
+    deadline: float
+
+    @classmethod
+    def start(
+        cls, description: str, finished_at: type[RunnerStatus], timeout: float
+    ) -> "_Step":
+        return cls(description, finished_at, timeout, anyio.current_time() + timeout)
 
 
 @dataclass(eq=False)
@@ -191,7 +268,6 @@ class RunnerSupervisor:
     bound_instance: BoundInstance
     runner_process: AsyncProcess
     _runner_stdio_handler: RunnerStdioHandler
-    initialize_timeout: float
     _ev_recv: MpReceiver[Event | RunnerTerminationError]
     _task_sender: MpSender[Task]
     _event_sender: Sender[Event]
@@ -207,6 +283,8 @@ class RunnerSupervisor:
     _cancel_watch_runner: anyio.CancelScope = field(
         default_factory=anyio.CancelScope, init=False
     )
+    # The step the runner is in on its way to serving, if it's in one
+    _step: _Step | None = field(default=None, init=False)
 
     @classmethod
     async def create(
@@ -214,7 +292,6 @@ class RunnerSupervisor:
         *,
         bound_instance: BoundInstance,
         event_sender: Sender[Event],
-        initialize_timeout: float = 400,
     ) -> Self:
         # The runner blocks in native code that holds the GIL: MLX's distributed init holds it
         # while it waits for the other ranks. Left to a background thread, the status and the
@@ -248,7 +325,6 @@ class RunnerSupervisor:
             shard_metadata=shard_metadata,
             runner_process=runner_process,
             _runner_stdio_handler=runner_stdio_handler,
-            initialize_timeout=initialize_timeout,
             _ev_recv=ev_recv,
             _task_sender=task_sender,
             _cancel_sender=cancel_sender,
@@ -260,6 +336,7 @@ class RunnerSupervisor:
     async def run(self):
         try:
             async with self._tg as tg:
+                self._step = _Step.start("start", RunnerIdle, RUNNER_START_TIMEOUT)
                 # start the process itself & handle its stdout/stderr
                 await tg.start(self.runner_process.run)
                 tg.start_soon(self._runner_stdio_handler.run)
@@ -318,6 +395,30 @@ class RunnerSupervisor:
             self.in_progress.pop(task.task_id, None)
             self.pending.pop(task.task_id, None)
             logger.warning(f"Task {task} dropped, runner closed communication.")
+            return
+        match task:
+            case ConnectToGroup():
+                self._step = _Step.start(
+                    "connect to the instance's other runners",
+                    RunnerConnected,
+                    RUNNER_CONNECT_TIMEOUT,
+                )
+            case LoadModel():
+                self._step = _Step.start(
+                    "load the model",
+                    RunnerLoaded,
+                    runner_load_timeout(self.shard_metadata.model_card),
+                )
+            case StartWarmup():
+                self._step = _Step.start(
+                    "warm up",
+                    RunnerReady,
+                    runner_warmup_timeout(
+                        self.shard_metadata.model_card, on_metal=MLX_USES_METAL
+                    ),
+                )
+            case _:
+                pass
 
     @property
     def awaiting_acknowledgement(self) -> bool:
@@ -382,6 +483,10 @@ class RunnerSupervisor:
                         break
                     if isinstance(event, RunnerStatusUpdated):
                         self.status = event.runner_status
+                        if self._step is not None and isinstance(
+                            self.status, self._step.finished_at
+                        ):
+                            self._step = None
                     if isinstance(event, TaskAcknowledged):
                         self.pending.pop(event.task_id).set()
                         continue
@@ -422,7 +527,7 @@ class RunnerSupervisor:
                     # Stopping it fails its requests with an error, and the runner and its
                     # peers are recreated.
                     await self._check_runner(
-                        RuntimeError(
+                        RunnerStoppedError(
                             "Lost the connection to the instance's other runners"
                         )
                     )
@@ -430,10 +535,21 @@ class RunnerSupervisor:
                     # Stopping it fails its requests with an error; the runner and the
                     # instance's other runners are then recreated.
                     await self._check_runner(
-                        RuntimeError(
+                        RunnerStoppedError(
                             f"Runner made no progress for {RUNNER_STALL_TIMEOUT:.0f}s while generating"
                         )
                     )
+                elif (step := self._overdue_step()) is not None:
+                    await self._check_runner(
+                        RunnerStoppedError(
+                            f"Runner took more than {step.timeout:.0f}s to {step.description}"
+                        )
+                    )
+
+    def _overdue_step(self) -> _Step | None:
+        if self._step is not None and anyio.current_time() > self._step.deadline:
+            return self._step
+        return None
 
     def _stuck(self) -> bool:
         """Whether the runner is generating but has gone silent. Only the first rank of an
@@ -482,7 +598,11 @@ class RunnerSupervisor:
 
         if e is not None:
             # Record how runner shut down, try exception, resort to RunnerTerminationError fallback
-            if isinstance(e, Exception):
+            if isinstance(e, RunnerStoppedError):
+                # Stopped for a reason of the supervisor's own: the reason is what to report
+                cause = f"{cause}\nRunner error: {e}"
+                logger.error(f"Runner terminated with {cause}")
+            elif isinstance(e, Exception):
                 logger.opt(exception=e).error(f"Runner terminated with {cause}")
             else:
                 cause = f"{cause}\nRunner error: {e}"
