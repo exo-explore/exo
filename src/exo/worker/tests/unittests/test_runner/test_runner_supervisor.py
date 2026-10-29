@@ -7,15 +7,25 @@ import exo.worker.runner.supervisor as supervisor_module
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.common import CommandId, NodeId
-from exo.shared.types.events import ChunkGenerated, Event, RunnerStatusUpdated
-from exo.shared.types.tasks import Task, TaskId, TextGeneration
+from exo.shared.types.events import (
+    ChunkGenerated,
+    Event,
+    RunnerStatusUpdated,
+    TaskStatusUpdated,
+)
+from exo.shared.types.tasks import Task, TaskId, TaskStatus, TextGeneration
 from exo.shared.types.text_generation import (
     InputMessage,
     InputMessageContent,
     TextGenerationTaskParams,
 )
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
-from exo.shared.types.worker.runners import RunnerFailed, RunnerId, RunnerRunning
+from exo.shared.types.worker.runners import (
+    RunnerFailed,
+    RunnerId,
+    RunnerReady,
+    RunnerRunning,
+)
 from exo.utils.async_process import AsyncProcess
 from exo.utils.channels import Receiver, Sender, channel, mp_channel
 from exo.worker.runner.bootstrap import RunnerTerminationError
@@ -392,3 +402,52 @@ async def test_a_runner_out_of_gpu_memory_fails_with_the_cause() -> None:
     assert [type(d) for d in status.runner_status.diagnostics] == [
         RunnerMetalOutOfMemory
     ]
+
+
+@pytest.mark.anyio
+async def test_cancelling_a_request_leaves_a_live_runner_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A client disconnecting mid-generation must not stop a healthy runner, even when
+    handing the cancel over is slow."""
+    supervisor, process, _ = await generating_supervisor(rank=0)
+    cancel_sender, cancel_receiver = mp_channel[TaskId]()
+    supervisor._cancel_sender = cancel_sender  # pyright: ignore[reportPrivateUsage]
+
+    async def slow_send_async(item: TaskId) -> None:
+        await anyio.sleep(1)
+        cancel_sender.send(item)
+
+    monkeypatch.setattr(cancel_sender, "send_async", slow_send_async)
+
+    await supervisor.cancel_task(TaskId("task-s"))
+
+    with anyio.fail_after(5):
+        delivered = await cancel_receiver.receive_async()
+    assert delivered == TaskId("task-s")
+    assert process.is_alive()
+    assert not isinstance(supervisor.status, RunnerFailed)
+
+
+@pytest.mark.anyio
+async def test_a_task_completing_after_the_runner_is_ready_is_forwarded() -> None:
+    """A cancelled task can complete just as the runner reports Ready; forwarding carries
+    on instead of crashing the supervisor."""
+    supervisor, _, event_receiver = await generating_supervisor(rank=0)
+    events_sender, events_receiver = mp_channel[Event | RunnerTerminationError]()
+    supervisor._ev_recv = events_receiver  # pyright: ignore[reportPrivateUsage]
+    supervisor.status = RunnerReady()
+    completed = TaskStatusUpdated(
+        task_id=TaskId("task-s"), task_status=TaskStatus.Complete
+    )
+
+    forwarded: list[Event] = []
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(supervisor._forward_events)  # pyright: ignore[reportPrivateUsage]
+        events_sender.send(completed)
+        with anyio.fail_after(5):
+            forwarded.append(await event_receiver.receive())
+        task_group.cancel_scope.cancel()
+
+    assert forwarded == [completed]
+    assert TaskId("task-s") in supervisor.completed

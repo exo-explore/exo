@@ -165,6 +165,9 @@ async def test_cancelling_an_acknowledged_task_is_sent_straight_away() -> None:
             sup.pending.pop(task.task_id).set()
 
             await sup.cancel_task(task.task_id)
+            # The cancel queue hands items to the runner on a feeder thread, so give
+            # it a moment to arrive, as the test above does.
+            await anyio.sleep(0.2)
             assert cancels_sent(sup) == [task.task_id]
             sup.shutdown()
 
