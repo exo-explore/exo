@@ -30,7 +30,12 @@ from exo.shared.types.events import (
     TaskStatusUpdated,
 )
 from exo.shared.types.memory import Memory
-from exo.shared.types.profiling import MemoryUsage, NodeNetworkInfo, NodeRdmaCtlStatus
+from exo.shared.types.profiling import (
+    MemoryUsage,
+    NodeIdentity,
+    NodeNetworkInfo,
+    NodeRdmaCtlStatus,
+)
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
@@ -55,6 +60,7 @@ from exo.shared.types.worker.runners import (
     RunnerShuttingDown,
     RunnerStatus,
     RunnerWarmingUp,
+    ShardAssignments,
 )
 from exo.shared.types.worker.shards import (
     Sharding,
@@ -132,9 +138,75 @@ def _not_enough_memory(
     )
     return (
         f"Not enough memory: {command.model_card.model_id} needs "
-        f"{command.model_card.storage_size.in_gb:.1f} GB, but connected nodes have at most "
-        f"{most_free.in_gb:.1f} GB free between them"
+        f"{command.model_card.storage_size.in_gb:.1f} GB, but connected nodes can use at most "
+        f"{most_free.in_gb:.1f} GB between them"
     )
+
+
+def _node_name(node_id: NodeId, node_identities: Mapping[NodeId, NodeIdentity]) -> str:
+    identity = node_identities.get(node_id)
+    if identity is None or identity.friendly_name == NodeIdentity().friendly_name:
+        return str(node_id)
+    return identity.friendly_name
+
+
+def _tensor_share_too_large(
+    command: PlaceInstance,
+    cycles: Sequence[Cycle],
+    node_memory: Mapping[NodeId, MemoryUsage],
+    node_identities: Mapping[NodeId, NodeIdentity],
+) -> str:
+    # Explain the group of nodes that comes closest to holding its shares
+    cycle = max(
+        cycles,
+        key=lambda c: min(node_memory[n].ram_available for n in c).in_bytes * len(c),
+    )
+    smallest = min(cycle, key=lambda n: node_memory[n].ram_available)
+    share = command.model_card.storage_size // len(cycle)
+    return (
+        f"Tensor sharding gives each of {len(cycle)} nodes {share.in_gb:.1f} GB of "
+        f"{command.model_card.model_id}, but {_node_name(smallest, node_identities)} can "
+        f"use only about {node_memory[smallest].ram_available.in_gb:.1f} GB. Use Pipeline "
+        "sharding, which splits the model by each node's memory, or nodes with more memory"
+    )
+
+
+def shard_beyond_memory(
+    shard_assignments: ShardAssignments,
+    node_memory: Mapping[NodeId, MemoryUsage],
+    node_identities: Mapping[NodeId, NodeIdentity],
+) -> str | None:
+    """Why a node can't hold its shard of the model, or None if every node can."""
+    for node_id, runner_id in shard_assignments.node_to_runner.items():
+        name = _node_name(node_id, node_identities)
+        usage = node_memory.get(node_id)
+        if usage is None:
+            return f"Waiting for {name} to report its memory"
+        shard = shard_assignments.runner_to_shard[runner_id]
+        share = Memory.from_bytes(shard_bytes(shard))
+        if share > usage.ram_available:
+            return (
+                f"Not enough memory: {name} can use only about "
+                f"{usage.ram_available.in_gb:.1f} GB, but its shard of "
+                f"{shard.model_card.model_id} needs {share.in_gb:.1f} GB"
+            )
+    return None
+
+
+def usable_memory(
+    node_memory: Mapping[NodeId, MemoryUsage],
+) -> dict[NodeId, MemoryUsage]:
+    """Each node's memory with `ram_available` cut to what a model can use there.
+
+    A Mac's GPU can use only its working set (about 75% of the RAM), so an idle Mac has more
+    memory free than a model can use. A runner whose shard needs more aborts while loading.
+    """
+    return {
+        node_id: usage
+        if usage.gpu_working_set is None or usage.gpu_working_set >= usage.ram_available
+        else usage.model_copy(update={"ram_available": usage.gpu_working_set})
+        for node_id, usage in node_memory.items()
+    }
 
 
 # Runners whose memory is already in their node's report (loaded), or about to be freed
@@ -148,7 +220,7 @@ _NOT_PENDING = (
 )
 
 
-def _shard_bytes(shard: ShardMetadata) -> int:
+def shard_bytes(shard: ShardMetadata) -> int:
     """The memory a runner needs for its shard of the model."""
     storage = shard.model_card.storage_size.in_bytes
     if isinstance(shard, TensorShardMetadata):
@@ -175,7 +247,7 @@ def memory_once_loaded(
         for node_id, runner_id in assignments.node_to_runner.items():
             if isinstance(runners.get(runner_id), _NOT_PENDING):
                 continue
-            pending[node_id] += _shard_bytes(assignments.runner_to_shard[runner_id])
+            pending[node_id] += shard_bytes(assignments.runner_to_shard[runner_id])
     return {
         node_id: usage.model_copy(
             update={
@@ -199,14 +271,17 @@ def place_instance(
     download_status: Mapping[NodeId, Sequence[DownloadProgress]] | None = None,
     node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus] | None = None,
     runners: Mapping[RunnerId, RunnerStatus] | None = None,
+    node_identities: Mapping[NodeId, NodeIdentity] | None = None,
 ) -> dict[InstanceId, Instance]:
     """Place an instance of the command's model on the best group of nodes.
 
     Pass the cluster's `runners` so that memory taken by instances that haven't loaded yet is
-    counted as used; without them every instance is assumed loaded.
+    counted as used; without them every instance is assumed loaded. `node_identities` name the
+    nodes in errors.
     """
     if runners is not None:
         node_memory = memory_once_loaded(node_memory, current_instances, runners)
+    node_memory = usable_memory(node_memory)
     cycles = topology.get_cycles()
     if not cycles:
         raise ValueError("No nodes are available")
@@ -255,6 +330,24 @@ def place_instance(
                 f"hidden_size={command.model_card.hidden_size}"
                 f"{f', num_key_value_heads={kv_heads}' if kv_heads is not None else ''}"
                 f" across candidate cycles"
+            )
+        # Tensor sharding splits every layer evenly, so each node needs an equal share: enough
+        # memory between the nodes is no use if one of them can't hold its share
+        divisible_cycles = cycles_with_sufficient_memory
+        cycles_with_sufficient_memory = [
+            cycle
+            for cycle in divisible_cycles
+            if all(
+                node_memory[node].ram_available
+                >= command.model_card.storage_size // len(cycle)
+                for node in cycle
+            )
+        ]
+        if not cycles_with_sufficient_memory:
+            raise ValueError(
+                _tensor_share_too_large(
+                    command, divisible_cycles, node_memory, node_identities or {}
+                )
             )
     if command.sharding == Sharding.Pipeline and command.model_card.model_id == ModelId(
         "mlx-community/DeepSeek-V3.1-8bit"
