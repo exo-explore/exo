@@ -40,7 +40,8 @@ final class ExoProcessController: ObservableObject {
 
     /// exo's stdout and stderr. Kept apart from exo's own log directory,
     /// ~/.exo/exo_log, which exo rotates and prunes itself.
-    static let logFile = ExoLogFile(url: exoDirectoryURL.appendingPathComponent("exo_app.log"))
+    nonisolated static let logFile = ExoLogFile(
+        url: exoDirectoryURL.appendingPathComponent("exo_app.log"))
 
     /// How often the log's size is checked while exo runs.
     private static let logRotationInterval: UInt64 = 30_000_000_000
