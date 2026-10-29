@@ -510,9 +510,13 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                     )
                 )
         case RdmaCtlStatus():
+            devices = getattr(info, "devices", [])
             update["node_rdma_ctl"] = {
                 **state.node_rdma_ctl,
-                event.node_id: NodeRdmaCtlStatus(enabled=info.enabled),
+                event.node_id: NodeRdmaCtlStatus(
+                    enabled=info.enabled,
+                    devices=devices,
+                ),
             }
             # If RDMA just got disabled on this node, drop any RDMA edges touching it
             # so placement / topology consumers cannot pick a disabled node for an
