@@ -355,8 +355,8 @@
       <span
         class="flex-shrink-0"
         title={groupDownloadStatus.available
-          ? `Ready — downloaded on ${groupDownloadStatus.nodeNames.join(", ")}`
-          : `Downloaded on ${groupDownloadStatus.nodeNames.join(", ")} (may need more nodes)`}
+          ? `Downloaded on ${groupDownloadStatus.nodeNames.join(", ")}`
+          : `Downloaded on ${groupDownloadStatus.nodeNames.join(", ")} (may need more devices)`}
       >
         <svg
           class="w-4 h-4"
@@ -379,19 +379,20 @@
     <!-- Instance status badge -->
     {#if groupInstanceStatus}
       {#if groupInstanceStatus.status === "READY" || groupInstanceStatus.status === "LOADED" || groupInstanceStatus.status === "RUNNING"}
-        <span class="flex-shrink-0" title="Running">
+        <span class="flex-shrink-0 flex items-center gap-1" title="Ready">
           <svg
-            class="w-3 h-3 text-green-400"
+            class="w-2.5 h-2.5 text-green-400"
             viewBox="0 0 12 12"
             fill="currentColor"
           >
             <circle cx="6" cy="6" r="5" />
           </svg>
+          <span class="text-[10px] font-mono text-green-400">Ready</span>
         </span>
       {:else if groupInstanceStatus.status === "DOWNLOADING"}
-        <span class="flex-shrink-0 animate-pulse" title="Downloading">
+        <span class="flex-shrink-0 flex items-center gap-1" title="Downloading">
           <svg
-            class="w-3.5 h-3.5 text-blue-400"
+            class="w-3.5 h-3.5 text-blue-400 animate-pulse"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -403,16 +404,18 @@
             <polyline points="7 10 12 15 17 10" />
             <line x1="12" y1="15" x2="12" y2="3" />
           </svg>
+          <span class="text-[10px] font-mono text-blue-400">Downloading</span>
         </span>
       {:else if groupInstanceStatus.status === "LOADING" || groupInstanceStatus.status === "WARMING UP"}
-        <span class="flex-shrink-0 animate-pulse" title="Loading">
+        <span class="flex-shrink-0 flex items-center gap-1" title="Starting">
           <svg
-            class="w-3 h-3 text-yellow-400"
+            class="w-2.5 h-2.5 text-yellow-400 animate-pulse"
             viewBox="0 0 12 12"
             fill="currentColor"
           >
             <circle cx="6" cy="6" r="5" />
           </svg>
+          <span class="text-[10px] font-mono text-yellow-400">Starting</span>
         </span>
       {/if}
     {/if}
@@ -563,19 +566,23 @@
           {#if instanceStatuses[variant.id]}
             {@const instStatus = instanceStatuses[variant.id]}
             {#if instStatus.status === "READY" || instStatus.status === "LOADED" || instStatus.status === "RUNNING"}
-              <span class="flex-shrink-0" title="Running">
+              <span class="flex-shrink-0 flex items-center gap-1" title="Ready">
                 <svg
-                  class="w-3 h-3 text-green-400"
+                  class="w-2.5 h-2.5 text-green-400"
                   viewBox="0 0 12 12"
                   fill="currentColor"
                 >
                   <circle cx="6" cy="6" r="5" />
                 </svg>
+                <span class="text-[10px] font-mono text-green-400">Ready</span>
               </span>
             {:else if instStatus.status === "DOWNLOADING"}
-              <span class="flex-shrink-0 animate-pulse" title="Downloading">
+              <span
+                class="flex-shrink-0 flex items-center gap-1"
+                title="Downloading"
+              >
                 <svg
-                  class="w-3.5 h-3.5 text-blue-400"
+                  class="w-3.5 h-3.5 text-blue-400 animate-pulse"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
@@ -587,16 +594,25 @@
                   <polyline points="7 10 12 15 17 10" />
                   <line x1="12" y1="15" x2="12" y2="3" />
                 </svg>
+                <span class="text-[10px] font-mono text-blue-400"
+                  >Downloading</span
+                >
               </span>
             {:else if instStatus.status === "LOADING" || instStatus.status === "WARMING UP"}
-              <span class="flex-shrink-0 animate-pulse" title="Loading">
+              <span
+                class="flex-shrink-0 flex items-center gap-1"
+                title="Starting"
+              >
                 <svg
-                  class="w-3 h-3 text-yellow-400"
+                  class="w-2.5 h-2.5 text-yellow-400 animate-pulse"
                   viewBox="0 0 12 12"
                   fill="currentColor"
                 >
                   <circle cx="6" cy="6" r="5" />
                 </svg>
+                <span class="text-[10px] font-mono text-yellow-400"
+                  >Starting</span
+                >
               </span>
             {/if}
           {/if}

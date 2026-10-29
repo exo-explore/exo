@@ -160,13 +160,23 @@
       return { prettyName: null, card: null };
     const meta = modelMeta as Record<string, unknown>;
 
-    const prettyName = (meta.prettyName as string) ?? null;
+    const baseModel =
+      (meta.base_model as string) ?? (meta.baseModel as string) ?? "";
+    const quantization = (meta.quantization as string) ?? "";
+    // The model's display name ("Llama 3.2 1B · 4bit"); the repo id is shown
+    // under it
+    const prettyName =
+      (meta.prettyName as string) ??
+      (baseModel
+        ? quantization
+          ? `${baseModel} · ${quantization}`
+          : baseModel
+        : null);
 
     const card: ModelCardInfo = {
       family: (meta.family as string) ?? "",
-      quantization: (meta.quantization as string) ?? "",
-      baseModel:
-        (meta.base_model as string) ?? (meta.baseModel as string) ?? "",
+      quantization,
+      baseModel,
       capabilities: Array.isArray(meta.capabilities)
         ? (meta.capabilities as string[])
         : [],
@@ -193,7 +203,7 @@
         return;
       }
 
-      // Every node in the cluster gets a column, even one whose download
+      // Every device in the cluster gets a column, even one whose download
       // statuses haven't been announced (yet), so it can still be downloaded to.
       const allNodeIds = [
         ...new Set([
@@ -385,7 +395,7 @@
       // fetch() rejects with a TypeError when the API can't be reached
       const reason =
         error instanceof TypeError
-          ? "can't reach exo"
+          ? "can't reach EXO"
           : error instanceof Error
             ? error.message
             : String(error);
@@ -451,7 +461,7 @@
     type="button"
     class="text-white/50 hover:text-red-400 transition-colors cursor-pointer"
     onclick={() => confirmAndDelete(row, col)}
-    title="Delete from this node"
+    title="Delete from this device"
   >
     {@render trashIcon()}
   </button>
@@ -468,7 +478,7 @@
           Downloads
         </h1>
         <p class="text-sm text-exo-light-gray">
-          Overview of models on each node
+          Models downloaded on each device
         </p>
       </div>
       <div class="flex items-center gap-3">
@@ -609,14 +619,14 @@
                           cell.speed,
                         )} - ETA {formatEta(cell.etaMs)}"
                       >
-                        <span class="text-exo-yellow text-sm font-medium"
+                        <span class="text-blue-400 text-sm font-medium"
                           >{clampPercent(cell.percentage).toFixed(1)}%</span
                         >
                         <div
                           class="w-16 h-2 bg-exo-black/60 rounded-sm overflow-hidden"
                         >
                           <div
-                            class="h-full bg-gradient-to-r from-exo-yellow to-exo-yellow/70 transition-all duration-300"
+                            class="h-full bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-300"
                             style="width: {clampPercent(
                               cell.percentage,
                             ).toFixed(1)}%"
@@ -669,7 +679,7 @@
                                 class="text-white/50 hover:text-exo-yellow transition-colors cursor-pointer"
                                 onclick={() =>
                                   startDownload(col.nodeId, row.shardMetadata!)}
-                                title="Resume download on this node"
+                                title="Resume download on this device"
                               >
                                 {@render downloadIcon()}
                               </button>
@@ -686,7 +696,7 @@
                             class="text-white/50 hover:text-exo-yellow transition-colors cursor-pointer"
                             onclick={() =>
                               startDownload(col.nodeId, row.shardMetadata!)}
-                            title="Start download on this node"
+                            title="Start download on this device"
                           >
                             {@render downloadIcon("w-6 h-6")}
                           </button>
@@ -726,7 +736,7 @@
                               class="text-white/50 hover:text-exo-yellow transition-colors cursor-pointer"
                               onclick={() =>
                                 startDownload(col.nodeId, row.shardMetadata!)}
-                              title="Retry download on this node"
+                              title="Retry download on this device"
                             >
                               {@render downloadIcon()}
                             </button>
@@ -737,7 +747,7 @@
                     {:else}
                       <div
                         class="flex flex-col items-center"
-                        title="Not on this node"
+                        title="Not on this device"
                       >
                         <span class="text-exo-medium-gray text-lg leading-none"
                           >--</span
@@ -748,7 +758,7 @@
                             class="text-white/50 hover:text-exo-yellow transition-colors mt-0.5 opacity-0 group-hover:opacity-100 cursor-pointer"
                             onclick={() =>
                               startDownload(col.nodeId, row.shardMetadata!)}
-                            title="Download to this node"
+                            title="Download to this device"
                           >
                             {@render downloadIcon()}
                           </button>
@@ -871,7 +881,7 @@
               />
               <path class="text-green-400" d="m9 13 2 2 4-4" />
             </svg>
-            <span class="text-white/40">On nodes:</span>
+            <span class="text-white/40">On devices:</span>
           </div>
           <div class="flex flex-col gap-1.5 mt-1">
             {#each nodeColumns as col}
@@ -883,7 +893,7 @@
                     'completed'
                       ? 'bg-green-500/10 text-green-400/80 border border-green-500/20'
                       : cellStatus.kind === 'downloading'
-                        ? 'bg-exo-yellow/10 text-exo-yellow/80 border border-exo-yellow/20'
+                        ? 'bg-blue-500/10 text-blue-400/80 border border-blue-500/20'
                         : cellStatus.kind === 'failed'
                           ? 'bg-red-500/10 text-red-400/80 border border-red-500/20'
                           : 'bg-white/5 text-white/50 border border-white/10'}"

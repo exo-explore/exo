@@ -225,7 +225,7 @@
         .attr("font-size", isMinimized ? 10 : 12)
         .attr("font-family", "SF Mono, monospace")
         .attr("letter-spacing", "0.1em")
-        .text("AWAITING NODES");
+        .text("AWAITING DEVICES");
       return;
     }
 
