@@ -9,8 +9,7 @@ final class BugReportWindowController: ObservableObject {
 
     func open() {
         if let existing = window, existing.isVisible {
-            existing.makeKeyAndOrderFront(nil)
-            NSApp.activate()
+            WindowActivation.bringToFront(existing)
             return
         }
 
@@ -27,8 +26,7 @@ final class BugReportWindowController: ObservableObject {
         newWindow.center()
         newWindow.setFrameAutosaveName("ExoBugReportWindow")
         newWindow.isReleasedWhenClosed = false
-        newWindow.makeKeyAndOrderFront(nil)
-        NSApp.activate()
+        WindowActivation.bringToFront(newWindow)
 
         window = newWindow
     }

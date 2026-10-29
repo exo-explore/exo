@@ -36,6 +36,7 @@ struct EXOApp: App {
         _controller = StateObject(wrappedValue: controller)
         let service = ClusterStateService()
         service.resetWhenExoStarts(controller.$status)
+        controller.modelsRunningOnThisMac = { [weak service] in service?.isRunningModelsOnThisMac }
         _stateService = StateObject(wrappedValue: service)
         let networkStatus = NetworkStatusService()
         _networkStatusService = StateObject(wrappedValue: networkStatus)
@@ -54,11 +55,7 @@ struct EXOApp: App {
             bugReportWindowController: bugReportWindow,
             startupDashboardOpener: StartupDashboardOpener(isFirstRun: isFirstRun))
         _menuBar = StateObject(wrappedValue: menuBar)
-        SettingsOpener.openSettings = {
-            settingsWindow.open(
-                controller: controller, updater: updater, networkStatusService: networkStatus,
-                thunderboltBridgeService: thunderboltBridge, stateService: service)
-        }
+        SettingsOpener.openSettings = { settingsWindow.open() }
         guard !isHostingTests else { return }
 
         menuBar.install()
@@ -93,11 +90,16 @@ struct EXOApp: App {
         }
     }
 
-    /// The menu bar item is AppKit (`MenuBarController`); SwiftUI only needs
-    /// a scene, and this one shows nothing until Settings moves into it.
+    /// The menu bar item is AppKit (`MenuBarController`); the one SwiftUI
+    /// scene is the Settings window.
     var body: some Scene {
         Settings {
-            EmptyView()
+            SettingsView()
+                .environmentObject(controller)
+                .environmentObject(updater)
+                .environmentObject(stateService)
+                .environmentObject(networkStatusService)
+                .environmentObject(localNetworkChecker)
         }
     }
 }

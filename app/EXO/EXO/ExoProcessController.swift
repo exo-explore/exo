@@ -8,10 +8,7 @@ private let hfTokenKey = "EXOHFToken"
 private let hfEndpointKey = "EXOHFEndpoint"
 private let enableImageModelsKey = "EXOEnableImageModels"
 private let offlineModeKey = "EXOOfflineMode"
-private let fastSynchEnabledKey = "EXOFastSynchEnabled"
 private let defaultModelsDirKey = "EXODefaultModelsDir"
-private let additionalModelsDirsKey = "EXOAdditionalModelsDirs"
-private let readOnlyModelsDirsKey = "EXOReadOnlyModelsDirs"
 private let customEnvironmentVariablesKey = "EXOCustomEnvironmentVariables"
 
 @MainActor
@@ -56,100 +53,102 @@ final class ExoProcessController: ObservableObject {
     private(set) var failedAfterRunning = false
     /// Whether the current exo has answered since it was started.
     private var hasAnsweredSinceLaunch = false
-    @Published var customNamespace: String = {
-        return UserDefaults.standard.string(forKey: customNamespaceKey) ?? ""
-    }()
-    {
+    // MARK: Settings that exo reads when it starts
+
+    private let defaults: UserDefaults
+
+    @Published var customNamespace: String {
         didSet {
-            UserDefaults.standard.set(customNamespace, forKey: customNamespaceKey)
+            defaults.set(customNamespace, forKey: customNamespaceKey)
+            settingsDidChange()
         }
     }
-    @Published var hfToken: String = {
-        return UserDefaults.standard.string(forKey: hfTokenKey) ?? ""
-    }()
-    {
+    @Published var hfToken: String {
         didSet {
-            UserDefaults.standard.set(hfToken, forKey: hfTokenKey)
+            defaults.set(hfToken, forKey: hfTokenKey)
+            settingsDidChange()
         }
     }
-    @Published var hfEndpoint: String = {
-        return UserDefaults.standard.string(forKey: hfEndpointKey) ?? ""
-    }()
-    {
+    @Published var hfEndpoint: String {
         didSet {
-            UserDefaults.standard.set(hfEndpoint, forKey: hfEndpointKey)
+            defaults.set(hfEndpoint, forKey: hfEndpointKey)
+            settingsDidChange()
         }
     }
-    @Published var enableImageModels: Bool = {
-        return UserDefaults.standard.bool(forKey: enableImageModelsKey)
-    }()
-    {
+    @Published var enableImageModels: Bool {
         didSet {
-            UserDefaults.standard.set(enableImageModels, forKey: enableImageModelsKey)
+            defaults.set(enableImageModels, forKey: enableImageModelsKey)
+            settingsDidChange()
         }
     }
-    @Published var offlineMode: Bool = {
-        return UserDefaults.standard.bool(forKey: offlineModeKey)
-    }()
-    {
+    @Published var offlineMode: Bool {
         didSet {
-            UserDefaults.standard.set(offlineMode, forKey: offlineModeKey)
+            defaults.set(offlineMode, forKey: offlineModeKey)
+            settingsDidChange()
         }
     }
-    @Published var fastSynchEnabled: Bool = {
-        if UserDefaults.standard.object(forKey: fastSynchEnabledKey) == nil {
-            return true
-        }
-        return UserDefaults.standard.bool(forKey: fastSynchEnabledKey)
-    }()
-    {
+    @Published var fastSynch: FastSynchSetting {
         didSet {
-            UserDefaults.standard.set(fastSynchEnabled, forKey: fastSynchEnabledKey)
+            defaults.set(fastSynch.rawValue, forKey: FastSynchSetting.storageKey)
+            settingsDidChange()
         }
     }
-    @Published var defaultModelsDir: String = {
-        return UserDefaults.standard.string(forKey: defaultModelsDirKey) ?? ""
-    }()
-    {
+    /// Where exo downloads models. Empty means its default, ~/.exo/models.
+    @Published var defaultModelsDir: String {
         didSet {
-            UserDefaults.standard.set(defaultModelsDir, forKey: defaultModelsDirKey)
+            defaults.set(defaultModelsDir, forKey: defaultModelsDirKey)
+            settingsDidChange()
         }
     }
-    @Published var additionalModelsDirs: String = {
-        return UserDefaults.standard.string(forKey: additionalModelsDirsKey) ?? ""
-    }()
-    {
+    @Published var otherModelFolders: [ModelFolder] {
         didSet {
-            UserDefaults.standard.set(additionalModelsDirs, forKey: additionalModelsDirsKey)
+            ModelFolder.save(otherModelFolders, to: defaults)
+            settingsDidChange()
         }
     }
-    @Published var readOnlyModelsDirs: String = {
-        return UserDefaults.standard.string(forKey: readOnlyModelsDirsKey) ?? ""
-    }()
-    {
+    @Published var customEnvironmentVariables: [CustomEnvironmentVariable] {
         didSet {
-            UserDefaults.standard.set(readOnlyModelsDirs, forKey: readOnlyModelsDirsKey)
-        }
-    }
-    @Published var customEnvironmentVariables: [CustomEnvironmentVariable] = {
-        guard
-            let data = UserDefaults.standard.data(forKey: customEnvironmentVariablesKey),
-            let decoded = try? JSONDecoder().decode(
-                [CustomEnvironmentVariable].self, from: data
-            )
-        else {
-            return []
-        }
-        return decoded
-    }()
-    {
-        didSet {
-            guard let data = try? JSONEncoder().encode(customEnvironmentVariables) else {
-                return
+            if let data = try? JSONEncoder().encode(customEnvironmentVariables) {
+                defaults.set(data, forKey: customEnvironmentVariablesKey)
             }
-            UserDefaults.standard.set(data, forKey: customEnvironmentVariablesKey)
+            settingsDidChange()
         }
     }
+
+    /// The settings as exo would get them if it started now.
+    var launchSettings: ExoLaunchSettings {
+        ExoLaunchSettings(
+            clusterName: customNamespace,
+            huggingFaceToken: hfToken,
+            huggingFaceEndpoint: hfEndpoint,
+            showImageModels: enableImageModels,
+            offline: offlineMode,
+            fastSynch: fastSynch,
+            downloadFolder: defaultModelsDir,
+            otherModelFolders: otherModelFolders,
+            customEnvironmentVariables: customEnvironmentVariables
+        )
+    }
+
+    /// Whether exo runs with older settings than these and restarting it
+    /// would stop models running on this Mac, so the user is asked first.
+    /// When nothing on this Mac would stop, a change restarts exo by itself.
+    @Published private(set) var needsRestart = false
+
+    /// Whether a model has a part running on this Mac, or nil if that isn't
+    /// known. The app sets it from the cluster state.
+    var modelsRunningOnThisMac: () -> Bool? = { nil }
+
+    /// How long settings must stay unchanged before they are applied, so
+    /// that several quick changes restart exo once.
+    static let settingsApplyDelay: Duration = .seconds(1)
+
+    /// The settings environment the running exo was started with.
+    private var runningSettingsEnvironment: [String: String]?
+    private var applySettingsTask: Task<Void, Never>?
+    /// Settings text fields being edited. Changes are applied once the user
+    /// has left them, so exo doesn't restart between two fields.
+    private var settingsFieldsBeingEdited = Set<UUID>()
 
     private var process: Process?
     private var runtimeDirectoryURL: URL?
@@ -165,10 +164,24 @@ final class ExoProcessController: ObservableObject {
     /// this app didn't start still holds exo's PID lock.
     init(
         readinessProbe: @escaping () async -> Bool = { await ExoReadiness.answers() },
-        previousExoIsRunning: @escaping () -> Bool = { ExoPidLock.isHeld() }
+        previousExoIsRunning: @escaping () -> Bool = { ExoPidLock.isHeld() },
+        defaults: UserDefaults = .standard
     ) {
         self.readinessProbe = readinessProbe
         self.previousExoIsRunning = previousExoIsRunning
+        self.defaults = defaults
+        customNamespace = defaults.string(forKey: customNamespaceKey) ?? ""
+        hfToken = defaults.string(forKey: hfTokenKey) ?? ""
+        hfEndpoint = defaults.string(forKey: hfEndpointKey) ?? ""
+        enableImageModels = defaults.bool(forKey: enableImageModelsKey)
+        offlineMode = defaults.bool(forKey: offlineModeKey)
+        fastSynch = FastSynchSetting.load(from: defaults)
+        defaultModelsDir = defaults.string(forKey: defaultModelsDirKey) ?? ""
+        otherModelFolders = ModelFolder.load(from: defaults)
+        customEnvironmentVariables =
+            defaults.data(forKey: customEnvironmentVariablesKey).flatMap {
+                try? JSONDecoder().decode([CustomEnvironmentVariable].self, from: $0)
+            } ?? []
     }
 
     /// Finishes once the exo that was last stopped has exited.
@@ -220,7 +233,16 @@ final class ExoProcessController: ObservableObject {
                 at: exoHomeURL, withIntermediateDirectories: true
             )
             child.currentDirectoryURL = exoHomeURL
-            child.environment = makeEnvironment(for: runtimeURL)
+            let settingsEnvironment = launchSettings.environment(buildTag: buildTag())
+            for variable in customEnvironmentVariables where variable.hasInvalidName {
+                Self.logger.warning(
+                    "Not passing custom environment variable with invalid name \"\(variable.trimmedKey, privacy: .public)\" to exo"
+                )
+            }
+            child.environment = Self.makeEnvironment(
+                base: ProcessInfo.processInfo.environment,
+                runtimeURL: runtimeURL,
+                settingsEnvironment: settingsEnvironment)
 
             // exo's output goes to the log so a failure can be explained. If
             // the log can't be opened, exo still runs, without it.
@@ -257,11 +279,13 @@ final class ExoProcessController: ObservableObject {
                         self.status = .failed(message: reason.message)
                         self.lastError = reason.message
                     }
+                    self.runningWithSettings(nil)
                 }
             }
 
             try child.run()
             process = child
+            runningWithSettings(settingsEnvironment)
             markRunningOnceReady(child)
             startLogRotation()
         } catch {
@@ -336,6 +360,7 @@ final class ExoProcessController: ObservableObject {
 
     func stop() {
         cancelPendingLaunch()
+        runningWithSettings(nil)
         readinessTask?.cancel()
         readinessTask = nil
         launchAfterStopTask?.cancel()
@@ -393,6 +418,59 @@ final class ExoProcessController: ObservableObject {
     func restart() {
         stop()
         launch()
+    }
+
+    // MARK: Applying settings
+
+    /// Restarts exo so it uses the current settings. Running models stop.
+    func restartToApplySettings() {
+        restart()
+    }
+
+    /// Tells the controller that a settings text field started or stopped
+    /// being edited.
+    func settingsField(_ field: UUID, isEditing: Bool) {
+        if isEditing {
+            settingsFieldsBeingEdited.insert(field)
+        } else if settingsFieldsBeingEdited.remove(field) != nil {
+            settingsDidChange()
+        }
+    }
+
+    private func settingsDidChange() {
+        applySettingsTask?.cancel()
+        applySettingsTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.settingsApplyDelay)
+            guard !Task.isCancelled else { return }
+            self?.applySettings()
+        }
+    }
+
+    /// Restarts exo with the changed settings if nothing on this Mac would
+    /// stop; otherwise asks first, through `needsRestart`.
+    private func applySettings() {
+        guard settingsFieldsBeingEdited.isEmpty else { return }
+        let decision = SettingsRestartPolicy.decide(
+            status: status,
+            runningEnvironment: runningSettingsEnvironment,
+            settingsEnvironment: launchSettings.environment(buildTag: buildTag()),
+            modelsRunningOnThisMac: modelsRunningOnThisMac()
+        )
+        switch decision {
+        case .nothing:
+            needsRestart = false
+        case .restartNow:
+            Self.logger.info("Restarting exo to apply changed settings")
+            restart()
+        case .ask:
+            needsRestart = true
+        }
+    }
+
+    /// Records the settings exo was started with, or nil once it has stopped.
+    private func runningWithSettings(_ environment: [String: String]?) {
+        runningSettingsEnvironment = environment
+        needsRestart = false
     }
 
     /// Starts exo as the app starts, saying "Starting…" straight away. An exo
@@ -454,25 +532,15 @@ final class ExoProcessController: ObservableObject {
         throw RuntimeError("Unable to locate the packaged EXO runtime.")
     }
 
-    private func makeEnvironment(for runtimeURL: URL) -> [String: String] {
-        var environment = ProcessInfo.processInfo.environment
+    /// exo's environment: the app's own, with the runtime's folders first on
+    /// PATH, and `settingsEnvironment` (see `ExoLaunchSettings`) over it.
+    nonisolated static func makeEnvironment(
+        base: [String: String],
+        runtimeURL: URL,
+        settingsEnvironment: [String: String]
+    ) -> [String: String] {
+        var environment = base
         environment["EXO_RUNTIME_DIR"] = runtimeURL.path
-        environment["EXO_ZENOH_NAMESPACE"] = computeNamespace()
-        if !hfToken.isEmpty {
-            environment["HF_TOKEN"] = hfToken
-        }
-        // Also fixes up a value saved before Settings normalised it.
-        let endpoint = HuggingFaceEndpoint.normalized(hfEndpoint)
-        if !endpoint.isEmpty {
-            environment["HF_ENDPOINT"] = endpoint
-        }
-        if enableImageModels {
-            environment["EXO_ENABLE_IMAGE_MODELS"] = "true"
-        }
-        if offlineMode {
-            environment["EXO_OFFLINE"] = "true"
-        }
-        environment["EXO_FAST_SYNCH"] = fastSynchEnabled ? "true" : "false"
 
         var paths: [String] = []
         if let existing = environment["PATH"], !existing.isEmpty {
@@ -498,36 +566,18 @@ final class ExoProcessController: ObservableObject {
 
         environment["PATH"] = paths.joined(separator: ":")
 
-        let trimmedDefaultModelsDir = defaultModelsDir.trimmingCharacters(in: .whitespaces)
-        if !trimmedDefaultModelsDir.isEmpty {
-            environment["EXO_DEFAULT_MODELS_DIR"] = trimmedDefaultModelsDir
-        }
-        let trimmedAdditionalModelsDirs = additionalModelsDirs.trimmingCharacters(in: .whitespaces)
-        if !trimmedAdditionalModelsDirs.isEmpty {
-            environment["EXO_MODELS_DIRS"] = trimmedAdditionalModelsDirs
-        }
-        let trimmedReadOnlyModelsDirs = readOnlyModelsDirs.trimmingCharacters(in: .whitespaces)
-        if !trimmedReadOnlyModelsDirs.isEmpty {
-            environment["EXO_MODELS_READ_ONLY_DIRS"] = trimmedReadOnlyModelsDirs
-        }
-
-        // Apply user-defined arbitrary environment variables last so that
-        // power users can override any of the typed fields above when
-        // necessary. Empty or invalid names (e.g. stored by an older version)
-        // are never passed to exo.
-        for variable in customEnvironmentVariables where variable.hasInvalidName {
-            Self.logger.warning(
-                "Not passing custom environment variable with invalid name \"\(variable.trimmedKey, privacy: .public)\" to exo"
-            )
-        }
-        for variable in CustomEnvironmentVariable.sanitized(customEnvironmentVariables) {
-            environment[variable.key] = variable.value
-        }
-
+        // Last, so that custom variables can override anything above.
+        environment.merge(settingsEnvironment) { _, setting in setting }
         return environment
     }
 
     private func buildTag() -> String {
+        Self.buildTag
+    }
+
+    /// This build's version, which is also exo's cluster name when none is
+    /// set.
+    nonisolated static var buildTag: String {
         if let tag = Bundle.main.infoDictionary?["EXOBuildTag"] as? String, !tag.isEmpty {
             return tag
         }
@@ -537,12 +587,6 @@ final class ExoProcessController: ObservableObject {
             return short
         }
         return "dev"
-    }
-
-    private func computeNamespace() -> String {
-        let base = buildTag()
-        let custom = customNamespace.trimmingCharacters(in: .whitespaces)
-        return custom.isEmpty ? base : custom
     }
 }
 
