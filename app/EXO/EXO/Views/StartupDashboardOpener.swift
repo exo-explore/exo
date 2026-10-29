@@ -1,15 +1,15 @@
-import Foundation
+import AppKit
 
 /// Opens the web dashboard the first time exo is up after the user opened
-/// the app: with the welcome popout until that has been seen once, then
-/// directly. Nothing opens when the app was started at login. Switching exo
-/// off and on, or Save & Restart in Settings, doesn't open it again, and
-/// nothing opens while "Open dashboard on startup" is off.
+/// the app, while "Open dashboard on startup" is on. Nothing opens when the
+/// app was started at login, or on the first run, which ends with the
+/// welcome window's own Open Dashboard button. Switching exo off and on, or
+/// restarting it, doesn't open it again.
 @MainActor
 final class StartupDashboardOpener {
     private let preferences: StartupPreferences
     private let launchKind: () -> AppLaunchKind
-    private let showWelcome: (_ onSeen: @escaping () -> Void) -> Void
+    private let isFirstRun: Bool
     private let openDashboard: () -> Void
     private var hasHandledFirstStart = false
 
@@ -18,25 +18,24 @@ final class StartupDashboardOpener {
     init(
         preferences: StartupPreferences,
         launchKind: @escaping () -> AppLaunchKind,
-        showWelcome: @escaping (_ onSeen: @escaping () -> Void) -> Void,
+        isFirstRun: Bool,
         openDashboard: @escaping () -> Void
     ) {
         self.preferences = preferences
         self.launchKind = launchKind
-        self.showWelcome = showWelcome
+        self.isFirstRun = isFirstRun
         self.openDashboard = openDashboard
     }
 
-    convenience init() {
-        let popout = FirstLaunchPopout()
+    convenience init(isFirstRun: Bool) {
         self.init(
             preferences: StartupPreferences(),
             launchKind: { AppDelegate.launchKind },
-            showWelcome: { onSeen in
-                popout.onComplete = onSeen
-                popout.show()
-            },
-            openDashboard: { FirstLaunchPopout.openDashboard() }
+            isFirstRun: isFirstRun,
+            openDashboard: {
+                guard let url = URL(string: MenuBarMenu.dashboardURL) else { return }
+                NSWorkspace.shared.open(url)
+            }
         )
     }
 
@@ -44,13 +43,8 @@ final class StartupDashboardOpener {
     func exoIsUp() {
         guard !hasHandledFirstStart else { return }
         hasHandledFirstStart = true
-        switch preferences.startupDashboard(launch: launchKind()) {
-        case .none:
-            break
-        case .showWelcome:
-            let preferences = preferences
-            showWelcome { preferences.markOnboardingCompleted() }
-        case .openDashboard:
+        guard !isFirstRun else { return }
+        if preferences.startupDashboard(launch: launchKind()) == .openDashboard {
             openDashboard()
         }
     }

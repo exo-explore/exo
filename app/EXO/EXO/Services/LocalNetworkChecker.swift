@@ -117,6 +117,8 @@ final class LocalNetworkChecker: ObservableObject {
 
             Self.logger.debug("Checking local network connectivity (first check: \(isFirstCheck))")
             let result = await self.checkConnectivity(timeout: timeout)
+            // A newer check replaced this one; its result is out of date.
+            guard !Task.isCancelled else { return }
             let previous = self.status
             self.status = result
             self.accessIsOff = Self.accessIsOff(current: result, previous: previous)

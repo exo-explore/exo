@@ -1,25 +1,41 @@
 import Foundation
 
-/// What EXO does on its own when the app starts. Both behaviours default to
-/// on, as they were before they became settings, and are changed from
-/// Settings → General → Startup. Starting at login is always silent.
+/// What EXO does on its own when the app starts, and whether this is its
+/// first run on this Mac. Starting at login is always silent.
 struct StartupPreferences {
     static let openDashboardOnStartupKey = "EXOOpenDashboardOnStartup"
     static let openDashboardOnStartupDefault = true
     static let launchAtLoginDefaultKey = "EXOLaunchAtLoginDefault"
-    /// Set once the welcome popout has been dismissed, so its presence means
-    /// EXO has run on this Mac before.
+    /// Set once the first-run welcome (or, in earlier versions, the welcome
+    /// popout) has been seen, so its presence means EXO has run on this Mac
+    /// before.
     static let onboardingCompletedKey = "EXOOnboardingCompleted"
+    /// Whether the welcome window is still due; see `FirstRun`.
+    static let firstRunKey = "EXOFirstRun"
 
-    /// Whether the new-install default of launching at login still has to be
-    /// applied.
+    /// Keys that only an EXO that has already run on this Mac writes: the
+    /// welcome popout (1.0.x), the launch-at-login default, the Local Network
+    /// check, and Sparkle's first launch.
+    static let hasRunBeforeKeys = [
+        onboardingCompletedKey, launchAtLoginDefaultKey,
+        "LocalNetworkChecker.hasCompletedInitialCheck", "SUHasLaunchedBefore",
+    ]
+
+    /// Whether the app should register itself as a login item when it starts.
     enum LaunchAtLoginDefault: String {
-        /// A new install that hasn't been registered as a login item yet.
+        /// The user ticked "Open EXO at login" in the welcome window, and
+        /// registering hasn't succeeded yet (e.g. the app was running from
+        /// the disk image).
         case pending
-        /// Registered, or left to the user (an upgrade, or the user has
-        /// changed the setting). The app no longer changes the login item on
-        /// its own.
+        /// Registered, or left to the user. The app no longer changes the
+        /// login item on its own.
         case applied
+    }
+
+    /// Whether the welcome window is still due.
+    enum FirstRun: String {
+        case welcome
+        case done
     }
 
     let defaults: UserDefaults
@@ -27,6 +43,35 @@ struct StartupPreferences {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
     }
+
+    // MARK: - First run
+
+    /// Decides, as the app starts and before anything else writes defaults,
+    /// whether to show the welcome window. A new install shows it until it
+    /// has been seen; an upgrade from a version that already ran never does.
+    func welcomeIsDue() -> Bool {
+        let state = Self.firstRun(
+            stored: defaults.string(forKey: Self.firstRunKey).flatMap(FirstRun.init(rawValue:)),
+            hasRunBefore: Self.hasRunBeforeKeys.contains { defaults.object(forKey: $0) != nil })
+        defaults.set(state.rawValue, forKey: Self.firstRunKey)
+        if state == .done, !onboardingCompleted {
+            // An upgrade: as if the welcome had been seen.
+            markOnboardingCompleted()
+        }
+        return state == .welcome
+    }
+
+    static func firstRun(stored: FirstRun?, hasRunBefore: Bool) -> FirstRun {
+        stored ?? (hasRunBefore ? .done : .welcome)
+    }
+
+    /// The welcome window was seen: finished, or closed early.
+    func markWelcomeSeen() {
+        defaults.set(FirstRun.done.rawValue, forKey: Self.firstRunKey)
+        markOnboardingCompleted()
+    }
+
+    // MARK: - Dashboard
 
     /// Whether to open the web dashboard in the browser when exo first comes
     /// up after the user opens the app (never at login). Settings writes this
@@ -36,8 +81,7 @@ struct StartupPreferences {
             ?? Self.openDashboardOnStartupDefault
     }
 
-    /// Whether the welcome popout has been seen (dismissed, used, or left to
-    /// open the dashboard by itself).
+    /// Whether the first-run welcome has been seen.
     var onboardingCompleted: Bool {
         defaults.bool(forKey: Self.onboardingCompletedKey)
     }
@@ -48,36 +92,40 @@ struct StartupPreferences {
 
     enum StartupDashboard: Equatable {
         case none
-        /// The welcome popout, which opens the dashboard.
-        case showWelcome
         case openDashboard
     }
 
-    /// How the dashboard is opened when exo first comes up after the app
-    /// starts: the welcome popout until it has been seen once, then directly.
-    /// Nothing opens when macOS started the app at login: a login item that
-    /// opens a browser tab at every login is an interruption, not a feature.
+    /// Whether to open the dashboard when exo first comes up after the app
+    /// starts: only when the user opened EXO by hand, after the first run,
+    /// and while the setting is on. A login item that opens a browser tab at
+    /// every login is an interruption, and the first run ends with the
+    /// welcome window's own Open Dashboard button instead.
     func startupDashboard(launch: AppLaunchKind) -> StartupDashboard {
-        guard launch == .manual, openDashboardOnStartup else { return .none }
-        return onboardingCompleted ? .openDashboard : .showWelcome
+        guard launch == .manual, openDashboardOnStartup, onboardingCompleted else { return .none }
+        return .openDashboard
     }
 
-    /// Decides, as the app starts, whether to register it as a login item now.
-    ///
-    /// Only a new install is opted in: it stays `pending` until registering
-    /// succeeds, and registering is skipped while the app runs translocated
-    /// (opened straight from Downloads or the disk image), where it would
-    /// register a temporary copy. An upgrade from a version that registered on
-    /// every launch is left as it is, so a login item the user removed stays
-    /// removed. Once applied, only Settings changes the login item.
+    // MARK: - Launch at login
+
+    /// Records the welcome window's "Open EXO at login" choice. A ticked box
+    /// is registered as the app starts (now, or at the next launch from a
+    /// stable location); an unticked one is left alone from then on.
+    func chooseLaunchAtLogin(_ open: Bool) {
+        defaults.set(
+            (open ? LaunchAtLoginDefault.pending : .applied).rawValue,
+            forKey: Self.launchAtLoginDefaultKey)
+    }
+
+    /// Whether to register the app as a login item now: only when the user
+    /// asked for it in the welcome window and it hasn't been registered yet.
+    /// Registering is skipped while the app runs translocated (opened
+    /// straight from Downloads or the disk image), where it would register a
+    /// temporary copy. Nothing is registered without that choice: an upgrade
+    /// keeps whatever login item it had.
     func shouldRegisterLaunchAtLoginOnStartup(isTranslocated: Bool) -> Bool {
-        let state = Self.launchAtLoginDefault(
-            stored: defaults.string(forKey: Self.launchAtLoginDefaultKey)
-                .flatMap(LaunchAtLoginDefault.init(rawValue:)),
-            hasRunBefore: defaults.object(forKey: Self.onboardingCompletedKey) != nil
-        )
-        defaults.set(state.rawValue, forKey: Self.launchAtLoginDefaultKey)
-        return state == .pending && !isTranslocated
+        let stored = defaults.string(forKey: Self.launchAtLoginDefaultKey)
+            .flatMap(LaunchAtLoginDefault.init(rawValue:))
+        return stored == .pending && !isTranslocated
     }
 
     /// Records that the app should no longer change the login item on its
@@ -89,21 +137,9 @@ struct StartupPreferences {
     /// Forgets the startup choices so that reinstalling after the in-app
     /// Uninstall behaves like a new install.
     func resetForUninstall() {
-        for key in [
-            Self.launchAtLoginDefaultKey, Self.onboardingCompletedKey,
-            Self.openDashboardOnStartupKey,
-        ] {
+        for key in Self.hasRunBeforeKeys + [Self.openDashboardOnStartupKey, Self.firstRunKey] {
             defaults.removeObject(forKey: key)
         }
-    }
-
-    /// The first launch of a version with this setting classifies the Mac:
-    /// if EXO has run here before it is an upgrade (`applied`), otherwise a
-    /// new install (`pending`). After that the stored value is used.
-    static func launchAtLoginDefault(
-        stored: LaunchAtLoginDefault?, hasRunBefore: Bool
-    ) -> LaunchAtLoginDefault {
-        stored ?? (hasRunBefore ? .applied : .pending)
     }
 
     /// Whether `bundlePath` is an App Translocation path, used when a
