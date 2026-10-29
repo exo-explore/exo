@@ -526,3 +526,19 @@ class DeleteTracesRequest(FrozenModel):
 class DeleteTracesResponse(FrozenModel):
     deleted: list[str]
     not_found: list[str]
+
+
+class LogFileListItem(FrozenModel):
+    name: str
+    file_size: int
+    modified_at: str
+
+
+class LogFileListResponse(FrozenModel):
+    logs: list[LogFileListItem]
+
+
+class LogTailResponse(FrozenModel):
+    name: str
+    content: str
+    truncated: bool
