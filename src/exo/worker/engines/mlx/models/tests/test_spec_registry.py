@@ -42,6 +42,8 @@ _MAIN_TENSOR_ARCHITECTURES = [
     ["Step3p5ForCausalLM"],
     ["NemotronHForCausalLM"],
     ["Gemma4ForConditionalGeneration"],
+    # Changed on purpose: Inkling is new.
+    ["InklingForConditionalGeneration"],
 ]
 
 _MAIN_MLX_VLM_MODEL_TYPE_ALIASES: dict[str, str] = {
@@ -76,6 +78,9 @@ def _main_eos_token_ids(model_id: str) -> list[int] | None:
         return [248046, 248044]
     elif "gemma-4" in model_id_lower or "gemma-3" in model_id_lower:
         return [1, 106, 50]
+    # Changed on purpose: Inkling is new.
+    elif "inkling" in model_id_lower:
+        return [200006]
     return None
 
 
@@ -105,7 +110,7 @@ _CARDS = [card for _, card in _CARD_FILES]
 
 
 def test_there_are_builtin_cards() -> None:
-    assert len(_CARDS) == 123
+    assert len(_CARDS) == 125
 
 
 @pytest.mark.parametrize(
@@ -183,6 +188,7 @@ _EOS_FRAGMENTS = [
     "gemma-3",
     "deepseek-v4",
     "llama",
+    "inkling",
 ]
 # Every card's id, plus ids that combine two families' rules, to check their precedence.
 _EOS_MODEL_IDS = (

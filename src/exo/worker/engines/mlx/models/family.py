@@ -88,6 +88,24 @@ class TemplateMessagesHook:
 
     applies_to: Callable[[TextGenerationTaskParams], bool]
     prepare: Callable[[list[dict[str, Any]]], None]
+    # Written between the generation prompt and an assistant prefill (a request whose last
+    # message is a partial assistant turn), for templates that open an assistant message's
+    # content with a marker of their own.
+    prefill_prefix: str = ""
+
+
+@final
+@dataclass(frozen=True)
+class ReasoningEffortHook:
+    """Maps exo's reasoning settings onto a chat template that understands only some
+    ``reasoning_effort`` values (and renders every other one as its maximum)."""
+
+    applies_to: Callable[[TextGenerationTaskParams], bool]
+    # The reasoning_effort to give the template; None gives none (its default).
+    template_effort: Callable[[TextGenerationTaskParams], str | None]
+    # Appended after the generation prompt when the request turns thinking off and the
+    # template has no switch for it (e.g. closing the reasoning block it opened).
+    thinking_off_suffix: Callable[[TextGenerationTaskParams], str | None]
 
 
 @final
@@ -107,4 +125,5 @@ class ModelFamily:
     model_classes: tuple[ModelClasses, ...] = ()
     prompt_encoder: PromptEncoder | None = None
     template_messages_hook: TemplateMessagesHook | None = None
+    reasoning_effort_hook: ReasoningEffortHook | None = None
     tokenizer_loader: TokenizerLoader | None = None
