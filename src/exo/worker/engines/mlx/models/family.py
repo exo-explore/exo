@@ -79,6 +79,9 @@ class PromptEncoder:
 
     applies_to: Callable[[TextGenerationTaskParams], bool]
     encode: Callable[[list[dict[str, Any]], TextGenerationTaskParams], str]
+    # The config.json model_types it renders for. When the loaded model's type is known,
+    # an encoder that lists its model_types is picked by them alone, not by applies_to.
+    model_types: frozenset[str] = frozenset()
 
 
 @final

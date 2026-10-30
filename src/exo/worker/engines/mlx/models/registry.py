@@ -102,10 +102,26 @@ def get_model_classes(config: dict[str, Any]) -> tuple[type[nn.Module], type]:
     return mlx_lm_get_classes(config)
 
 
-def prompt_encoder_for(task_params: TextGenerationTaskParams) -> PromptEncoder | None:
+def model_type_of(model: nn.Module) -> str | None:
+    """The config.json model_type a loaded model was built from (mlx-lm models keep it)."""
+    model_type: object = getattr(model, "model_type", None)
+    return model_type if isinstance(model_type, str) else None
+
+
+def prompt_encoder_for(
+    task_params: TextGenerationTaskParams, model_type: str | None = None
+) -> PromptEncoder | None:
+    """The prompt encoder for the request's model. An encoder that lists model_types is
+    picked by the loaded model's type when that is known; the others (and every encoder,
+    when the type isn't known) by their applies_to on the request."""
     for family in FAMILIES:
         encoder = family.prompt_encoder
-        if encoder is not None and encoder.applies_to(task_params):
+        if encoder is None:
+            continue
+        if encoder.model_types and model_type is not None:
+            if model_type in encoder.model_types:
+                return encoder
+        elif encoder.applies_to(task_params):
             return encoder
     return None
 

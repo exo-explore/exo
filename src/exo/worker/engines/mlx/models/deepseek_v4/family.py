@@ -45,6 +45,8 @@ FAMILY = ModelFamily(
         ),
     ),
     prompt_encoder=PromptEncoder(
-        applies_to=prompt.applies_to, encode=prompt.encode_prompt
+        applies_to=prompt.applies_to,
+        encode=prompt.encode_prompt,
+        model_types=frozenset({"deepseek_v4"}),
     ),
 )

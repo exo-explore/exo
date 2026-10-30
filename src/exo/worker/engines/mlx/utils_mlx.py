@@ -503,6 +503,7 @@ def render_chat_template(
     tokenizer: TokenizerWrapper,
     messages: list[dict[str, Any]],
     task_params: TextGenerationTaskParams,
+    model_type: str | None = None,
 ) -> str:
     """
     Convert TextGenerationTaskParams to a chat template prompt.
@@ -521,7 +522,7 @@ def render_chat_template(
         partial_assistant_content = cast(str, formatted_messages[-1].get("content", ""))
         formatted_messages = formatted_messages[:-1]
 
-    prompt_encoder = prompt_encoder_for(task_params)
+    prompt_encoder = prompt_encoder_for(task_params, model_type)
     if prompt_encoder is not None:
         prompt = prompt_encoder.encode(formatted_messages, task_params)
         if partial_assistant_content:
@@ -582,6 +583,7 @@ def render_chat_template(
 def apply_chat_template(
     tokenizer: TokenizerWrapper,
     task_params: TextGenerationTaskParams,
+    model_type: str | None = None,
 ) -> str:
     messages: list[dict[str, ChatTemplateValue]] = []
     if task_params.chat_template_messages is not None:
@@ -599,7 +601,7 @@ def apply_chat_template(
                 continue
             messages.append({"role": msg.role, "content": msg.content})
 
-    prompt = render_chat_template(tokenizer, messages, task_params)
+    prompt = render_chat_template(tokenizer, messages, task_params, model_type)
     logger.debug(prompt)
 
     return prompt
