@@ -418,3 +418,34 @@ def test_a_family_can_provide_its_own_model_classes(
     )
     with pytest.raises(ValueError, match="not supported"):
         registry.get_model_classes({"model_type": "no_such_model_type"})
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "mlx-community/DeepSeek-V4-Flash",
+        "mlx-community/DeepSeek-V4-Pro",
+        "deepseek-ai/DeepSeek-V4-Flash-0731",
+    ],
+)
+def test_deepseek_v4_ids_get_the_v4_encoder_by_model_type(model_id: str) -> None:
+    v4_encoder = next(
+        family.prompt_encoder
+        for family in registry.FAMILIES
+        if family.spec.name == "deepseek_v4"
+    )
+    task = _task(model_id)
+    assert registry.prompt_encoder_for(task, "deepseek_v4") is v4_encoder
+    # without the loaded model's type, the id still picks it
+    assert registry.prompt_encoder_for(task) is v4_encoder
+
+
+@pytest.mark.parametrize("model_type", ["deepseek_v41", "llama", "glm_moe_dsa"])
+def test_the_v4_encoder_is_not_picked_for_other_model_types(model_type: str) -> None:
+    v4_encoder = next(
+        family.prompt_encoder
+        for family in registry.FAMILIES
+        if family.spec.name == "deepseek_v4"
+    )
+    task = _task("deepseek-ai/DeepSeek-V4.1-Flash")
+    assert registry.prompt_encoder_for(task, model_type) is not v4_encoder
