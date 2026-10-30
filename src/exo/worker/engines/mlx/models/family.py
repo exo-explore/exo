@@ -58,6 +58,10 @@ class Architecture:
     # parallelism, for models that loop over it rather than over their layers.
     pipeline_layer_count: Literal["num_layers", "num_hidden_layers"] | None = None
     output_parser: OutputParser | None = None
+    # PromptEncoder.exact_think_tags for a model rendered through its Jinja chat template:
+    # its template's think tags are exactly the model's format (e.g. a bare `</think>`
+    # that closes thinking when it is off), so exo leaves an unmatched `</think>` as it is.
+    exact_think_tags: bool = False
 
 
 @final

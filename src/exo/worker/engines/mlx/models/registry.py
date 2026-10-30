@@ -126,12 +126,25 @@ def prompt_encoder_for(
     return None
 
 
+# model_types whose architecture renders exact think tags through its Jinja chat template.
+_EXACT_THINK_TAG_MODEL_TYPES = frozenset(
+    architecture.model_type
+    for family in FAMILIES
+    for architecture in family.architectures
+    if architecture.exact_think_tags
+)
+
+
 def keeps_think_tags(
     task_params: TextGenerationTaskParams, model_type: str | None = None
 ) -> bool:
-    """Whether the request's prompt keeps its think tags exactly as rendered."""
+    """Whether the request's prompt keeps its think tags exactly as rendered: its prompt
+    encoder says so, or, for a model rendered through its Jinja chat template, its
+    architecture does."""
     encoder = prompt_encoder_for(task_params, model_type)
-    return encoder is not None and encoder.exact_think_tags
+    if encoder is not None and encoder.exact_think_tags:
+        return True
+    return model_type in _EXACT_THINK_TAG_MODEL_TYPES
 
 
 def template_messages_hooks_for(

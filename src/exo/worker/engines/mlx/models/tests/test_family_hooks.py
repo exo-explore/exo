@@ -43,3 +43,35 @@ def test_think_tags_are_kept_only_when_the_encoder_says_so(
     )
     assert registry.keeps_think_tags(task, "some_type") is expected
     assert seen == ["some_type"]
+
+
+@pytest.mark.parametrize(
+    ("exact_model_types", "model_type", "expected"),
+    [
+        (frozenset[str](), "some_type", False),
+        (frozenset({"some_type"}), "some_type", True),
+        (frozenset({"some_type"}), "other_type", False),
+        (frozenset({"some_type"}), None, False),
+    ],
+)
+def test_think_tags_are_kept_when_the_architecture_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+    exact_model_types: frozenset[str],
+    model_type: str | None,
+    expected: bool,
+) -> None:
+    """Models rendered through their Jinja chat template have no prompt encoder; their
+    architecture's exact_think_tags decides."""
+
+    def no_encoder(
+        _task: TextGenerationTaskParams, _model_type: str | None = None
+    ) -> PromptEncoder | None:
+        return None
+
+    monkeypatch.setattr(registry, "prompt_encoder_for", no_encoder)
+    monkeypatch.setattr(registry, "_EXACT_THINK_TAG_MODEL_TYPES", exact_model_types)
+    task = TextGenerationTaskParams(
+        model=ModelId("some/model"),
+        input=[InputMessage(role="user", content=InputMessageContent("hi"))],
+    )
+    assert registry.keeps_think_tags(task, model_type) is expected
