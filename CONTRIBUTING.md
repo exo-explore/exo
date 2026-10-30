@@ -52,7 +52,7 @@ Run `nix fmt` to auto-format your code before submitting.
 ## Model Cards
 
 EXO uses TOML-based model cards to define model metadata and capabilities. Model cards are stored in:
-- `resources/inference_model_cards/` for text generation models
+- `resources/inference_model_cards/<family>/` for text generation models, one folder per model family (see [Adding a Model](#adding-a-model))
 - `resources/image_model_cards/` for image generation models
 - `~/.exo/custom_model_cards/` for user-added custom models
 
@@ -105,6 +105,41 @@ The `capabilities` field defines what the model can do:
 ### Security Note
 
 By default, `trust_remote_code` is set to `false` for security. Only enable it if the model explicitly requires remote code execution from the Hugging Face hub.
+
+## Adding a Model
+
+Everything exo needs for a family of models beyond what mlx-lm provides lives in one folder,
+`src/exo/worker/engines/mlx/models/<family>/`, next to its cards in
+`resources/inference_model_cards/<family>/`. Shared mechanisms (pipeline layers, the
+tensor-parallel strategy base, MoE wrappers) are in `src/exo/worker/engines/mlx/sharding/` and
+never name a model. A family is found by the `model_type` in the checkpoint's `config.json`.
+
+**A new checkpoint of an architecture exo already supports** is a card: add it to the family's
+card folder with `model_type` set. If its tokenizer config doesn't list all of its EOS tokens,
+add an `EosRule` to the family's `spec.py`.
+
+**A new architecture or family** gets a folder:
+
+| file | contents |
+|---|---|
+| `__init__.py` | a docstring only: the master imports `spec.py` through this package |
+| `spec.py` | `SPEC = FamilySpec(...)`: the `model_type`s, the Hugging Face `architectures` that support tensor parallelism, `PlacementRules`, EOS rules. Must not import MLX: the master runs without it |
+| `sharding.py` | a `TensorParallelShardingStrategy` subclass, and a `fix_pipeline_shard` function if the model needs adjusting after its layers are split (e.g. cache indices of hybrid models) |
+| `family.py` | `FAMILY = ModelFamily(...)`: one `Architecture` per mlx-lm model class (its strategy, pipeline fixup, layer counter, output parser), plus an optional prompt encoder, chat-template hook, tokenizer loader and `ModelClasses` |
+| optional | `prompt.py` (models without a Jinja chat template), `parser.py` (output formats the generic parsers don't handle), `tokenizer.py`, `cache.py` (prefix-cache copies of a custom cache class), `model.py` (a model definition exo's mlx-lm doesn't have, loaded through `ModelClasses`) |
+
+Then add `SPEC` to `FAMILY_SPECS` in `models/spec_registry.py` and `FAMILY` to `FAMILIES` in
+`models/registry.py`, at the same position, and add a `.typings/mlx_lm/models/<model_type>.pyi`
+stub for the mlx-lm classes you use.
+
+Code copied from elsewhere (a model definition, a reference prompt encoder) starts with a
+provenance header: source URL, revision, licence (with its notice when the licence asks for
+it), the date it was copied, and every local change.
+
+The registry tests (`src/exo/worker/engines/mlx/models/tests/`) check that every built-in card
+belongs to a family, that each family's `model_type`s and classes line up, and that the master
+side imports without MLX. Add your family's own tests (sharding equivalence, parser and encoder
+goldens) next to its code.
 
 ## API Adapters
 
