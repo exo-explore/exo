@@ -49,6 +49,7 @@ from exo.worker.engines.mlx.constants import (
     MAX_TOKENS,
 )
 from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
+from exo.worker.engines.mlx.models.registry import model_type_of
 from exo.worker.engines.mlx.sharding.pipeline import (
     PipelineFirstLayer,
     PipelineLastLayer,
@@ -420,6 +421,7 @@ def warmup_inference(
     warmup_prompt = apply_chat_template(
         tokenizer=tokenizer,
         task_params=warmup_task_params,
+        model_type=model_type_of(model),
     )
 
     tokens_generated = 0
