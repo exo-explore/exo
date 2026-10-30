@@ -23,11 +23,19 @@ def clear_prefill_sends() -> None:
 
 
 def _indexed_keys(x: mx.array, cache: object) -> int:
-    """Keys a sparse-attention layer attends over in this call: cached plus new tokens."""
+    """Key slots a sparse-attention layer scores in this call (cached plus new), i.e. the
+    length of the keys its cache returns, which decides whether its indexer selects."""
     if cache is None:
         return x.shape[1]
     first = cast(Any, cache)[0] if hasattr(cache, "caches") else cache
-    return cast(int, getattr(first, "offset", 0)) + x.shape[1]
+    # Batched caches hold one shared key buffer (`_idx` slots) and per-sequence offsets.
+    shared_slots = cast(object, getattr(first, "_idx", None))
+    if isinstance(shared_slots, int):
+        return shared_slots + x.shape[1]
+    offset = cast(object, getattr(first, "offset", 0))
+    if isinstance(offset, int):
+        return offset + x.shape[1]
+    return int(cast(mx.array, offset).max().item()) + x.shape[1]
 
 
 class PipelineFirstLayer(CustomMlxLayer):
