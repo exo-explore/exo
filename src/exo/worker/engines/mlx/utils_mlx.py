@@ -30,6 +30,7 @@ from exo.shared.models.model_cards import ModelId
 from exo.worker.engines.mlx.constants import TRUST_REMOTE_CODE
 from exo.worker.engines.mlx.models.deepseek_v3 import prompt as deepseek_v32_prompt
 from exo.worker.engines.mlx.models.deepseek_v4 import prompt as deepseek_v4_prompt
+from exo.worker.engines.mlx.models.gpt_oss import prompt as gpt_oss_prompt
 from exo.worker.engines.mlx.models.kimi import tokenizer as kimi_tokenizer
 
 try:
@@ -501,13 +502,8 @@ def render_chat_template(
     for msg in formatted_messages:
         _normalize_tool_calls(msg)
 
-    # Put reasoning content in thinking block for GPT OSS
-    if "gpt-oss" in task_params.model.lower():
-        for msg in formatted_messages:
-            if msg.get("role") == "assistant" and "thinking" not in msg:
-                rc = msg.get("reasoning_content")
-                if isinstance(rc, str) and rc:
-                    msg["thinking"] = rc
+    if gpt_oss_prompt.applies_to(task_params):
+        gpt_oss_prompt.prepare_template_messages(formatted_messages)
 
     extra_kwargs: dict[str, Any] = {}
     if task_params.enable_thinking is not None:

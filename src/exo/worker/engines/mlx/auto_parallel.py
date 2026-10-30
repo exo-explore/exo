@@ -15,7 +15,6 @@ from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
 from mlx_lm.models.gemma4 import Model as Gemma4Model
 from mlx_lm.models.glm4_moe import Model as Glm4MoeModel
 from mlx_lm.models.glm4_moe_lite import Model as GLM4MoeLiteModel
-from mlx_lm.models.gpt_oss import GptOssMoeModel
 from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.models.kimi_k25 import Model as KimiK25Model
 from mlx_lm.models.llama import Model as LlamaModel
@@ -47,6 +46,10 @@ from exo.worker.engines.mlx.models.deepseek_v4.sharding import (
 from exo.worker.engines.mlx.models.glm.sharding import (
     GLM4MoeLiteShardingStrategy,
     Glm4MoeShardingStrategy,
+)
+from exo.worker.engines.mlx.models.gpt_oss.sharding import GptOssShardingStrategy
+from exo.worker.engines.mlx.models.gpt_oss.sharding import (
+    fix_pipeline_shard as fix_gpt_oss_pipeline_shard,
 )
 from exo.worker.engines.mlx.models.llama.sharding import LlamaShardingStrategy
 from exo.worker.engines.mlx.models.minimax.sharding import MiniMaxShardingStrategy
@@ -112,22 +115,9 @@ def pipeline_auto_parallel(
         group=group,
     )
 
-    if isinstance(inner_model_instance, GptOssMoeModel):
-        inner_model_instance.layer_types = inner_model_instance.layer_types[
-            start_layer:end_layer
-        ]
-        # We can assume the model has at least one layer thanks to placement.
-        # If a layer type doesn't exist, we can set it to 0.
-        inner_model_instance.swa_idx = (
-            0
-            if "sliding_attention" not in inner_model_instance.layer_types
-            else inner_model_instance.layer_types.index("sliding_attention")
-        )
-        inner_model_instance.ga_idx = (
-            0
-            if "full_attention" not in inner_model_instance.layer_types
-            else inner_model_instance.layer_types.index("full_attention")
-        )
+    fix_gpt_oss_pipeline_shard(
+        model, inner_model_instance, layers, start_layer, end_layer
+    )
 
     if isinstance(inner_model_instance, Step35InnerModel):
         inner_model_instance.num_layers = len(layers)
@@ -365,47 +355,6 @@ def _set_layers(model: nn.Module, layers: list[LayerCallable]) -> None:
         inner_model_instance.h = layers
     else:
         raise ValueError("Model must have either a 'layers' or 'h' attribute")
-
-
-class GptOssShardingStrategy(TensorParallelShardingStrategy):
-    def shard_model(
-        self,
-        model: nn.Module,
-    ) -> Generator[ModelLoadingResponse, None, nn.Module]:
-        model = cast(GptOssMoeModel, model)
-        total = len(model.layers)
-
-        for i, layer in enumerate(model.layers):
-            mx.eval(layer.parameters())
-            layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
-            layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
-            layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
-            layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
-
-            layer.self_attn.num_attention_heads //= self.N
-            layer.self_attn.num_key_value_heads //= self.N
-            layer.self_attn.num_key_value_groups = (
-                layer.self_attn.num_attention_heads
-                // layer.self_attn.num_key_value_heads
-            )
-
-            layer.self_attn.sinks = layer.self_attn.sinks[
-                layer.self_attn.num_attention_heads
-                * self.group.rank() : layer.self_attn.num_attention_heads
-                * (self.group.rank() + 1)
-            ]
-
-            self.all_to_sharded_linear_in_place(layer.mlp.experts.gate_proj)
-            self.sharded_to_all_linear_in_place(layer.mlp.experts.down_proj)
-            self.all_to_sharded_linear_in_place(layer.mlp.experts.up_proj)
-
-            layer.mlp = ShardedMoE(layer.mlp)  # type: ignore
-            layer.mlp.sharding_group = self.group
-            mx.eval(layer)
-            mx.clear_cache()
-
-            yield ModelLoadingResponse(layers_loaded=i, total=total)
-        return model
 
 
 class Step35ShardingStrategy(TensorParallelShardingStrategy):

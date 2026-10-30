@@ -1,18 +1,19 @@
-model_id = "mlx-community/gpt-oss-20b-MXFP4-Q8"
-n_layers = 24
+model_id = "mlx-community/gpt-oss-120b-MXFP4-Q8"
+n_layers = 36
 hidden_size = 2880
 num_key_value_heads = 8
 supports_tensor = true
 tasks = ["TextGeneration"]
 family = "gpt-oss"
+model_type = "gpt_oss"
 quantization = "MXFP4-Q8"
-base_model = "GPT-OSS 20B"
+base_model = "GPT-OSS 120B"
 capabilities = ["text", "thinking"]
 reasoning_dialect = "channel"
 context_length = 131072
 backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 [storage_size]
-in_bytes = 12025908224
+in_bytes = 70652212224
 
 # Source: https://github.com/openai/gpt-oss/blob/main/README.md
 # Source: https://unsloth.ai/docs/models/gpt-oss-how-to-run-and-fine-tune
