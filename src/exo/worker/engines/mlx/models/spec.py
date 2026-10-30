@@ -26,6 +26,9 @@ class PlacementRules:
     # Tensor parallelism needs num_key_value_heads to divide by the node count, unless the
     # family's strategy doesn't split KV heads.
     tensor_parallel_splits_kv_heads: bool = True
+    # Numbers the node count must divide for tensor parallelism, beyond hidden_size and the
+    # KV heads: e.g. attention head groups the family's strategy splits whole.
+    tensor_parallel_divides: tuple[int, ...] = ()
     # Set when pipeline parallelism across more than one node isn't supported: the error
     # given when no single node can hold the model.
     multi_node_pipeline_error: str | None = None

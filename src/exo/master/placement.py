@@ -322,6 +322,10 @@ def place_instance(
             for cycle in cycles_with_sufficient_memory
             if command.model_card.hidden_size % len(cycle) == 0
             and (not splits_kv_heads or kv_heads is None or kv_heads % len(cycle) == 0)
+            and all(
+                number % len(cycle) == 0
+                for number in placement_rules.tensor_parallel_divides
+            )
         ]
         if not cycles_with_sufficient_memory:
             raise ValueError(
