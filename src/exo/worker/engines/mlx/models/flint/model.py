@@ -183,7 +183,7 @@ def _tiled_attention_kernel() -> bool:
     nothing: its scores are the float minimum, so it adds exp2(min - max) = 0 to the row sums
     and scales the running output by exp2(0) = 1 (the sinks keep the running max finite).
     Leaving such tiles out is exact there."""
-    architecture = str(mx.metal.device_info().get("architecture", ""))
+    architecture = str(mx.device_info().get("architecture", ""))
     digits = "".join(c for c in architecture.removeprefix("applegpu_g") if c.isdigit())
     return digits != "" and int(digits) <= 16
 
