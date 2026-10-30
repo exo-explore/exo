@@ -1,15 +1,24 @@
 from mlx_lm.models.glm4_moe import Model as Glm4MoeModel
 from mlx_lm.models.glm4_moe_lite import Model as GLM4MoeLiteModel
-from mlx_lm.models.glm_moe_dsa import Model as GlmMoeDsaModel
 
 from exo.worker.engines.mlx.models.deepseek_v3.family import (
     DEEPSEEK_V32_OUTPUT_PARSER,
 )
 from exo.worker.engines.mlx.models.deepseek_v3.sharding import DeepSeekShardingStrategy
-from exo.worker.engines.mlx.models.family import Architecture, ModelFamily
+from exo.worker.engines.mlx.models.family import (
+    Architecture,
+    ModelClasses,
+    ModelFamily,
+)
+from exo.worker.engines.mlx.models.glm.glm_moe_dsa import Model as GlmMoeDsaModel
+from exo.worker.engines.mlx.models.glm.glm_moe_dsa import (
+    ModelArgs as GlmMoeDsaModelArgs,
+)
+from exo.worker.engines.mlx.models.glm.reasoning import HOOK as REASONING_EFFORT_HOOK
 from exo.worker.engines.mlx.models.glm.sharding import (
     GLM4MoeLiteShardingStrategy,
     Glm4MoeShardingStrategy,
+    forward_shared_topk,
 )
 from exo.worker.engines.mlx.models.glm.spec import SPEC
 
@@ -34,8 +43,19 @@ FAMILY = ModelFamily(
             model_type="glm_moe_dsa",
             model_class=GlmMoeDsaModel,
             tensor_parallel=DeepSeekShardingStrategy,
+            fix_pipeline_shard=forward_shared_topk,
             pipeline_layer_count="num_layers",
             output_parser=DEEPSEEK_V32_OUTPUT_PARSER,
         ),
     ),
+    # mlx-lm's GLM-5.x model with the reference DSA indexer key-norm epsilon
+    # (glm_moe_dsa.py in this folder).
+    model_classes=(
+        ModelClasses(
+            model_type="glm_moe_dsa",
+            model_class=GlmMoeDsaModel,
+            model_args_class=GlmMoeDsaModelArgs,
+        ),
+    ),
+    reasoning_effort_hook=REASONING_EFFORT_HOOK,
 )

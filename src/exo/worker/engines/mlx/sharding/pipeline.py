@@ -1,5 +1,5 @@
 from inspect import signature
-from typing import Literal, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -22,6 +22,22 @@ def clear_prefill_sends() -> None:
     _pending_prefill_sends.clear()
 
 
+def _indexed_keys(x: mx.array, cache: object) -> int:
+    """Key slots a sparse-attention layer scores in this call (cached plus new), i.e. the
+    length of the keys its cache returns, which decides whether its indexer selects."""
+    if cache is None:
+        return x.shape[1]
+    first = cast(Any, cache)[0] if hasattr(cache, "caches") else cache
+    # Batched caches hold one shared key buffer (`_idx` slots) and per-sequence offsets.
+    shared_slots = cast(object, getattr(first, "_idx", None))
+    if isinstance(shared_slots, int):
+        return shared_slots + x.shape[1]
+    offset = cast(object, getattr(first, "offset", 0))
+    if isinstance(offset, int):
+        return offset + x.shape[1]
+    return int(cast(mx.array, offset).max().item()) + x.shape[1]
+
+
 class PipelineFirstLayer(CustomMlxLayer):
     def __init__(
         self,
@@ -33,6 +49,11 @@ class PipelineFirstLayer(CustomMlxLayer):
         self.r: int = r
         self.group = group
         self.is_prefill: bool = False
+        # Set (to index_topk) for DeepSeek-sparse-attention models whose layers share
+        # the indexer's top-k selection across layers (GLM-5.2+). Their layers are called
+        # as layer(x, mask, cache, prev_topk) and return (x, topk); the previous rank
+        # sends the selection its last layer used once the context exceeds index_topk.
+        self.shared_topk_size: int | None = None
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0:
@@ -41,6 +62,17 @@ class PipelineFirstLayer(CustomMlxLayer):
             mx.eval(x)
             x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
             mx.eval(x)
+            if self.shared_topk_size is not None and len(args) >= 2:
+                mask, cache = args[0], args[1]
+                if _indexed_keys(x, cache) > self.shared_topk_size:
+                    template = mx.zeros(
+                        (x.shape[0], 1, x.shape[1], self.shared_topk_size), mx.int32
+                    )
+                    prev_topk = mx.distributed.recv_like(
+                        template, (self.r - 1), group=self.group
+                    )
+                    mx.eval(prev_topk)
+                    args = (mask, cache, prev_topk, *args[3:])
         return self.original_layer(x, *args, **kwargs)
 
 
@@ -59,6 +91,8 @@ class PipelineLastLayer(CustomMlxLayer):
         self.original_layer_signature = signature(self.original_layer.__call__)
         self.is_prefill: bool = False
         self.queue_sends: bool = False
+        # See PipelineFirstLayer.shared_topk_size.
+        self.shared_topk_size: int | None = None
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         cache = self.original_layer_signature.bind_partial(
@@ -66,9 +100,10 @@ class PipelineLastLayer(CustomMlxLayer):
         ).arguments.get("cache", None)
 
         result = cast(object, self.original_layer(x, *args, **kwargs))
-        # GLM MoE DSA layers return (hidden state, indexer top-k). Only the hidden
-        # state goes to the next rank: its layers start without top-k, as in mlx-lm's
-        # own pipeline.
+        # GLM MoE DSA layers return (hidden state, indexer top-k). The hidden state goes
+        # to the next rank, and so does the top-k when the model shares it across layers
+        # (shared_topk_size): otherwise a shared layer at the start of the next rank
+        # would attend densely instead of over the selected keys.
         extra: tuple[object, ...] = ()
         if isinstance(result, tuple):
             hidden, *rest = cast(tuple[object, ...], result)
@@ -82,14 +117,34 @@ class PipelineLastLayer(CustomMlxLayer):
         mx.eval(output)
 
         if self.r != self.s - 1:
+            topk = extra[0] if extra else None
+            send_topk = (
+                cast(mx.array, topk).astype(mx.int32)
+                if self.shared_topk_size is not None and topk is not None
+                else None
+            )
+            if send_topk is not None:
+                mx.eval(send_topk)
             if self.queue_sends:
                 _pending_prefill_sends.append(
                     (output, (self.r + 1) % self.s, self.group)
                 )
+                if send_topk is not None:
+                    _pending_prefill_sends.append(
+                        (send_topk, (self.r + 1) % self.s, self.group)
+                    )
             else:
                 output = mx.distributed.send(
                     output, (self.r + 1) % self.s, group=self.group
                 )
+                if send_topk is not None:
+                    # The next rank receives the hidden state first, then the top-k.
+                    mx.eval(output)
+                    mx.eval(
+                        mx.distributed.send(
+                            send_topk, (self.r + 1) % self.s, group=self.group
+                        )
+                    )
             if cache is not None:
                 # CacheList (used by MLA models like DeepSeekV32, GLM MoE DSA)
                 # doesn't have .keys directly; access via first sub-cache.
