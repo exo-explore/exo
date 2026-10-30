@@ -4,6 +4,7 @@ hidden_size = 3072
 supports_tensor = true
 tasks = ["TextGeneration"]
 family = "llama"
+model_type = "llama"
 quantization = "4bit"
 base_model = "NVIDIA Llama-3.1-Nemotron-Nano-4B-v1.1"
 capabilities = ["text"]
