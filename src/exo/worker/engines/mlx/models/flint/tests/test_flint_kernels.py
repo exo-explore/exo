@@ -8,6 +8,7 @@ import mlx.core as mx
 import mlx.nn as nn
 import pytest
 from mlx.utils import tree_flatten
+from mlx_lm.models.activations import swiglu
 from mlx_lm.models.flint import Attention, ModelArgs
 from mlx_lm.models.flint import Model as MlxLmModel
 
@@ -476,3 +477,81 @@ def test_stacked_projection_at_every_bit_width(bits: int) -> None:
         x = _bf16((1, tokens, 2048), 40 + tokens)
         for part, out in zip(parts, stacked.split(x), strict=True):
             assert _identical(out, part(x))
+
+
+@needs_metal
+@pytest.mark.parametrize("k,n", [(512, 2048), (1024, 2048), (6144, 2048), (1024, 256)])
+def test_swiglu_down_one_row_equals_swiglu_then_quantized_matmul(
+    k: int, n: int
+) -> None:
+    w = (mx.random.normal((n, k), key=mx.random.key(50)) * 0.02).astype(mx.bfloat16)
+    weight, scales, biases = mx.quantize(w, group_size=64, bits=4)
+    assert biases is not None
+    gate_up = _bf16((1, 2 * k), 51, 3.0)
+    expected = mx.quantized_matmul(
+        swiglu(gate_up[:, :k], gate_up[:, k:]),
+        weight,
+        scales,
+        biases,
+        transpose=True,
+        group_size=64,
+        bits=4,
+    )
+    down = (weight, scales, biases)
+    assert kernels.swiglu_down_fusable(gate_up, down, 64, 4)
+    assert _identical(kernels.swiglu_down(gate_up, down), expected)
+
+
+@needs_metal
+@pytest.mark.parametrize("rows", [1, 3, 6, 48])
+def test_swiglu_down_gather_equals_swiglu_then_gather_qmm(rows: int) -> None:
+    experts, k, n = 16, 512, 2048
+    w = (mx.random.normal((experts, n, k), key=mx.random.key(52)) * 0.02).astype(
+        mx.bfloat16
+    )
+    weight, scales, biases = mx.quantize(w, group_size=64, bits=4)
+    assert biases is not None
+    gate_up = _bf16((rows, 1, 2 * k), 53 + rows, 3.0)
+    indices = mx.random.randint(0, experts, (rows,), key=mx.random.key(rows)).astype(
+        mx.uint32
+    )
+    expected = mx.gather_qmm(
+        swiglu(gate_up[..., :k], gate_up[..., k:]),
+        weight,
+        scales,
+        biases,
+        rhs_indices=indices,
+        transpose=True,
+        group_size=64,
+        bits=4,
+    ).squeeze(-2)
+    out = kernels.swiglu_down(gate_up, (weight, scales, biases), indices)
+    assert _identical(out, expected)
+
+
+def test_swiglu_down_is_only_used_where_it_matches_mlx() -> None:
+    w = mx.zeros((256, 512 // 8), dtype=mx.uint32)
+    s = mx.zeros((256, 8), dtype=mx.bfloat16)
+    row = mx.zeros((1, 1024), dtype=mx.bfloat16)
+    assert not kernels.swiglu_down_fusable(row, (w, s, s), 64, 8)  # 8-bit
+    assert not kernels.swiglu_down_fusable(row, (w, s, s), 32, 4)  # group 32
+    narrow = mx.zeros((1, 512), dtype=mx.bfloat16)  # K = 256 (e.g. TP2 experts)
+    assert not kernels.swiglu_down_fusable(narrow, (w[:, :32], s, s), 64, 4)
+
+
+@needs_metal
+def test_fused_activation_model_logits_equal_the_unfused_models() -> None:
+    """512-wide intermediates, so batch-1 decode takes every fused activation path."""
+    args = replace(
+        _ARGS,
+        hidden_size=256,
+        intermediate_size=512,
+        moe_intermediate_size=512,
+        shared_expert_intermediate_size=512,
+    )
+    fused, reference = _quantized_pair(args)
+    prompt = mx.random.randint(0, args.vocab_size, (1, 9), key=mx.random.key(9))
+    got = _run(fused, prompt, 6, fused.make_cache)
+    expected = _run(reference, prompt, 6, reference.make_cache)
+    for a, b in zip(got, expected, strict=True):
+        assert _identical(a, b)
