@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Sequence
 from dataclasses import replace
+from typing import cast
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -320,3 +321,40 @@ def test_stacked_projection_runs_each_part_alone_beyond_a_few_rows() -> None:
         assert (stacked.stacked(x) is None) == (tokens > 4)
         for part, out in zip(parts, outputs, strict=True):
             assert _identical(out, part(x))
+
+
+@needs_metal
+@pytest.mark.parametrize("cached", [0, 7, 37])
+def test_blocked_sliding_prefill_equals_attention_over_all_keys(
+    monkeypatch: pytest.MonkeyPatch, cached: int
+) -> None:
+    """Sliding layers prefill one block of queries at a time over the key tiles in reach;
+    the logits equal attention over every key, after any number of cached tokens."""
+    from exo.worker.engines.mlx.models.flint import model as flint_model
+
+    fused, reference = _quantized_pair()
+    prompt = mx.random.randint(
+        0, _ARGS.vocab_size, (1, cached + 150), key=mx.random.key(8)
+    )
+
+    def prefill(
+        model: nn.Module, make_cache: Callable[[], Sequence[object]]
+    ) -> mx.array:
+        cache = list(make_cache())
+        if cached:
+            mx.eval(model(prompt[:, :cached], cache=cache))
+        logits = model(prompt[:, cached:], cache=cache)
+        mx.eval(logits)
+        return logits
+
+    monkeypatch.setattr(flint_model, "_SLIDING_QUERY_BLOCK", 32)
+    blocked = prefill(fused, fused.make_cache)
+    assert _identical(blocked, prefill(reference, reference.make_cache))
+
+
+def test_sliding_window_is_known_to_sliding_layers_only() -> None:
+    model = Model(_ARGS)
+    windows = [
+        cast(FlintAttention, layer.self_attn).sliding_window for layer in model.layers
+    ]
+    assert windows == [None, 5, 5, None]

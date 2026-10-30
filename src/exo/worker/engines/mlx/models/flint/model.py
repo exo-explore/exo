@@ -21,11 +21,14 @@ weights' bandwidth, set its time. On Metal the layer runs fused kernels
 - the query and key norms with the rotary embedding;
 - the MoE's weighted sum of the experts, the shared expert and the residual add;
 - the router's weight kept in float32 (the router runs in float32), not cast every step;
-- the experts' row indices built once per shape, not per matmul.
+- the experts' row indices built once per shape, not per matmul;
+- q/k/v, and every gate/up pair, as one quantized matmul where that gives the same bits.
+Prefill: a sliding-window layer (35 of 49) attends, per block of queries, only to the key
+tiles its 513-token window reaches, instead of to every key under a mask.
 Off Metal (CUDA, CPU) the layer runs mlx-lm's ops with float32 norms.
 """
 
-from functools import lru_cache
+from functools import cache, lru_cache
 from typing import Any, cast
 
 import mlx.core as mx
@@ -34,6 +37,7 @@ from mlx.nn.layers.distributed import sum_gradients
 from mlx_lm.kernels import expert_routing
 from mlx_lm.models.activations import swiglu
 from mlx_lm.models.base import scaled_dot_product_attention
+from mlx_lm.models.cache import RotatingKVCache
 from mlx_lm.models.flint import MLP, Attention, DecoderLayer, ModelArgs, SparseMoeBlock
 from mlx_lm.models.flint import Model as MlxLmModel
 
@@ -163,11 +167,80 @@ class FlintMLP(MLP):
         return self.down_proj(swiglu(gate, up))
 
 
+# Sliding-window prefill: query blocks of this many rows, each attending only to the key
+# tiles its window reaches.
+_SLIDING_QUERY_BLOCK = 256
+# Key slices start on a multiple of this, so they cover the same key tiles (16 wide for
+# 128-value heads) as attention over all the keys does.
+_KEY_TILE_ALIGN = 64
+
+
+@cache
+def _tiled_attention_kernel() -> bool:
+    """MLX's prefill attention (``steel_attention``) runs on Apple GPUs up to generation 16
+    (M1 to M4); newer ones use another kernel. In it a fully masked key tile changes
+    nothing: its scores are the float minimum, so it adds exp2(min - max) = 0 to the row sums
+    and scales the running output by exp2(0) = 1 (the sinks keep the running max finite).
+    Leaving such tiles out is exact there."""
+    architecture = str(mx.metal.device_info().get("architecture", ""))
+    digits = "".join(c for c in architecture.removeprefix("applegpu_g") if c.isdigit())
+    return digits != "" and int(digits) <= 16
+
+
 class FlintAttention(Attention):
     def __init__(self, args: ModelArgs, layer_idx: int) -> None:
         super().__init__(args, layer_idx)
         self.q_norm = _float32_norm(self.q_norm)
         self.k_norm = _float32_norm(self.k_norm)
+        sliding = args.layer_types[layer_idx] == "sliding_attention"
+        self.sliding_window: int | None = args.sliding_window if sliding else None
+
+    def _sliding_attention(
+        self,
+        queries: mx.array,
+        keys: mx.array,
+        values: mx.array,
+        mask: object,
+        cache: object,
+    ) -> mx.array | None:
+        """Prefill attention of a sliding-window layer over only the key tiles each block of
+        queries reaches, or None to attend over all keys.
+
+        A rotating cache hands back its last window - 1 keys and the new ones, in order,
+        with the mask ``create_causal_mask(L, offset, window)``: query i attends keys
+        offset + i - window + 1 .. offset + i. Over all keys, every other tile is fully
+        masked, and the attention kernel spends most of a long prefill on them."""
+        window = self.sliding_window
+        length, key_length = queries.shape[2], keys.shape[2]
+        if (
+            window is None
+            or not isinstance(mask, mx.array)
+            or mask.ndim != 2
+            or mask.dtype != mx.bool_
+            or mask.shape != (length, key_length)
+            or type(cache) is not RotatingKVCache
+            or length < 2 * _SLIDING_QUERY_BLOCK
+            or not _tiled_attention_kernel()
+        ):
+            return None
+        offset = key_length - length
+        blocks: list[mx.array] = []
+        for start in range(0, length, _SLIDING_QUERY_BLOCK):
+            stop = min(length, start + _SLIDING_QUERY_BLOCK)
+            first = max(0, offset + start - window + 1)
+            first -= first % _KEY_TILE_ALIGN
+            last = offset + stop
+            blocks.append(
+                mx.fast.scaled_dot_product_attention(
+                    queries[:, :, start:stop],
+                    keys[:, :, first:last],
+                    values[:, :, first:last],
+                    scale=self.scale,
+                    mask=mask[start:stop, first:last],
+                    sinks=self.softmax_offset,
+                )
+            )
+        return mx.concatenate(blocks, axis=2)
 
     def _rope_base(self) -> float | None:
         """The RoPE base the fused kernel applies, or None without RoPE."""
@@ -240,15 +313,17 @@ class FlintAttention(Attention):
                 tuple[mx.array, mx.array],
                 cache.update_and_fetch(keys, values),  # pyright: ignore[reportAny]
             )
-        output = scaled_dot_product_attention(
-            queries,
-            keys,
-            values,
-            cache=cache,
-            scale=self.scale,
-            mask=mask,
-            sinks=self.softmax_offset,
-        )
+        output = self._sliding_attention(queries, keys, values, mask, cache)
+        if output is None:
+            output = scaled_dot_product_attention(
+                queries,
+                keys,
+                values,
+                cache=cache,
+                scale=self.scale,
+                mask=mask,
+                sinks=self.softmax_offset,
+            )
         return self.o_proj(output.transpose(0, 2, 1, 3).reshape(batch, length, -1))
 
 
