@@ -17,6 +17,7 @@ from exo.worker.engines.mlx.models.qwen3.qwen4_exp import Model as Qwen4ExpModel
 from exo.worker.engines.mlx.models.qwen3.qwen4_exp import (
     ModelArgs as Qwen4ExpModelArgs,
 )
+from exo.worker.engines.mlx.models.qwen3.reasoning import HOOK as REASONING_EFFORT_HOOK
 from exo.worker.engines.mlx.models.qwen3.sharding import (
     Qwen4ExpShardingStrategy,
     QwenShardingStrategy,
@@ -90,4 +91,6 @@ FAMILY = ModelFamily(
             model_args_class=Qwen4ExpModelArgs,
         ),
     ),
+    # Qwen3.8's template rejects reasoning_effort values other than xhigh/medium/low
+    reasoning_effort_hook=REASONING_EFFORT_HOOK,
 )
