@@ -46,7 +46,11 @@ from exo.download.download_utils import build_model_path
 from exo.shared.types.common import Host
 from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import TaskId, TextGeneration
-from exo.shared.types.text_generation import ChatTemplateValue, TextGenerationTaskParams
+from exo.shared.types.text_generation import (
+    ChatTemplateValue,
+    ReasoningEffort,
+    TextGenerationTaskParams,
+)
 from exo.shared.types.worker.instances import (
     BoundInstance,
     MlxJacclInstance,
@@ -296,6 +300,11 @@ def get_tokenizer(model_path: Path, shard_metadata: ShardMetadata) -> TokenizerW
     )
 
 
+def _is_qwen3_8(model_id: str) -> bool:
+    model_id_lower = model_id.lower()
+    return "qwen3.8" in model_id_lower or "qwen-3.8" in model_id_lower
+
+
 def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
     """
     Get the EOS token IDs for a model based on its ID.
@@ -325,8 +334,9 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
         or "qwen-3.5" in model_id_lower
         or "qwen3.6" in model_id_lower
         or "qwen-3.6" in model_id_lower
+        or _is_qwen3_8(model_id)
     ):
-        # For Qwen3.5 / Qwen3.6: 248046 (<|im_end|>), 248044 (<|endoftext|>)
+        # For Qwen3.5 / Qwen3.6 / Qwen3.8: 248046 (<|im_end|>), 248044 (<|endoftext|>)
         return [248046, 248044]
     elif "gemma-4" in model_id_lower or "gemma-3" in model_id_lower:
         return [1, 106, 50]
@@ -500,6 +510,30 @@ def _v4_reasoning_effort(task_params: TextGenerationTaskParams) -> str | None:
     return None
 
 
+# Qwen3.8's chat template accepts only "xhigh" (its default), "medium" and "low",
+# and raises on any other value while thinking is on.
+_QWEN3_8_REASONING_EFFORT: dict[ReasoningEffort, str] = {
+    "minimal": "low",
+    "low": "low",
+    "medium": "medium",
+    "high": "xhigh",
+    "xhigh": "xhigh",
+}
+
+
+def _template_reasoning_effort(task_params: TextGenerationTaskParams) -> str | None:
+    """The `reasoning_effort` to hand the chat template, or None to leave it
+    unset so the template's own default applies."""
+    effort = task_params.reasoning_effort
+    if effort is None:
+        return None
+    if _is_qwen3_8(task_params.model):
+        if task_params.enable_thinking is False:
+            return None
+        return _QWEN3_8_REASONING_EFFORT.get(effort)
+    return effort
+
+
 def _strip_v4_thinking_markers(content: str) -> str:
     """Remove `<think>…</think>` blocks and any stray `<think>`/`</think>` tags
     from prior-turn assistant content.
@@ -625,8 +659,9 @@ def render_chat_template(
         # Jinja ignores unknown variables, so passing both is safe.
         extra_kwargs["enable_thinking"] = task_params.enable_thinking
         extra_kwargs["thinking"] = task_params.enable_thinking
-    if task_params.reasoning_effort is not None:
-        extra_kwargs["reasoning_effort"] = task_params.reasoning_effort
+    reasoning_effort = _template_reasoning_effort(task_params)
+    if reasoning_effort is not None:
+        extra_kwargs["reasoning_effort"] = reasoning_effort
 
     patched_template: str | None = None
     if task_params.tools:
