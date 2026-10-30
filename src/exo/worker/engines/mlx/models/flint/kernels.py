@@ -17,6 +17,13 @@ its own, so that matters at batch 1.
   experts sequentially (``col_reduce_small``); so does the kernel, with no fused
   multiply-add, because MLX rounds the products before the sum.
 
+- ``swiglu_down``: mlx-lm's ``swiglu(gate, up)`` (compiled: a bf16 sigmoid and two bf16
+  multiplies) then a 4-bit down projection, computed as MLX's ``qmv_fast`` /
+  ``gather_qmv_fast`` compute it: the same 16 values per thread, the same packed dot
+  product, the same ``simd_sum``. MLX runs those kernels for one row (and the gather for
+  every row, one token-expert pair each); for 2 to 12 rows it runs another kernel, so callers
+  use this one only where MLX would run the same.
+
 ``fused_kernels_available()`` is False off Metal (CUDA, CPU), where callers keep the
 original ops. The unit tests compare every kernel with those ops for bit equality.
 """
@@ -179,6 +186,94 @@ _COMBINE_SOURCE = """
     out[size_t(n) * D + col] = mixed;
 """
 
+# MLX's qmv_fast_impl (4 bits, group size GS, 16 values per thread, 4 rows per simdgroup, 2
+# simdgroups), with its input row computed as swiglu(gate, up) from a gate/up row of 2K.
+_SWIGLU_DOWN_SOURCE = """
+    constexpr int packs_per_thread = 2;
+    constexpr int num_simdgroups = 2;
+    constexpr int results_per_simdgroup = 4;
+    constexpr int pack_factor = 8;
+    constexpr int bytes_per_pack = 4;
+    constexpr int values_per_thread = pack_factor * packs_per_thread;
+    constexpr int block_size = values_per_thread * 32;
+    constexpr int scale_step_per_thread = GS / values_per_thread;
+    typedef float U;
+
+    uint3 tid = threadgroup_position_in_grid;
+    uint simd_gid = simdgroup_index_in_threadgroup;
+    uint simd_lid = thread_index_in_simdgroup;
+
+    thread U x_thread[values_per_thread];
+    thread U result[results_per_simdgroup] = {0};
+
+    const int in_vec_size_w = K * bytes_per_pack / pack_factor;
+    const int in_vec_size_g = K / GS;
+    const int out_row = tid.y * (num_simdgroups * results_per_simdgroup) +
+        simd_gid * results_per_simdgroup;
+
+    size_t expert = GATHER ? size_t(indices[tid.x]) : 0;
+    const device uint8_t* ws = (const device uint8_t*)w + expert * (size_t(N) * in_vec_size_w);
+    const device T* sc = scales + expert * (size_t(N) * in_vec_size_g);
+    const device T* bi = biases + expert * (size_t(N) * in_vec_size_g);
+    ws += out_row * in_vec_size_w + simd_lid * packs_per_thread * bytes_per_pack;
+    sc += out_row * in_vec_size_g + simd_lid / scale_step_per_thread;
+    bi += out_row * in_vec_size_g + simd_lid / scale_step_per_thread;
+    const device T* g = gate_up + size_t(tid.x) * (2 * K) + simd_lid * values_per_thread;
+    const device T* u = g + K;
+    device T* yr = y + size_t(tid.x) * N + out_row;
+
+    for (int k = 0; k < K; k += block_size) {
+      thread T x[values_per_thread];
+      for (int i = 0; i < values_per_thread; i++) {
+        T gi = g[i];
+        T silu = gi * flint_sigmoid(gi);
+        x[i] = silu * u[i];
+      }
+      U sum = 0;
+      for (int i = 0; i < values_per_thread; i += 4) {
+        sum += U(x[i]) + U(x[i + 1]) + U(x[i + 2]) + U(x[i + 3]);
+        x_thread[i] = x[i];
+        x_thread[i + 1] = x[i + 1] / 16.0f;
+        x_thread[i + 2] = x[i + 2] / 256.0f;
+        x_thread[i + 3] = x[i + 3] / 4096.0f;
+      }
+      for (int row = 0; row < results_per_simdgroup; row++) {
+        auto wl = (const device uint16_t*)(ws + row * in_vec_size_w);
+        U s = sc[row * in_vec_size_g];
+        U b = bi[row * in_vec_size_g];
+        U accum = 0;
+        for (int i = 0; i < (values_per_thread / 4); i++) {
+          accum +=
+              (x_thread[4 * i] * (wl[i] & 0x000f) +
+               x_thread[4 * i + 1] * (wl[i] & 0x00f0) +
+               x_thread[4 * i + 2] * (wl[i] & 0x0f00) +
+               x_thread[4 * i + 3] * (wl[i] & 0xf000));
+        }
+        result[row] += s * accum + sum * b;
+      }
+      ws += block_size * bytes_per_pack / pack_factor;
+      sc += block_size / GS;
+      bi += block_size / GS;
+      g += block_size;
+      u += block_size;
+    }
+    for (int row = 0; row < results_per_simdgroup; row++) {
+      result[row] = simd_sum(result[row]);
+      if (simd_lid == 0) {
+        yr[row] = static_cast<T>(result[row]);
+      }
+    }
+"""
+
+# MLX's Sigmoid (unary_ops.h), as the kernels mx.compile builds apply it to T.
+_SIGMOID_HEADER = """
+template <typename T>
+T flint_sigmoid(T x) {
+  auto y = 1 / (1 + metal::precise::exp(metal::abs(x)));
+  return (x < 0) ? y : 1 - y;
+}
+"""
+
 # MLX rounds the expert products in their own kernel, before the sum: no fused multiply-add.
 _NO_CONTRACT = "#pragma METAL fp contract(off)\n"
 
@@ -228,6 +323,13 @@ def _kernels() -> "dict[str, mx.fast.MetalKernel]":
             output_names=["out"],
             source=_COMBINE_SOURCE,
             header=_NO_CONTRACT,
+        ),
+        "swiglu_down": mx.fast.metal_kernel(
+            name="flint_swiglu_down_qmv",
+            input_names=["gate_up", "w", "scales", "biases", "indices"],
+            output_names=["y"],
+            source=_SWIGLU_DOWN_SOURCE,
+            header=_SIGMOID_HEADER,
         ),
     }
 
@@ -435,3 +537,81 @@ def moe_combine(
         output_shapes=[(*lead, dim)],
         output_dtypes=[y.dtype],
     )[0]
+
+
+@cache
+def apple_gpu_generation() -> int | None:
+    """The Apple GPU generation (13 = M1 ... 16 = M4, 17 = M5), None if unknown."""
+    if not _metal_available():
+        return None
+    architecture = str(mx.device_info().get("architecture", ""))
+    digits = "".join(c for c in architecture.removeprefix("applegpu_g") if c.isdigit())
+    return int(digits) if digits else None
+
+
+def swiglu_down_fusable(
+    gate_up: mx.array,
+    down: tuple[mx.array, mx.array, mx.array],
+    group_size: int,
+    bits: int,
+) -> bool:
+    """Whether ``swiglu_down`` computes what MLX's down projection would: the 4-bit
+    matrix-vector kernel MLX runs for these shapes, on the GPUs it was checked on (M1 to
+    M4)."""
+    weight, scales, _ = down
+    generation = apple_gpu_generation()
+    k = gate_up.shape[-1] // 2
+    return (
+        fused_kernels_available()
+        and generation is not None
+        and generation <= 16
+        and bits == 4
+        and group_size == 64
+        and gate_up.dtype in (mx.bfloat16, mx.float16)
+        and scales.dtype == gate_up.dtype
+        and k % 512 == 0
+        and weight.shape[-1] * 8 == k
+        and weight.shape[-2] % 8 == 0
+    )
+
+
+def swiglu_down(
+    gate_up: mx.array,
+    down: tuple[mx.array, mx.array, mx.array],
+    indices: mx.array | None = None,
+) -> mx.array:
+    """``down(swiglu(gate, up))`` for rows of ``gate_up`` = [gate | up] (..., 2K), with the
+    4-bit down projection's (weight, scales, biases) (N, K) or, with ``indices`` (one expert
+    per row), (E, N, K). Returns (rows, N). Check ``swiglu_down_fusable`` first."""
+    weight, scales, biases = down
+    rows = gate_up.size // gate_up.shape[-1]
+    k = gate_up.shape[-1] // 2
+    n = weight.shape[-2]
+    gather = indices is not None
+    return _kernels()["swiglu_down"](
+        inputs=[
+            gate_up,
+            weight,
+            scales,
+            biases,
+            indices.reshape(-1) if indices is not None else _no_indices(),
+        ],
+        template=[
+            ("T", gate_up.dtype),
+            ("K", k),
+            ("N", n),
+            ("GS", 64),
+            ("GATHER", gather),
+        ],
+        grid=(rows * 32, (n // 8) * 2, 1),
+        threadgroup=(32, 2, 1),
+        output_shapes=[(rows, n)],
+        output_dtypes=[gate_up.dtype],
+    )[0]
+
+
+@cache
+def _no_indices() -> mx.array:
+    indices = mx.zeros((1,), dtype=mx.uint32)
+    mx.eval(indices)
+    return indices

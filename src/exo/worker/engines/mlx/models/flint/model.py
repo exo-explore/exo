@@ -22,7 +22,9 @@ the weights' bandwidth, set its time. On Metal the layer runs fused kernels
 - the MoE's weighted sum of the experts, the shared expert and the residual add;
 - the router's weight kept in float32 (the router runs in float32), not cast every step;
 - the experts' row indices built once per shape, not per matmul;
-- q/k/v, and every gate/up pair, as one quantized matmul where that gives the same bits.
+- q/k/v, and every gate/up pair, as one quantized matmul where that gives the same bits;
+- SwiGLU inside the down projection's 4-bit matrix-vector kernel where MLX runs that kernel
+  (every expert gather in decode; the shared expert and dense MLPs for one row).
 Prefill: a sliding-window layer (35 of 49) attends, per block of queries, only to the key
 tiles its 513-token window reaches, instead of to every key under a mask.
 Off Metal (CUDA, CPU) the layer runs mlx-lm's ops with float32 norms.
@@ -164,7 +166,20 @@ class FlintMLP(MLP):
                 self.gate_up_proj = stacked
         if "gate_up_proj" not in self:
             return super().__call__(x)
-        gate, up = cast(StackedQuantizedLinear, self["gate_up_proj"]).split(x)
+        gate_up = cast(StackedQuantizedLinear, self["gate_up_proj"])
+        down = cast(nn.Module, self.down_proj)
+        if x.size == x.shape[-1] and type(down) is nn.QuantizedLinear:
+            # One row: MLX's down projection is the matrix-vector kernel swiglu_down
+            # reproduces, so the activation runs inside it. (A sharded down projection,
+            # which all-reduces, is another class and keeps its own call.)
+            stacked = gate_up.stacked(x)
+            arrays = _arrays(down)
+            if stacked is not None and kernels.swiglu_down_fusable(
+                stacked, arrays, cast(int, down.group_size), cast(int, down.bits)
+            ):
+                out = kernels.swiglu_down(stacked, arrays)
+                return out.reshape(*x.shape[:-1], out.shape[-1])
+        gate, up = gate_up.split(x)
         return self.down_proj(swiglu(gate, up))
 
 
@@ -183,9 +198,8 @@ def _tiled_attention_kernel() -> bool:
     nothing: its scores are the float minimum, so it adds exp2(min - max) = 0 to the row sums
     and scales the running output by exp2(0) = 1 (the sinks keep the running max finite).
     Leaving such tiles out is exact there."""
-    architecture = str(mx.device_info().get("architecture", ""))
-    digits = "".join(c for c in architecture.removeprefix("applegpu_g") if c.isdigit())
-    return digits != "" and int(digits) <= 16
+    generation = kernels.apple_gpu_generation()
+    return generation is not None and generation <= 16
 
 
 class FlintAttention(Attention):
@@ -455,6 +469,13 @@ class FlintSparseMoeBlock(SparseMoeBlock):
         # the same reduction for the stack as for gate and up alone.
         stack = (gate_up.weight, gate_up.scales, gate_up.biases)
         both = _gather(x, stack, group_size, bits, rows, sort)
+        if not sort and kernels.swiglu_down_fusable(
+            both, plan.down, plan.down_group_size, plan.down_bits
+        ):
+            # The down gather multiplies one row per token-expert pair with MLX's
+            # matrix-vector kernel, which swiglu_down reproduces with the activation inside.
+            out = kernels.swiglu_down(both, plan.down, indices)
+            return out.reshape(*indices.shape, out.shape[-1])
         x_gate, x_up = both[..., :split], both[..., split:]
         hidden = cast(mx.array, glu.activation(x_up, x_gate))
         out = _gather(
