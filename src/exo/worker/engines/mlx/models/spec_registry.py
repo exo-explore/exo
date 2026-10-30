@@ -57,6 +57,11 @@ def family_spec_for_model_type(model_type: str | None) -> FamilySpec | None:
     return _BY_MODEL_TYPE.get(model_type)
 
 
+def fast_synch_allowed(model_type: str | None) -> bool:
+    spec = family_spec_for_model_type(model_type)
+    return spec is None or spec.fast_synch
+
+
 def placement_rules_for_model_type(model_type: str | None) -> PlacementRules:
     spec = family_spec_for_model_type(model_type)
     return _DEFAULT_PLACEMENT_RULES if spec is None else spec.placement

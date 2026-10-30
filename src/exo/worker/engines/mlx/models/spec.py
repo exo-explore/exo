@@ -51,3 +51,7 @@ class FamilySpec:
     # mlx-vlm module to load the vision tower from, for vision model_types whose module
     # has another name: (model_type, mlx-vlm module).
     mlx_vlm_model_type_aliases: tuple[tuple[str, str], ...] = ()
+    # False when the family's models must run without MLX fast synch (GPU work that spins on
+    # shared memory for CPU results, which exo turns on for RDMA instances): e.g. when their
+    # tensor-parallel graphs can deadlock with it.
+    fast_synch: bool = True
