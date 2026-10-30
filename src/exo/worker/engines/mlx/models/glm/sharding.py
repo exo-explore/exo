@@ -9,7 +9,15 @@ from mlx_lm.models.glm4_moe_lite import Glm4MoeLiteDecoderLayer, Glm4MoeLiteMLP
 from mlx_lm.models.glm4_moe_lite import Model as GLM4MoeLiteModel
 
 from exo.shared.types.worker.runner_response import ModelLoadingResponse
-from exo.worker.engines.mlx.sharding.blocks import ShardedMoE
+from exo.worker.engines.mlx.sharding.blocks import (
+    CustomMlxLayer,
+    LayerCallable,
+    ShardedMoE,
+)
+from exo.worker.engines.mlx.sharding.pipeline import (
+    PipelineFirstLayer,
+    PipelineLastLayer,
+)
 from exo.worker.engines.mlx.sharding.tensor import TensorParallelShardingStrategy
 
 
@@ -119,3 +127,29 @@ class Glm4MoeShardingStrategy(TensorParallelShardingStrategy):
 
             yield ModelLoadingResponse(layers_loaded=i, total=total)
         return model
+
+
+def forward_shared_topk(
+    model: nn.Module,
+    inner_model_instance: nn.Module,
+    layers: list[LayerCallable],
+    start_layer: int,
+    end_layer: int,
+) -> None:
+    """GLM-5.2+ checkpoints list ``indexer_types``: "shared" layers have no indexer and
+    reuse the top-k selection of the previous "full" layer. Have the pipeline wrappers
+    pass that selection from one rank to the next, so a rank that starts on a shared
+    layer attends over the same keys as a single device would."""
+    args: object = getattr(model, "args", None)
+    indexer_types = cast(list[str] | None, getattr(args, "indexer_types", None))
+    if not indexer_types or "shared" not in indexer_types:
+        return
+    topk_size = cast(int, getattr(args, "index_topk", 0))
+    layer: object = layers[-1]
+    while isinstance(layer, CustomMlxLayer):
+        if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
+            layer.shared_topk_size = topk_size
+        layer = layer.original_layer
+    first = layers[0]
+    if isinstance(first, PipelineFirstLayer):
+        first.shared_topk_size = topk_size

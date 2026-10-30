@@ -10,6 +10,7 @@ from exo.worker.engines.mlx.models.family import Architecture, ModelFamily
 from exo.worker.engines.mlx.models.glm.sharding import (
     GLM4MoeLiteShardingStrategy,
     Glm4MoeShardingStrategy,
+    forward_shared_topk,
 )
 from exo.worker.engines.mlx.models.glm.spec import SPEC
 
@@ -34,6 +35,7 @@ FAMILY = ModelFamily(
             model_type="glm_moe_dsa",
             model_class=GlmMoeDsaModel,
             tensor_parallel=DeepSeekShardingStrategy,
+            fix_pipeline_shard=forward_shared_topk,
             pipeline_layer_count="num_layers",
             output_parser=DEEPSEEK_V32_OUTPUT_PARSER,
         ),
