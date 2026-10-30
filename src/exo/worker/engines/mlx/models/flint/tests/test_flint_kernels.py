@@ -185,8 +185,8 @@ class _ReferenceNorm(nn.RMSNorm):
         return _reference_norm(x, self.weight, self.eps)
 
 
-def _reference_model() -> MlxLmModel:
-    model = MlxLmModel(_ARGS)
+def _reference_model(args: ModelArgs = _ARGS) -> MlxLmModel:
+    model = MlxLmModel(args)
 
     def ref(norm: nn.RMSNorm) -> _ReferenceNorm:
         return _ReferenceNorm(norm.weight.shape[0], eps=norm.eps)
@@ -205,13 +205,13 @@ def _quantizable(path: str, module: nn.Module) -> bool:
     return hasattr(module, "to_quantized") and not path.endswith("mlp.gate")
 
 
-def _quantized_pair() -> tuple[Model, MlxLmModel]:
+def _quantized_pair(args: ModelArgs = _ARGS) -> tuple[Model, MlxLmModel]:
     """exo's model and the reference, bf16 with 4-bit weights, sharing every weight."""
     mx.random.seed(3)
-    fused = Model(_ARGS)
+    fused = Model(args)
     fused.set_dtype(mx.bfloat16)  # pyright: ignore[reportUnknownMemberType]
     nn.quantize(fused, group_size=64, bits=4, class_predicate=_quantizable)
-    reference = _reference_model()
+    reference = _reference_model(args)
     reference.set_dtype(mx.bfloat16)  # pyright: ignore[reportUnknownMemberType]
     nn.quantize(reference, group_size=64, bits=4, class_predicate=_quantizable)
     reference.load_weights(tree_flatten(fused.parameters()))  # pyright: ignore[reportArgumentType]
@@ -324,17 +324,23 @@ def test_stacked_projection_runs_each_part_alone_beyond_a_few_rows() -> None:
 
 
 @needs_metal
-@pytest.mark.parametrize("cached", [0, 7, 37])
+@pytest.mark.parametrize(
+    "cached,length", [(0, 300), (7, 300), (150, 300), (0, 293), (40, 261)]
+)
 def test_blocked_sliding_prefill_equals_attention_over_all_keys(
-    monkeypatch: pytest.MonkeyPatch, cached: int
+    monkeypatch: pytest.MonkeyPatch, cached: int, length: int
 ) -> None:
     """Sliding layers prefill one block of queries at a time over the key tiles in reach;
-    the logits equal attention over every key, after any number of cached tokens."""
+    the logits equal attention over every key, after any number of cached tokens, also
+    when the length leaves a few rows over (293 = 9 x 32 + 5: MLX attends to 8 rows or
+    fewer with another kernel, so the last block must take them). A 100-token window, so
+    that each row sums enough keys for another summation order to show."""
     from exo.worker.engines.mlx.models.flint import model as flint_model
 
-    fused, reference = _quantized_pair()
+    args = replace(_ARGS, sliding_window=100)
+    fused, reference = _quantized_pair(args)
     prompt = mx.random.randint(
-        0, _ARGS.vocab_size, (1, cached + 150), key=mx.random.key(8)
+        0, args.vocab_size, (1, cached + length), key=mx.random.key(8)
     )
 
     def prefill(
@@ -358,3 +364,43 @@ def test_sliding_window_is_known_to_sliding_layers_only() -> None:
         cast(FlintAttention, layer.self_attn).sliding_window for layer in model.layers
     ]
     assert windows == [None, 5, 5, None]
+
+
+@needs_metal
+@pytest.mark.parametrize(
+    "length,cached", [(3335, 512), (4096, 0), (4096, 512), (777, 300)]
+)
+def test_sliding_attention_at_flints_shapes_equals_attention_over_all_keys(
+    length: int, cached: int
+) -> None:
+    """Flint's real shapes (32 query heads, 4 key/value heads, a 513-token window): the
+    blocked attention equals one call over every key under the mask. 3335 rows leave 7
+    over a whole number of 256-row blocks, which must not run as their own block."""
+    from mlx_lm.models.base import create_causal_mask
+    from mlx_lm.models.cache import RotatingKVCache
+
+    args = replace(
+        _ARGS, num_attention_heads=32, num_key_value_heads=4, sliding_window=513
+    )
+    attention = FlintAttention(args, 1)
+    attention.softmax_offset = mx.random.normal((32,), key=mx.random.key(20)).astype(
+        mx.bfloat16
+    )
+    keys_length = min(cached, 512) + length
+    queries = _bf16((1, 32, length, 128), 21)
+    keys = _bf16((1, 4, keys_length, 128), 22)
+    values = _bf16((1, 4, keys_length, 128), 23)
+    mask = create_causal_mask(length, keys_length - length, window_size=513)
+    blocked = attention._sliding_attention(  # pyright: ignore[reportPrivateUsage]
+        queries, keys, values, mask, RotatingKVCache(max_size=513)
+    )
+    assert blocked is not None
+    expected = mx.fast.scaled_dot_product_attention(
+        queries,
+        keys,
+        values,
+        scale=attention.scale,
+        mask=mask,
+        sinks=attention.softmax_offset,
+    )
+    assert _identical(blocked, expected)

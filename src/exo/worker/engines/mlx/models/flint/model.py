@@ -28,6 +28,7 @@ tiles its 513-token window reaches, instead of to every key under a mask.
 Off Metal (CUDA, CPU) the layer runs mlx-lm's ops with float32 norms.
 """
 
+from dataclasses import dataclass
 from functools import cache, lru_cache
 from typing import Any, cast
 
@@ -224,9 +225,12 @@ class FlintAttention(Attention):
         ):
             return None
         offset = key_length - length
+        # The last block takes the remainder: every block keeps at least
+        # _SLIDING_QUERY_BLOCK rows, so it runs the same attention kernel (MLX runs 8 rows
+        # or fewer through another one).
+        starts = list(range(0, length - _SLIDING_QUERY_BLOCK + 1, _SLIDING_QUERY_BLOCK))
         blocks: list[mx.array] = []
-        for start in range(0, length, _SLIDING_QUERY_BLOCK):
-            stop = min(length, start + _SLIDING_QUERY_BLOCK)
+        for start, stop in zip(starts, [*starts[1:], length], strict=True):
             first = max(0, offset + start - window + 1)
             first -= first % _KEY_TILE_ALIGN
             last = offset + stop
@@ -247,19 +251,23 @@ class FlintAttention(Attention):
         return None if self.rope is None else self.rope.base
 
     def _fusable(self, x: mx.array) -> bool:
-        rope = self.rope
-        return (
-            kernels.qk_norm_rope_fusable(x, self.q_norm.weight.shape[0])
-            and self.q_norm.eps == self.k_norm.eps
-            and (
-                rope is None
-                or (
-                    not rope.traditional
-                    and rope.scale == 1.0
-                    and rope.dims == self.q_norm.weight.shape[0]
-                )
-            )
+        return self._layer_fusable() and kernels.qk_norm_rope_fusable(
+            x, self.q_norm.weight.shape[0]
         )
+
+    def _layer_fusable(self) -> bool:
+        """What the fused query/key kernel needs of the layer (fixed after loading)."""
+        known = cast(bool | None, self.__dict__.get("_layer_fusable_value"))
+        if known is not None:
+            return known
+        rope = self.rope
+        head_dim = self.q_norm.weight.shape[0]
+        value = self.q_norm.eps == self.k_norm.eps and (
+            rope is None
+            or (not rope.traditional and rope.scale == 1.0 and rope.dims == head_dim)
+        )
+        object.__setattr__(self, "_layer_fusable_value", value)
+        return value
 
     def _projections(
         self, x: mx.array
@@ -373,6 +381,14 @@ def _arrays(linear: nn.Module) -> tuple[mx.array, mx.array, mx.array]:
     )
 
 
+@dataclass(frozen=True)
+class _ExpertPlan:
+    gate_up: StackedQuantizedLinear
+    down: tuple[mx.array, mx.array, mx.array]
+    down_group_size: int
+    down_bits: int
+
+
 class FlintSparseMoeBlock(SparseMoeBlock):
     def __init__(self, args: ModelArgs) -> None:
         super().__init__(args)
@@ -394,15 +410,33 @@ class FlintSparseMoeBlock(SparseMoeBlock):
             else None
         )
 
+    def _expert_plan(self) -> _ExpertPlan | None:
+        """The experts' stacked gate/up and their down projection, resolved once."""
+        plan = cast(_ExpertPlan | None, self.__dict__.get("_expert_plan_value"))
+        if plan is not None:
+            return plan
+        gate_up = self._gate_up()
+        down = self.switch_mlp.down_proj
+        if gate_up is None or not _quantized_affine(down):
+            return None
+        plan = _ExpertPlan(
+            gate_up=gate_up,
+            down=_arrays(down),
+            down_group_size=cast(int, down.group_size),
+            down_bits=cast(int, down.bits),
+        )
+        object.__setattr__(self, "_expert_plan_value", plan)
+        return plan
+
     def _experts(self, x: mx.array, indices: mx.array) -> mx.array:
         """``self.switch_mlp(x, indices)`` (mlx-lm's SwitchGLU), with the gate and up
         projections in one gather and, for a few tokens, cached row indices. From 64 rows
         it sorts the rows by expert, as mlx-lm does."""
         glu = self.switch_mlp
-        gate_up = self._gate_up()
-        down = glu.down_proj
-        if gate_up is None or not _quantized_affine(down):
+        plan = self._expert_plan()
+        if plan is None:
             return glu(x, indices)
+        gate_up = plan.gate_up
         group_size, bits = gate_up.group_size, gate_up.bits
         x = mx.expand_dims(x, (-2, -3))
         sort = indices.size >= 64
@@ -424,13 +458,8 @@ class FlintSparseMoeBlock(SparseMoeBlock):
         x_gate, x_up = both[..., :split], both[..., split:]
         hidden = cast(mx.array, glu.activation(x_up, x_gate))
         out = _gather(
-            hidden,
-            _arrays(down),
-            cast(int, down.group_size),
-            cast(int, down.bits),
-            rows,
-            sort,
-        )  # noqa: B009
+            hidden, plan.down, plan.down_group_size, plan.down_bits, rows, sort
+        )
         if inverse is not None:
             # mlx-lm's _scatter_unsort
             out = mx.unflatten(out[inverse], 0, indices.shape)

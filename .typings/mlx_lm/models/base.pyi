@@ -19,8 +19,7 @@ def create_causal_mask(
     window_size: Optional[int] = ...,
     right_padding: Optional[mx.array] = ...,
     left_padding: Optional[mx.array] = ...,
-):  # -> array:
-    ...
+) -> mx.array: ...
 def create_attention_mask(
     h, cache=..., window_size: Optional[int] = ..., return_array: bool = ...
 ):  # -> array | Literal['causal'] | None:
