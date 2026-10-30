@@ -42,13 +42,18 @@ class NemotronHShardingStrategy(TensorParallelShardingStrategy):
                 self._shard_mamba2_mixer(mixer, rank)
 
             elif isinstance(mixer, NemotronHMoE):
-                # Shard routed experts (SwitchMLP uses fc1/fc2)
-                self.all_to_sharded_linear_in_place(mixer.switch_mlp.fc1)
-                self.sharded_to_all_linear_in_place(mixer.switch_mlp.fc2)
-                # Shard shared expert in-place (no all-reduce — ShardedMoE handles that)
+                # Routed experts (SwitchMLP's fc1/fc2) and the shared expert keep a slice
+                # of their hidden dimension; ShardedMoE all-reduces the partial sums.
+                shard_hidden_dimension(
+                    mixer.switch_mlp.fc1, mixer.switch_mlp.fc2, rank, self.N
+                )
                 if hasattr(mixer, "shared_experts"):
-                    self.all_to_sharded_linear_in_place(mixer.shared_experts.up_proj)
-                    self.sharded_to_all_linear_in_place(mixer.shared_experts.down_proj)
+                    shard_hidden_dimension(
+                        mixer.shared_experts.up_proj,
+                        mixer.shared_experts.down_proj,
+                        rank,
+                        self.N,
+                    )
                 mixer = ShardedMoE(mixer)  # pyright: ignore[reportArgumentType]
                 mixer.sharding_group = self.group
                 layer.mixer = mixer  # pyright: ignore[reportAttributeAccessIssue]
@@ -99,7 +104,7 @@ class NemotronHShardingStrategy(TensorParallelShardingStrategy):
         )
 
         indices = mx.concatenate([gate_idx, conv_ssm_idx, b_idx, c_idx, dt_idx])
-        mixer.in_proj.weight = mixer.in_proj.weight[indices]
+        take_output_rows(mixer.in_proj, indices)
 
         # === out_proj: input is intermediate_size (sharded) → hidden_size (reduce) ===
         mixer.out_proj = self.sharded_to_all_linear(mixer.out_proj)
@@ -140,6 +145,86 @@ class NemotronHShardingStrategy(TensorParallelShardingStrategy):
         mixer.intermediate_size = is_per_rank
         mixer.conv_dim = new_conv_dim
         mixer.heads_per_group = heads_per_rank // groups_per_rank
+
+
+def take_output_rows(linear: nn.Module, rows: mx.array) -> None:
+    """Keep only the given output rows of a linear layer, in place.
+
+    A quantized linear layer stores its scales and biases per output row, next to the
+    packed weight. All of them, and the bias, must be indexed together: MLX's quantized
+    matmul does not check that the scales have as many rows as the weight, so indexing
+    the weight alone silently dequantizes most rows with another row's scales.
+    """
+    for name in ("weight", "scales", "biases", "bias"):
+        parameter = cast(object, linear.get(name))
+        if isinstance(parameter, mx.array):
+            setattr(linear, name, parameter[rows])
+
+
+def _parameter(layer: nn.Module, name: str) -> mx.array | None:
+    parameter = cast(object, layer.get(name))
+    return parameter if isinstance(parameter, mx.array) else None
+
+
+def hidden_dimension_bounds(
+    hidden: int, step: int, rank: int, world_size: int
+) -> tuple[int, int]:
+    """Rank `rank`'s slice [start, end) of a hidden dimension split into `world_size`
+    parts on multiples of `step`, as evenly as the steps allow."""
+    steps, remainder = divmod(hidden, step)
+    assert remainder == 0, f"hidden size {hidden} is not a multiple of {step}"
+    base, extra = divmod(steps, world_size)
+    start = rank * base + min(rank, extra)
+    end = start + base + (1 if rank < extra else 0)
+    return start * step, end * step
+
+
+def shard_hidden_dimension(
+    up: nn.Module, down: nn.Module, rank: int, world_size: int
+) -> None:
+    """Keep this rank's slice of an MLP's hidden dimension, in place: rows of `up` and the
+    matching input columns of `down`, for linear layers and per-expert SwitchLinear ones,
+    quantized or not. The caller all-reduces the partial outputs. The slices are copied
+    (`mx.contiguous`): a slice is a view that would keep the whole tensor in memory.
+
+    A quantized `down` stores one scale (and bias) per group of its inputs, so the slices
+    fall on group boundaries and may be uneven: Nemotron 3 Nano and 3.5 Lightning have
+    1856 = 29 x 64 expert hidden units, which no even split of their 64-group 4-bit and
+    8-bit conversions can divide between two ranks.
+    """
+    weight = _parameter(down, "weight")
+    assert weight is not None
+    scales = _parameter(down, "scales")
+    if scales is None:
+        hidden, step, packing = weight.shape[-1], 1, 1
+    else:
+        group_size = cast(int, getattr(down, "group_size"))  # noqa: B009
+        bits = cast(int, getattr(down, "bits"))  # noqa: B009
+        hidden, step, packing = scales.shape[-1] * group_size, group_size, 32 // bits
+    start, end = hidden_dimension_bounds(hidden, step, rank, world_size)
+
+    for name in ("weight", "scales", "biases"):
+        parameter = _parameter(up, name)
+        if parameter is not None:
+            setattr(up, name, mx.contiguous(parameter[..., start:end, :]))
+    up_bias = _parameter(up, "bias")
+    if up_bias is not None:
+        setattr(up, "bias", mx.contiguous(up_bias[..., start:end]))  # noqa: B010
+
+    setattr(  # noqa: B010
+        down, "weight", mx.contiguous(weight[..., start // packing : end // packing])
+    )
+    if scales is not None:
+        group_size = hidden // scales.shape[-1]
+        groups = slice(start // group_size, end // group_size)
+        setattr(down, "scales", mx.contiguous(scales[..., groups]))  # noqa: B010
+        biases = _parameter(down, "biases")
+        if biases is not None:
+            setattr(down, "biases", mx.contiguous(biases[..., groups]))  # noqa: B010
+    down_bias = _parameter(down, "bias")
+    if down_bias is not None:
+        # Every rank adds it before the all-reduce.
+        setattr(down, "bias", down_bias / world_size)  # noqa: B010
 
 
 def fix_pipeline_shard(
