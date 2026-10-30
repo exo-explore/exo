@@ -31,6 +31,7 @@ from exo.worker.engines.mlx.constants import TRUST_REMOTE_CODE
 from exo.worker.engines.mlx.models.registry import (
     get_model_classes,
     prompt_encoder_for,
+    reasoning_effort_hook_for,
     template_messages_hooks_for,
     tokenizer_loader_for,
 )
@@ -540,7 +541,12 @@ def render_chat_template(
         # Jinja ignores unknown variables, so passing both is safe.
         extra_kwargs["enable_thinking"] = task_params.enable_thinking
         extra_kwargs["thinking"] = task_params.enable_thinking
-    if task_params.reasoning_effort is not None:
+    effort_hook = reasoning_effort_hook_for(task_params)
+    if effort_hook is not None:
+        template_effort = effort_hook.template_effort(task_params)
+        if template_effort is not None:
+            extra_kwargs["reasoning_effort"] = template_effort
+    elif task_params.reasoning_effort is not None:
         extra_kwargs["reasoning_effort"] = task_params.reasoning_effort
 
     patched_template: str | None = None
@@ -572,6 +578,11 @@ def render_chat_template(
 
     if task_params.tools and _schemas_lost_in_prompt(prompt, task_params.tools):
         logger.warning("Chat template lost nested tool schemas even after patching")
+
+    if effort_hook is not None and task_params.enable_thinking is False:
+        suffix = effort_hook.thinking_off_suffix(task_params)
+        if suffix is not None:
+            prompt += suffix
 
     if partial_assistant_content:
         prompt += partial_assistant_content
