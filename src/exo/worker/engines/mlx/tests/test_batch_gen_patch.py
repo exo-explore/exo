@@ -1,7 +1,9 @@
 """Decoding with linear attention layers doesn't build up an ever-growing graph."""
 
 import io
+from collections.abc import Callable
 from types import SimpleNamespace
+from typing import cast
 
 import mlx.core as mx
 from mlx_lm.models.cache import ArraysCache
@@ -9,6 +11,7 @@ from mlx_lm.models.cache import ArraysCache
 from exo.worker.engines.mlx.patches.opt_batch_gen import (
     _patched_step,  # pyright: ignore[reportPrivateUsage]
 )
+from exo.worker.engines.mlx.sampling import RecentTokensProcessor
 
 VOCAB = 8
 
@@ -61,3 +64,36 @@ def test_linear_attention_caches_do_not_grow_a_graph_while_decoding() -> None:
         assert graph_edges(layer_cache.lengths) == 0
         assert layer_cache.left_padding.tolist() == [-256, -253]
         assert layer_cache.lengths.tolist() == [-251, -251]
+
+
+def test_processors_get_the_history_they_read() -> None:
+    seen: dict[str, list[list[int]]] = {"windowed": [], "whole": []}
+
+    def recorder(name: str) -> Callable[[mx.array, mx.array], mx.array]:
+        def record(tokens: mx.array, logits: mx.array) -> mx.array:
+            seen[name].append([int(t) for t in cast(list[int], tokens.tolist())])
+            return logits
+
+        return record
+
+    history = list(range(100, 110))
+    batch = SimpleNamespace(
+        model=LinearAttentionModel(),
+        prompt_cache=[ArraysCache(2)],
+        logits_processors=[
+            (RecentTokensProcessor(recorder("windowed"), 3),),
+            (recorder("whole"), RecentTokensProcessor(recorder("windowed"), 2)),
+        ],
+        samplers=[greedy, greedy],
+        fallback_sampler=greedy,
+        uids=[0, 1],
+        tokens=[list(history), list(history)],
+        _next_tokens=mx.array([1, 2]),
+        _next_logprobs=mx.zeros((2, VOCAB)),
+    )
+
+    _patched_step(batch)  # pyright: ignore[reportArgumentType]
+
+    # the first row's processor reads 3 tokens; the second row has one that reads them all
+    assert seen["windowed"] == [history[-3:], history]
+    assert seen["whole"] == [history]

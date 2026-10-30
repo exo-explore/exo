@@ -12,7 +12,6 @@ from mlx_lm.generate import (
     generation_stream,
 )
 from mlx_lm.models.cache import RotatingKVCache
-from mlx_lm.sample_utils import make_logits_processors, make_sampler
 from mlx_lm.tokenizer_utils import StreamingDetokenizer, TokenizerWrapper
 
 from exo.api.types import (
@@ -45,6 +44,7 @@ from exo.worker.engines.mlx.patches.opt_batch_gen import (
     set_needs_topk,
     take_ready_topk,
 )
+from exo.worker.engines.mlx.sampling import make_logits_processors, make_sampler
 from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.engines.mlx.utils_mlx import (
     fix_unmatched_think_end_tokens,

@@ -1,7 +1,14 @@
 from typing import Sequence
 
 from mlx.core import Device, Dtype, Stream, array, scalar
-from mlx.core.distributed import state as state
+
+class _RandomState:
+    """The global random key: random.state[0]. Read-only from Python."""
+
+    def __len__(self) -> int: ...
+    def __getitem__(self, index: int) -> array: ...
+
+state: _RandomState
 
 def bernoulli(
     p: scalar | array = ...,

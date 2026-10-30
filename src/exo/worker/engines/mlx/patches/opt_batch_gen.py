@@ -5,6 +5,8 @@ from typing import cast
 import mlx.core as mx
 from mlx_lm.generate import GenerationBatch, PromptProcessingBatch, generation_stream
 
+from exo.worker.engines.mlx.sampling import history_window, recent_tokens
+
 _PRECOMPUTE_TOP_K = 20
 
 
@@ -95,8 +97,14 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
         processed_logits: list[mx.array] = []
         for e in range(len(self.uids)):
             sample_logits = logits[e : e + 1]
-            for processor in self.logits_processors[e]:
-                sample_logits = processor(mx.array(self.tokens[e]), sample_logits)
+            processors = self.logits_processors[e]
+            if processors:
+                # Only the tokens the processors read: the history grows every step.
+                history = mx.array(
+                    recent_tokens(self.tokens[e], history_window(processors))
+                )
+                for processor in processors:
+                    sample_logits = processor(history, sample_logits)
             processed_logits.append(sample_logits)
         logits = mx.concatenate(processed_logits, axis=0)
 
