@@ -60,11 +60,10 @@ from exo.shared.types.worker.shards import (
     TensorShardMetadata,
 )
 from exo.worker.engines.mlx.auto_parallel import (
-    get_inner_model,
-    get_layers,
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
+from exo.worker.engines.mlx.sharding.pipeline import get_inner_model, get_layers
 from exo.worker.engines.mlx.types import Model
 from exo.worker.runner.bootstrap import logger
 

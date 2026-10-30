@@ -1,8 +1,6 @@
-from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator
 from functools import partial
-from inspect import signature
-from typing import TYPE_CHECKING, Literal, Protocol, cast
+from typing import TYPE_CHECKING, cast
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -14,7 +12,6 @@ from mlx.nn.layers.distributed import (
 from mlx_lm.models.base import (
     scaled_dot_product_attention,
 )
-from mlx_lm.models.cache import ArraysCache, KVCache
 from mlx_lm.models.deepseek_v3 import DeepseekV3MLP
 from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
 from mlx_lm.models.deepseek_v4 import DeepseekV4MoE, V4Attention
@@ -63,214 +60,27 @@ from mlx_lm.models.step3p5 import Step3p5Model as Step35InnerModel
 
 from exo.shared.types.worker.runner_response import ModelLoadingResponse
 from exo.shared.types.worker.shards import PipelineShardMetadata
+from exo.worker.engines.mlx.sharding.blocks import (
+    CustomMlxLayer,
+    LayerCallable,
+    ShardedMoE,
+)
+from exo.worker.engines.mlx.sharding.pipeline import (
+    PipelineFirstLayer,
+    PipelineLastLayer,
+    get_inner_model,
+    get_layers,
+    patch_hybrid_cache,
+    patch_pipeline_model,
+)
+from exo.worker.engines.mlx.sharding.tensor import (
+    TensorParallelShardingStrategy,
+    patch_tensor_model,
+)
 from exo.worker.runner.bootstrap import logger
 
 if TYPE_CHECKING:
     from mlx_lm.models.cache import Cache
-
-
-_pending_prefill_sends: list[tuple[mx.array, int, mx.distributed.Group]] = []
-
-
-def flush_prefill_sends() -> None:
-    for output, dst, group in _pending_prefill_sends:
-        sent = mx.distributed.send(output, dst, group=group)
-        mx.async_eval(sent)
-    _pending_prefill_sends.clear()
-
-
-def clear_prefill_sends() -> None:
-    # Discard pending sends (e.g. on cancellation).
-    _pending_prefill_sends.clear()
-
-
-class _LayerCallable(Protocol):
-    """Structural type that any compatible layer must satisfy.
-
-    We require a single positional input of type ``mx.array`` and an
-    ``mx.array`` output, while permitting arbitrary *args / **kwargs so this
-    protocol matches the vast majority of `mlx.nn.Module` subclasses.
-    """
-
-    def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array: ...
-
-
-class CustomMlxLayer(nn.Module):
-    """Base class for replacing an MLX layer with a custom implementation."""
-
-    def __init__(self, original_layer: _LayerCallable):
-        super().__init__()
-        dict.__setitem__(self, "_original_layer", original_layer)  # pyright: ignore[reportUnknownMemberType]
-
-    @property
-    def original_layer(self) -> _LayerCallable:
-        return cast(_LayerCallable, self["_original_layer"])
-
-    # Calls __getattr__ for any attributes not found on nn.Module (e.g. use_sliding)
-    if not TYPE_CHECKING:
-
-        def __getattr__(self, name):
-            try:
-                return super().__getattr__(name)
-            except AttributeError:
-                original_layer = cast(_LayerCallable, self["_original_layer"])
-                return getattr(original_layer, name)
-
-
-class PipelineFirstLayer(CustomMlxLayer):
-    def __init__(
-        self,
-        original_layer: _LayerCallable,
-        r: int,
-        group: mx.distributed.Group,
-    ):
-        super().__init__(original_layer)
-        self.r: int = r
-        self.group = group
-        self.is_prefill: bool = False
-
-    def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
-        if self.r != 0:
-            # We want to avoid GPU timeout errors by evalling the distributed operation
-            # so that it stays on CPU, which does not have a timeout.
-            mx.eval(x)
-            x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
-            mx.eval(x)
-        return self.original_layer(x, *args, **kwargs)
-
-
-class PipelineLastLayer(CustomMlxLayer):
-    def __init__(
-        self,
-        original_layer: _LayerCallable,
-        r: int,
-        s: int,
-        group: mx.distributed.Group,
-    ):
-        super().__init__(original_layer)
-        self.r: int = r
-        self.s: int = s
-        self.group = group
-        self.original_layer_signature = signature(self.original_layer.__call__)
-        self.is_prefill: bool = False
-        self.queue_sends: bool = False
-
-    def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
-        cache = self.original_layer_signature.bind_partial(
-            x, *args, **kwargs
-        ).arguments.get("cache", None)
-
-        output: mx.array = self.original_layer(x, *args, **kwargs)
-
-        # Eval layer output to materialize it before send — this splits the graph
-        # so the send is isolated and the receiving rank's recv can complete.
-        mx.eval(output)
-
-        if self.r != self.s - 1:
-            if self.queue_sends:
-                _pending_prefill_sends.append(
-                    (output, (self.r + 1) % self.s, self.group)
-                )
-            else:
-                output = mx.distributed.send(
-                    output, (self.r + 1) % self.s, group=self.group
-                )
-            if cache is not None:
-                # CacheList (used by MLA models like DeepSeekV32, GLM MoE DSA)
-                # doesn't have .keys directly; access via first sub-cache.
-                _cache = cache[0] if hasattr(cache, "caches") else cache  # type: ignore
-                if hasattr(_cache, "keys"):  # pyright: ignore[reportAny]
-                    _cache.keys = mx.depends(_cache.keys, output)  # type: ignore
-            mx.eval(output)
-            if cache is not None and hasattr(_cache, "keys"):  # type: ignore
-                mx.eval(_cache.keys)  # type: ignore
-
-        if not self.is_prefill:
-            output = mx.distributed.all_gather(output, group=self.group)[
-                -output.shape[0] :
-            ]
-            mx.eval(output)
-
-        return output
-
-
-def set_pipeline_prefill(model: nn.Module, is_prefill: bool) -> None:
-    for layer in model.layers:  # type: ignore
-        if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
-            layer.is_prefill = is_prefill
-
-
-def set_pipeline_queue_sends(model: nn.Module, queue_sends: bool) -> None:
-    for layer in model.layers:  # type: ignore
-        if isinstance(layer, PipelineLastLayer):
-            layer.queue_sends = queue_sends
-
-
-def get_inner_model(model: nn.Module) -> nn.Module:
-    inner = getattr(model, "model", None)
-    if isinstance(inner, nn.Module):
-        return inner
-
-    inner = getattr(model, "transformer", None)
-    if isinstance(inner, nn.Module):
-        return inner
-
-    inner = getattr(model, "language_model", None)
-    if isinstance(inner, nn.Module):
-        inner_inner = getattr(inner, "model", None)
-        if isinstance(inner_inner, nn.Module):
-            return inner_inner
-
-    inner = getattr(model, "backbone", None)
-    if isinstance(inner, nn.Module):
-        return inner
-
-    raise ValueError(
-        "Model must either have a 'model', 'transformer', or 'backbone' attribute"
-    )
-
-
-def get_layers(inner_model_instance: nn.Module) -> list[_LayerCallable]:
-    # Handle both model.layers and model.h cases
-    layers: list[_LayerCallable]
-    if hasattr(inner_model_instance, "layers"):
-        layers = cast(list[_LayerCallable], inner_model_instance.layers)
-    elif hasattr(inner_model_instance, "h"):
-        layers = cast(list[_LayerCallable], inner_model_instance.h)
-    else:
-        raise ValueError("Model must have either a 'layers' or 'h' attribute")
-
-    return layers
-
-
-def _patch_hybrid_cache(
-    model: Qwen3_5TextModel | Qwen3NextModel | NemotronHModel,
-    fa_idx: int,
-    has_full_attn: bool,
-    ssm_idx: int,
-    has_linear: bool,
-) -> None:
-    # Hacks to make make_mask happy.
-    original = model.make_cache
-
-    def patched() -> list[ArraysCache | KVCache]:
-        cache = original()
-        if not has_full_attn:
-            entry = cache[fa_idx]
-            orig_make_mask = entry.make_mask
-            entry.make_mask = lambda n, **_kw: orig_make_mask(n)  # type: ignore
-        if not has_linear:
-            orig_ssm_make_mask = cache[ssm_idx].make_mask
-
-            def _ssm_mask(
-                n: int, **kw: bool | int | None
-            ) -> mx.array | Literal["causal"] | None:
-                return orig_ssm_make_mask(n, **kw) if kw else None
-
-            cache[ssm_idx].make_mask = _ssm_mask  # type: ignore
-        return cache
-
-    model.make_cache = patched
 
 
 def pipeline_auto_parallel(
@@ -348,7 +158,7 @@ def pipeline_auto_parallel(
         inner_model_instance.fa_idx = full_attn_layers[0] if full_attn_layers else 0
         inner_model_instance.ssm_idx = linear_layers[0] if linear_layers else 0
         if not full_attn_layers or not linear_layers:
-            _patch_hybrid_cache(
+            patch_hybrid_cache(
                 cast(Qwen3_5TextModel | Qwen3NextModel, model),
                 fa_idx=inner_model_instance.fa_idx,
                 has_full_attn=bool(full_attn_layers),
@@ -378,7 +188,7 @@ def pipeline_auto_parallel(
         inner_model_instance.fa_idx = fa_idx if fa_idx is not None else 0
         inner_model_instance.ssm_idx = ssm_idx if ssm_idx is not None else 0
         if not has_attn or not has_mamba:
-            _patch_hybrid_cache(
+            patch_hybrid_cache(
                 cast(NemotronHModel, model),
                 fa_idx=inner_model_instance.fa_idx,
                 has_full_attn=has_attn,
@@ -393,64 +203,6 @@ def pipeline_auto_parallel(
     )
 
     return patch_pipeline_model(model, group)
-
-
-def patch_pipeline_model[T](model: T, group: mx.distributed.Group) -> T:
-    # Patch __call__ on the model's class
-    cls = model.__class__
-    original_call = cls.__call__  # type :ignore
-    call_signature = signature(original_call)  # type :ignore
-
-    def patched_call(
-        self: T,
-        *args: object,
-        **kwargs: object,
-    ) -> mx.array:
-        logits: mx.array = original_call(self, *args, **kwargs)  # type: ignore
-        cache = call_signature.bind_partial(self, *args, **kwargs).arguments.get(
-            "cache", None
-        )
-
-        # Add dependency to last cache entry to ensure distributed ops are evaluated
-        if cache is not None and len(cache) > 0:  # type: ignore
-            last = cache[-1]  # type: ignore
-            dep_cache = last[0] if hasattr(last, "caches") else last  # type: ignore
-            if hasattr(dep_cache, "keys") and dep_cache.keys is not None:  # type: ignore
-                dep_cache.keys = mx.depends(dep_cache.keys, logits)  # type: ignore
-
-        return logits
-
-    cls.__call__ = patched_call
-    return model
-
-
-def patch_tensor_model[T](model: T) -> T:
-    """Patch model's __call__ to ensure distributed ops sync during inference."""
-    cls = model.__class__
-    original_call = cls.__call__
-    call_signature = signature(original_call)
-
-    def patched_call(
-        self: T,
-        *args: object,
-        **kwargs: object,
-    ) -> mx.array:
-        logits: mx.array = original_call(self, *args, **kwargs)  # pyright: ignore[reportAny]
-        cache = call_signature.bind_partial(self, *args, **kwargs).arguments.get(
-            "cache", None
-        )
-
-        # Add dependency to last cache entry to ensure distributed ops are evaluated
-        if cache is not None and len(cache) > 0:  # pyright: ignore[reportAny]
-            last = cache[-1]  # pyright: ignore[reportAny]
-            dep_cache = last[0] if hasattr(last, "caches") else last  # pyright: ignore[reportAny]
-            if hasattr(dep_cache, "keys"):  # type: ignore
-                dep_cache.keys = mx.depends(dep_cache.keys, logits)  # pyright: ignore[reportAny]
-
-        return logits
-
-    cls.__call__ = patched_call
-    return model
 
 
 def tensor_auto_parallel(
@@ -602,29 +354,6 @@ def tensor_auto_parallel(
     return patch_tensor_model(model)
 
 
-class TensorParallelShardingStrategy(ABC):
-    def __init__(
-        self,
-        group: mx.distributed.Group,
-        all_to_sharded_linear: Callable[..., nn.Linear],
-        sharded_to_all_linear: Callable[..., nn.Linear],
-        all_to_sharded_linear_in_place: Callable[..., None],
-        sharded_to_all_linear_in_place: Callable[..., None],
-    ):
-        self.all_to_sharded_linear = all_to_sharded_linear
-        self.sharded_to_all_linear = sharded_to_all_linear
-        self.all_to_sharded_linear_in_place = all_to_sharded_linear_in_place
-        self.sharded_to_all_linear_in_place = sharded_to_all_linear_in_place
-        self.group = group
-        self.N = group.size()
-
-    @abstractmethod
-    def shard_model(
-        self,
-        model: nn.Module,
-    ) -> Generator[ModelLoadingResponse, None, nn.Module]: ...
-
-
 class LlamaShardingStrategy(TensorParallelShardingStrategy):
     def shard_model(
         self,
@@ -652,7 +381,7 @@ class LlamaShardingStrategy(TensorParallelShardingStrategy):
         return model
 
 
-def _set_layers(model: nn.Module, layers: list[_LayerCallable]) -> None:
+def _set_layers(model: nn.Module, layers: list[LayerCallable]) -> None:
     inner_model_instance = get_inner_model(model)
     if hasattr(inner_model_instance, "layers"):
         inner_model_instance.layers = layers
@@ -751,27 +480,11 @@ class DeepSeekShardingStrategy(TensorParallelShardingStrategy):
         return model
 
 
-class ShardedMoE(CustomMlxLayer):
-    """Wraps any MoE layer with distributed sum_gradients / all_sum."""
-
-    def __init__(self, layer: _LayerCallable):
-        super().__init__(layer)
-        self.sharding_group: mx.distributed.Group | None = None
-
-    def __call__(self, x: mx.array) -> mx.array:
-        if self.sharding_group is not None:
-            x = sum_gradients(self.sharding_group)(x)
-        y = self.original_layer.__call__(x)
-        if self.sharding_group is not None:
-            y = mx.distributed.all_sum(y, group=self.sharding_group)
-        return y
-
-
 class ShardedMoEV4(CustomMlxLayer):
     """Same as ShardedMoE but for DeepseekV4MoE which takes (x, input_ids)."""
 
     def __init__(self, layer: DeepseekV4MoE):
-        super().__init__(cast(_LayerCallable, cast(object, layer)))
+        super().__init__(cast(LayerCallable, cast(object, layer)))
         self._v4_inner = layer
         self.sharding_group: mx.distributed.Group | None = None
 
@@ -1002,7 +715,7 @@ class GLM4MoeLiteShardingStrategy(TensorParallelShardingStrategy):
 
 
 class WrappedMiniMaxAttention(CustomMlxLayer):
-    def __init__(self, layer: _LayerCallable, group: mx.distributed.Group):
+    def __init__(self, layer: LayerCallable, group: mx.distributed.Group):
         super().__init__(layer)
         self.group = group
 
@@ -1539,7 +1252,7 @@ class NemotronHShardingStrategy(TensorParallelShardingStrategy):
 
 
 class WrappedGemma4Experts(CustomMlxLayer):
-    def __init__(self, layer: _LayerCallable):
+    def __init__(self, layer: LayerCallable):
         super().__init__(layer)
         self.sharding_group: mx.distributed.Group | None = None
 

@@ -8,8 +8,8 @@ import mlx.core as mx
 import mlx.nn as mlx_nn
 import pytest
 
-from exo.worker.engines.mlx.auto_parallel import (
-    CustomMlxLayer,
+from exo.worker.engines.mlx.sharding.blocks import CustomMlxLayer
+from exo.worker.engines.mlx.sharding.pipeline import (
     PipelineFirstLayer,
     PipelineLastLayer,
     patch_pipeline_model,
