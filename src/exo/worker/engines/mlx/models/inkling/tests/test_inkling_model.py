@@ -110,6 +110,7 @@ def test_long_prefills_split_into_query_blocks_give_the_same_result(
     model = tiny_model()
     whole = np.array(model(mx.array(_SEQUENCE)[None])[0])
     monkeypatch.setattr(inkling_model, "_BIAS_ELEMENTS_PER_CALL", 64)
+    monkeypatch.setattr(inkling_model, "_GLOBAL_BIAS_ELEMENTS_PER_CALL", 64)
     blocked = np.array(model(mx.array(_SEQUENCE)[None])[0])
     np.testing.assert_allclose(blocked, whole, rtol=1e-5, atol=1e-5)
     cached = _logits(model, _SEQUENCE, [17])
@@ -140,6 +141,21 @@ def _official_layout(model: Model) -> dict[str, mx.array]:
     and row-interleaved gate/up projections, convolutions as (channels, 1, kernel), the
     LM head padded to the full vocabulary, plus towers the text model doesn't load."""
     flat = dict(cast(list[tuple[str, mx.array]], tree_flatten(model.parameters())))
+    # the fused input projections, split back into the reference's four
+    for index, layer in enumerate(model.layers):
+        fused = flat.pop(f"model.layers.{index}.self_attn.qkvr_proj.weight")
+        start = 0
+        widths = layer.self_attn.projection_widths()
+        for projection, width in zip(("q", "k", "v", "r"), widths, strict=True):
+            name = f"model.layers.{index}.self_attn.{projection}_proj.weight"
+            flat[name] = fused[start : start + width]
+            start += width
+    # the experts' fused gate/up projections (gate rows, then up rows), split in two
+    for name in [n for n in flat if n.endswith("experts.gate_up_proj.weight")]:
+        fused = flat.pop(name)
+        width = fused.shape[-2] // 2
+        flat[name.replace("gate_up_proj", "gate_proj")] = fused[..., :width, :]
+        flat[name.replace("gate_up_proj", "up_proj")] = fused[..., width:, :]
     out: dict[str, mx.array] = {}
     renames = {
         "self_attn.q_proj": "attn.wq_du",
@@ -291,7 +307,7 @@ def test_quantized_experts_compute_what_their_dequantized_weights_do() -> None:
     for kind in (
         "mlp.gate_proj",
         "mlp.experts.down_proj",
-        "mlp.shared_experts.up_proj",
+        "mlp.shared_experts.gate_up_proj",
     ):
         assert any(n.endswith(f"{kind}.scales") for n in flat), kind
     dequantized_weights: list[tuple[str, mx.array]] = []
@@ -311,3 +327,26 @@ def test_quantized_experts_compute_what_their_dequantized_weights_do() -> None:
     np.testing.assert_allclose(
         np.array(quantized(tokens)), np.array(dequantized(tokens)), rtol=1e-4, atol=1e-4
     )
+
+
+def test_mlx_conversions_load_with_fused_projections() -> None:
+    """MLX conversions keep the official names but split (and quantize) the experts' gate
+    and up projections: the loader stacks them as gate rows then up rows, and stacks each
+    attention layer's q/k/v/r projections."""
+    source = tiny_model(seed=2)
+    official = _official_layout(source)
+    converted: dict[str, mx.array] = {}
+    for name, value in official.items():
+        if name.endswith(("experts.w13_weight", "shared_experts.shared_w13_weight")):
+            base = name.removesuffix(".w13_weight").removesuffix(".shared_w13_weight")
+            converted[f"{base}.gate_proj.weight"] = value[..., 0::2, :]
+            converted[f"{base}.up_proj.weight"] = value[..., 1::2, :]
+        else:
+            converted[name] = value
+    loaded = Model(ARGS)
+    loaded.load_weights(list(loaded.sanitize(converted).items()), strict=True)
+    expected = dict(cast(list[tuple[str, mx.array]], tree_flatten(source.parameters())))
+    got = dict(cast(list[tuple[str, mx.array]], tree_flatten(loaded.parameters())))
+    assert expected.keys() == got.keys()
+    for name, value in expected.items():
+        assert mx.array_equal(value, got[name]).item(), name
