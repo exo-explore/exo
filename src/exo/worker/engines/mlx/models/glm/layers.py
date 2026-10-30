@@ -49,6 +49,13 @@ SPARSE_QUERY_BLOCK = 1024
 
 
 @partial(mx.compile, shapeless=True)
+def _selected_key_probs(scores: mx.array, valid: mx.array, scale: mx.array) -> mx.array:
+    """dsa.sparse_attention's scaling, masking and float32 softmax, compiled."""
+    scaled = mx.where(valid, scores.astype(mx.float32) * scale, -mx.inf)
+    return mx.softmax(scaled, axis=-1).astype(scores.dtype)
+
+
+@partial(mx.compile, shapeless=True)
 def _latent_softmax(
     latent_scores: mx.array, rope_scores: mx.array, mask: mx.array, scale: mx.array
 ) -> mx.array:
@@ -273,6 +280,7 @@ class GlmAttention(GlmMoeDsaAttention):
         keys_full = mx.concatenate([kv_latent, k_pe], axis=-1)[0, 0]  # [N, 576]
         queries_full = mx.concatenate([self.embed_q(q_nope), q_pe], axis=-1)[0]
         mask_rows = None if mask is None else mask.reshape(length, -1)
+        scale = mx.array(self.scale, mx.float32)
         latent_blocks: list[mx.array] = []
         for start in range(0, length, SPARSE_QUERY_BLOCK):
             stop = min(length, start + SPARSE_QUERY_BLOCK)
@@ -281,13 +289,13 @@ class GlmAttention(GlmMoeDsaAttention):
             block_queries = queries_full[:, start:stop].transpose(
                 1, 0, 2
             )  # [l, H, 576]
-            scores = (block_queries @ gathered.swapaxes(-1, -2)).astype(
-                mx.float32
-            ) * self.scale
-            if mask_rows is not None:
-                valid = mx.take_along_axis(mask_rows[start:stop], ids, axis=-1)
-                scores = mx.where(valid[:, None, :], scores, -mx.inf)
-            probs = mx.softmax(scores, axis=-1).astype(gathered.dtype)
+            scores = block_queries @ gathered.swapaxes(-1, -2)
+            valid = (
+                mx.array(True)
+                if mask_rows is None
+                else mx.take_along_axis(mask_rows[start:stop], ids, axis=-1)[:, None, :]
+            )
+            probs = _selected_key_probs(scores, valid, scale)
             latent_blocks.append(probs @ gathered[..., : self.kv_lora_rank])
         latent = (
             mx.concatenate(latent_blocks, axis=0)
