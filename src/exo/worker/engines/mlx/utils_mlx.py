@@ -29,8 +29,10 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 from exo.shared.models.model_cards import ModelId
 from exo.worker.engines.mlx.constants import TRUST_REMOTE_CODE
 from exo.worker.engines.mlx.models.registry import (
+    architecture_for_model,
     get_model_classes,
     prompt_encoder_for,
+    reasoning_effort_hook_for,
     template_messages_hooks_for,
     tokenizer_loader_for,
 )
@@ -78,7 +80,7 @@ def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
     return Memory.from_float_kb(
         (model_shard_meta.end_layer - model_shard_meta.start_layer)
         / model_shard_meta.n_layers
-        * model_shard_meta.model_card.storage_size.in_kb
+        * model_shard_meta.model_card.resident_size.in_kb
         / (
             1
             if isinstance(model_shard_meta, PipelineShardMetadata)
@@ -194,6 +196,7 @@ def load_mlx_items(
                 "Model architecture doesn't support layer-by-layer progress tracking",
             )
         mx.eval(model)
+        run_post_load(model, model_path)
         end_time = time.perf_counter()
         logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
         tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
@@ -235,6 +238,13 @@ def load_mlx_items(
         vision_processor = None
 
     return cast(Model, model), tokenizer, vision_processor
+
+
+def run_post_load(model: nn.Module, model_path: Path) -> None:
+    """Run the model family's post-load step, if it has one."""
+    architecture = architecture_for_model(model)
+    if architecture is not None and architecture.post_load is not None:
+        architecture.post_load(model, model_path)
 
 
 def shard_and_load(
@@ -286,6 +296,7 @@ def shard_and_load(
 
     # TODO: Do we need this?
     mx.eval(model)
+    run_post_load(model, model_path)
 
     logger.debug("SHARDED")
     logger.debug(model)
@@ -540,7 +551,12 @@ def render_chat_template(
         # Jinja ignores unknown variables, so passing both is safe.
         extra_kwargs["enable_thinking"] = task_params.enable_thinking
         extra_kwargs["thinking"] = task_params.enable_thinking
-    if task_params.reasoning_effort is not None:
+    effort_hook = reasoning_effort_hook_for(task_params)
+    if effort_hook is not None:
+        template_effort = effort_hook.template_effort(task_params)
+        if template_effort is not None:
+            extra_kwargs["reasoning_effort"] = template_effort
+    elif task_params.reasoning_effort is not None:
         extra_kwargs["reasoning_effort"] = task_params.reasoning_effort
 
     patched_template: str | None = None
@@ -572,6 +588,11 @@ def render_chat_template(
 
     if task_params.tools and _schemas_lost_in_prompt(prompt, task_params.tools):
         logger.warning("Chat template lost nested tool schemas even after patching")
+
+    if effort_hook is not None and task_params.enable_thinking is False:
+        suffix = effort_hook.thinking_off_suffix(task_params)
+        if suffix is not None:
+            prompt += suffix
 
     if partial_assistant_content:
         prompt += partial_assistant_content

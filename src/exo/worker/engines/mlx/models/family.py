@@ -15,7 +15,10 @@ from exo.shared.types.common import ModelId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
 from exo.worker.engines.mlx.models.spec import FamilySpec
-from exo.worker.engines.mlx.sharding.pipeline import PipelineShardFixup
+from exo.worker.engines.mlx.sharding.pipeline import (
+    PipelineParallel,
+    PipelineShardFixup,
+)
 from exo.worker.engines.mlx.sharding.tensor import TensorParallelShardingStrategy
 
 
@@ -54,10 +57,20 @@ class Architecture:
     model_class: type[nn.Module]
     tensor_parallel: type[TensorParallelShardingStrategy] | None = None
     fix_pipeline_shard: PipelineShardFixup | None = None
+    # Replaces the generic pipeline split (PipelineFirstLayer / PipelineLastLayer around the
+    # node's layers) for models that pass more than one tensor between stages.
+    pipeline_parallel: PipelineParallel | None = None
+    # False for models whose cache can't be merged into, split from or filtered out of a
+    # batch (mlx-lm's BatchGenerator needs that): their requests run one at a time.
+    batched_generation: bool = True
     # The inner model's layer counter to set to the shard's layer count in pipeline
     # parallelism, for models that loop over it rather than over their layers.
     pipeline_layer_count: Literal["num_layers", "num_hidden_layers"] | None = None
     output_parser: OutputParser | None = None
+    # Called once the model is loaded (and sharded, on more than one node), with the
+    # checkpoint folder: for models that need more than their weights to run, e.g. a table
+    # built from the tokenizer, or weights read from the checkpoint files at run time.
+    post_load: Callable[[nn.Module, Path], None] | None = None
 
 
 @final
@@ -92,6 +105,20 @@ class TemplateMessagesHook:
 
 @final
 @dataclass(frozen=True)
+class ReasoningEffortHook:
+    """Maps exo's reasoning settings onto a chat template that understands only some
+    ``reasoning_effort`` values (and renders every other one as its maximum)."""
+
+    applies_to: Callable[[TextGenerationTaskParams], bool]
+    # The reasoning_effort to give the template; None gives none (its default).
+    template_effort: Callable[[TextGenerationTaskParams], str | None]
+    # Appended after the generation prompt when the request turns thinking off and the
+    # template has no switch for it (e.g. closing the reasoning block it opened).
+    thinking_off_suffix: Callable[[TextGenerationTaskParams], str | None]
+
+
+@final
+@dataclass(frozen=True)
 class TokenizerLoader:
     """Loads tokenizers that mlx-lm's loader can't."""
 
@@ -107,4 +134,5 @@ class ModelFamily:
     model_classes: tuple[ModelClasses, ...] = ()
     prompt_encoder: PromptEncoder | None = None
     template_messages_hook: TemplateMessagesHook | None = None
+    reasoning_effort_hook: ReasoningEffortHook | None = None
     tokenizer_loader: TokenizerLoader | None = None

@@ -106,7 +106,7 @@ def _allocate_and_validate_layers(
         ],
     )
 
-    total_storage = model_card.storage_size
+    total_storage = model_card.resident_size
     total_layers = model_card.n_layers
     for i, node_id in enumerate(node_ids):
         node_layers = layer_allocations[i]

@@ -139,7 +139,7 @@ def _not_enough_memory(
     )
     return (
         f"Not enough memory: {command.model_card.model_id} needs "
-        f"{command.model_card.storage_size.in_gb:.1f} GB, but connected nodes can use at most "
+        f"{command.model_card.resident_size.in_gb:.1f} GB, but connected nodes can use at most "
         f"{most_free.in_gb:.1f} GB between them"
     )
 
@@ -163,7 +163,7 @@ def _tensor_share_too_large(
         key=lambda c: min(node_memory[n].ram_available for n in c).in_bytes * len(c),
     )
     smallest = min(cycle, key=lambda n: node_memory[n].ram_available)
-    share = command.model_card.storage_size // len(cycle)
+    share = command.model_card.resident_size // len(cycle)
     return (
         f"Tensor sharding gives each of {len(cycle)} nodes {share.in_gb:.1f} GB of "
         f"{command.model_card.model_id}, but {_node_name(smallest, node_identities)} can "
@@ -223,7 +223,7 @@ _NOT_PENDING = (
 
 def shard_bytes(shard: ShardMetadata) -> int:
     """The memory a runner needs for its shard of the model."""
-    storage = shard.model_card.storage_size.in_bytes
+    storage = shard.model_card.resident_size.in_bytes
     if isinstance(shard, TensorShardMetadata):
         return storage // shard.world_size
     if shard.n_layers == 0:
@@ -303,7 +303,7 @@ def place_instance(
         if not candidate_cycles:
             raise ValueError("The chosen nodes aren't all connected to each other")
     cycles_with_sufficient_memory = filter_cycles_by_memory(
-        candidate_cycles, node_memory, command.model_card.storage_size
+        candidate_cycles, node_memory, command.model_card.resident_size
     )
     if len(cycles_with_sufficient_memory) == 0:
         raise ValueError(_not_enough_memory(command, candidate_cycles, node_memory))
@@ -338,7 +338,7 @@ def place_instance(
             for cycle in divisible_cycles
             if all(
                 node_memory[node].ram_available
-                >= command.model_card.storage_size // len(cycle)
+                >= command.model_card.resident_size // len(cycle)
                 for node in cycle
             )
         ]

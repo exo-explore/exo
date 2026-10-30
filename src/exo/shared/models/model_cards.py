@@ -163,6 +163,11 @@ class SamplingDefaults(SamplingValues):
 class ModelCard(FrozenModel):
     model_id: ModelId
     storage_size: Memory
+    # The memory the model takes once loaded, when it differs from storage_size (the
+    # download): for a model that never loads parts of its checkpoint, or leaves some
+    # weights on disk and reads them while running. Placement and the runner's memory
+    # sizing use it (see resident_size); downloads use storage_size.
+    memory_size: Memory | None = None
     n_layers: PositiveInt
     hidden_size: PositiveInt
     supports_tensor: bool
@@ -184,6 +189,11 @@ class ModelCard(FrozenModel):
     is_custom: bool = False
     vision: VisionCardConfig | None = None
     sampling_defaults: SamplingDefaults = Field(default_factory=SamplingDefaults)
+
+    @property
+    def resident_size(self) -> Memory:
+        """The memory the model needs once loaded."""
+        return self.memory_size if self.memory_size is not None else self.storage_size
 
     @model_validator(mode="after")
     def _autodetect_vision(self) -> "ModelCard":

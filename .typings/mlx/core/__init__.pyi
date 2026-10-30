@@ -17,6 +17,7 @@ from numpy.typing import ArrayLike as _ArrayLike
 
 from . import cuda as cuda
 from . import distributed as distributed
+from . import fast as fast
 from . import metal as metal
 from . import random as random
 
@@ -5313,6 +5314,14 @@ def var(
     Returns:
         array: The output array of variances.
     """
+
+def from_fp8(
+    x: array, dtype: Dtype = ..., *, stream: Stream | Device | None = ...
+) -> array:
+    """Convert an array of FP8 E4M3 values (stored as uint8) to ``dtype``."""
+
+def to_fp8(x: array, *, stream: Stream | Device | None = ...) -> array:
+    """Round an array to FP8 E4M3, stored as uint8."""
 
 def view(
     a: scalar | array, dtype: Dtype, stream: Stream | Device | None = ...

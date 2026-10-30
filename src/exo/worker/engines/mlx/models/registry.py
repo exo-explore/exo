@@ -21,6 +21,7 @@ from exo.worker.engines.mlx.models.family import (
     ModelClasses,
     ModelFamily,
     PromptEncoder,
+    ReasoningEffortHook,
     TemplateMessagesHook,
     TokenizerLoader,
 )
@@ -119,6 +120,16 @@ def template_messages_hooks_for(
         if (hook := family.template_messages_hook) is not None
         and hook.applies_to(task_params)
     ]
+
+
+def reasoning_effort_hook_for(
+    task_params: TextGenerationTaskParams,
+) -> ReasoningEffortHook | None:
+    for family in FAMILIES:
+        hook = family.reasoning_effort_hook
+        if hook is not None and hook.applies_to(task_params):
+            return hook
+    return None
 
 
 def tokenizer_loader_for(model_id: ModelId) -> TokenizerLoader | None:
