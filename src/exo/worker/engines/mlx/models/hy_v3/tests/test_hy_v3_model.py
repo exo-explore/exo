@@ -5,12 +5,18 @@ from), on a tiny random model in float32, loaded from the official checkpoint la
 from typing import Any
 
 import mlx.core as mx
+import mlx.nn as nn
 import numpy as np
 import pytest
 from mlx.utils import tree_flatten
 from mlx_lm.models.cache import KVCache
 
-from exo.worker.engines.mlx.models.hy_v3.model import Model, ModelArgs, MoE
+from exo.worker.engines.mlx.models.hy_v3.model import (
+    Model,
+    ModelArgs,
+    MoE,
+    float32_router_logits,
+)
 from exo.worker.engines.mlx.models.registry import get_model_classes
 
 _CONFIG: dict[str, Any] = {
@@ -181,3 +187,29 @@ def test_incremental_decode_matches_one_forward() -> None:
     for token in _PROMPT[7:]:
         steps.append(np.array(model(mx.array([[token]]), cache=cache)[0]))
     np.testing.assert_allclose(np.concatenate(steps), full, rtol=1e-5, atol=1e-5)
+
+
+def test_router_logits_are_float32_like_the_reference() -> None:
+    """transformers: F.linear(hidden_states.float(), weight.float())."""
+    mx.random.seed(3)
+    x = mx.random.normal((5, 128)).astype(mx.bfloat16)
+    gate = nn.Linear(128, 32, bias=False)
+    gate.set_dtype(mx.bfloat16)
+    expected = x.astype(mx.float32) @ gate.weight.astype(mx.float32).T
+    got = float32_router_logits(gate, x)
+    assert got.dtype == mx.float32
+    assert mx.array_equal(got, expected)
+
+    quantized = nn.QuantizedLinear.from_linear(gate, group_size=64, bits=8)
+    weight = mx.dequantize(
+        quantized.weight,
+        quantized.scales.astype(mx.float32),
+        quantized.biases.astype(mx.float32),
+        group_size=64,
+        bits=8,
+    )
+    got = float32_router_logits(quantized, x)
+    assert got.dtype == mx.float32
+    np.testing.assert_allclose(
+        np.array(got), np.array(x.astype(mx.float32) @ weight.T), rtol=1e-5, atol=1e-5
+    )

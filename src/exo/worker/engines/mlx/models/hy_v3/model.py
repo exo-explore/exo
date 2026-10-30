@@ -63,6 +63,7 @@ __all__ = [
     "ModelArgs",
     "MoE",
     "Router",
+    "float32_router_logits",
 ]
 
 # transformers' HYV3Config.default_theta
@@ -222,8 +223,45 @@ class Router(nn.Module):
     def route(self, x: mx.array) -> tuple[mx.array, mx.array]:
         """The chosen experts' indices and their (float32) weights."""
         return _select_experts(
-            self.gate(x), self.expert_bias, self.top_k, self.scaling_factor
+            float32_router_logits(self.gate, x),
+            self.expert_bias,
+            self.top_k,
+            self.scaling_factor,
         )
+
+
+def float32_router_logits(gate: nn.Module, x: mx.array) -> mx.array:
+    """The router logits in float32, as the reference computes them:
+    ``F.linear(hidden_states.float(), weight.float())``.
+
+    Rounding them to bf16 first (as mlx-lm's sigmoid-routed MoEs do) flips near-tied choices
+    among 192 experts. Over 79 MoE layers that roughly doubled exo's bf16 drift from the
+    float32 reference in the early layers and put exo's bf16 run outside transformers' own
+    bf16 noise (mean KL 0.0135 vs 0.0102 at full depth); in float32, exo's per-layer drift
+    equals transformers' bf16 drift. A quantized router (the 4-bit conversions keep it at 8
+    bits) is multiplied with float32 scales and biases, so its dequantized weights are exact.
+    """
+    x = x.astype(mx.float32)
+    weight = gate["weight"]
+    assert isinstance(weight, mx.array)
+    if isinstance(gate, nn.QuantizedLinear):
+        mode = cast(str, gate.mode)
+        if mode != "affine":
+            return gate(x)
+        scales = gate["scales"]
+        biases = gate.get("biases")
+        assert isinstance(scales, mx.array) and isinstance(biases, mx.array)
+        return mx.quantized_matmul(
+            x,
+            weight,
+            scales.astype(mx.float32),
+            biases.astype(mx.float32),
+            transpose=True,
+            group_size=cast(int, gate.group_size),
+            bits=cast(int, gate.bits),
+            mode=mode,
+        )
+    return x @ weight.astype(mx.float32).T
 
 
 class MoE(nn.Module):
