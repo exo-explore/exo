@@ -15,7 +15,10 @@ from exo.shared.types.common import ModelId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
 from exo.worker.engines.mlx.models.spec import FamilySpec
-from exo.worker.engines.mlx.sharding.pipeline import PipelineShardFixup
+from exo.worker.engines.mlx.sharding.pipeline import (
+    PipelineParallel,
+    PipelineShardFixup,
+)
 from exo.worker.engines.mlx.sharding.tensor import TensorParallelShardingStrategy
 
 
@@ -54,6 +57,9 @@ class Architecture:
     model_class: type[nn.Module]
     tensor_parallel: type[TensorParallelShardingStrategy] | None = None
     fix_pipeline_shard: PipelineShardFixup | None = None
+    # Replaces the generic pipeline split (PipelineFirstLayer / PipelineLastLayer around the
+    # node's layers) for models that pass more than one tensor between stages.
+    pipeline_parallel: PipelineParallel | None = None
     # The inner model's layer counter to set to the shard's layer count in pipeline
     # parallelism, for models that loop over it rather than over their layers.
     pipeline_layer_count: Literal["num_layers", "num_hidden_layers"] | None = None
