@@ -1,0 +1,21 @@
+model_id = "mlx-community/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-8bit"
+n_layers = 52
+hidden_size = 2688
+num_key_value_heads = 2
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "nemotron"
+model_type = "nemotron_h"
+quantization = "8bit"
+base_model = "NVIDIA Nemotron-3.5-Lightning-30B-A3B"
+capabilities = ["text", "thinking", "thinking_toggle"]
+reasoning_dialect = "post_last_user"
+context_length = 262144
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
+[storage_size]
+in_bytes = 33559877504
+
+# Source: https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16 (generation_config.json)
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95
