@@ -2,6 +2,7 @@
 doesn't read: linear attention layers' lengths, sparse-attention index caches' offsets."""
 
 import io
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import cast
 
@@ -11,6 +12,7 @@ from mlx_lm.models.cache import ArraysCache, BatchKVCache, CacheList
 from exo.worker.engines.mlx.patches.opt_batch_gen import (
     _patched_step,  # pyright: ignore[reportPrivateUsage]
 )
+from exo.worker.engines.mlx.sampling import RecentTokensProcessor
 
 VOCAB = 8
 
@@ -108,3 +110,36 @@ def test_unread_index_cache_offsets_do_not_grow_a_graph_while_decoding() -> None
     assert [graph_edges(sub_cache.offset) for sub_cache in sub_caches] == [0] * 8
     for sub_cache in sub_caches:
         assert sub_cache.offset.tolist() == [261, 258]
+
+
+def test_processors_get_the_history_they_read() -> None:
+    seen: dict[str, list[list[int]]] = {"windowed": [], "whole": []}
+
+    def recorder(name: str) -> Callable[[mx.array, mx.array], mx.array]:
+        def record(tokens: mx.array, logits: mx.array) -> mx.array:
+            seen[name].append([int(t) for t in cast(list[int], tokens.tolist())])
+            return logits
+
+        return record
+
+    history = list(range(100, 110))
+    batch = SimpleNamespace(
+        model=LinearAttentionModel(),
+        prompt_cache=[ArraysCache(2)],
+        logits_processors=[
+            (RecentTokensProcessor(recorder("windowed"), 3),),
+            (recorder("whole"), RecentTokensProcessor(recorder("windowed"), 2)),
+        ],
+        samplers=[greedy, greedy],
+        fallback_sampler=greedy,
+        uids=[0, 1],
+        tokens=[list(history), list(history)],
+        _next_tokens=mx.array([1, 2]),
+        _next_logprobs=mx.zeros((2, VOCAB)),
+    )
+
+    _patched_step(batch)  # pyright: ignore[reportArgumentType]
+
+    # the first row's processor reads 3 tokens; the second row has one that reads them all
+    assert seen["windowed"] == [history[-3:], history]
+    assert seen["whole"] == [history]

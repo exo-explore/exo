@@ -131,8 +131,7 @@ def apply_xtc(
     """
 
 @partial(mx.compile, inputs=mx.random.state, outputs=mx.random.state)
-def categorical_sampling(logits, temp):  # -> array:
-    ...
+def categorical_sampling(logits: mx.array, temp: float) -> mx.array: ...
 def make_repetition_penalty(
     penalty: float, context_size: int = ...
 ):  # -> Callable[..., Any]:
