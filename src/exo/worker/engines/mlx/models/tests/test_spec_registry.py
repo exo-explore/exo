@@ -105,7 +105,7 @@ _CARDS = [card for _, card in _CARD_FILES]
 
 
 def test_there_are_builtin_cards() -> None:
-    assert len(_CARDS) == 124
+    assert len(_CARDS) == 125
 
 
 @pytest.mark.parametrize(
@@ -144,9 +144,15 @@ def test_cards_without_a_model_type_get_no_family_rules() -> None:
     assert rules.pipeline_unsupported_model_ids == ()
 
 
+# Architectures added since: GLM-5.3-Flash.
+_ADDED_TENSOR_ARCHITECTURES = frozenset({"Glm5NextForConditionalGeneration"})
+
+
 def test_tensor_parallel_architectures_are_unchanged() -> None:
-    assert tensor_parallel_architectures() == frozenset(
-        architecture for (architecture,) in _MAIN_TENSOR_ARCHITECTURES
+    assert (
+        tensor_parallel_architectures()
+        == frozenset(architecture for (architecture,) in _MAIN_TENSOR_ARCHITECTURES)
+        | _ADDED_TENSOR_ARCHITECTURES
     )
 
 

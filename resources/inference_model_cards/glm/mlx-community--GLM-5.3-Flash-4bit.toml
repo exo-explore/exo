@@ -1,0 +1,21 @@
+model_id = "mlx-community/GLM-5.3-Flash-4bit"
+n_layers = 45
+hidden_size = 4096
+num_key_value_heads = 64
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "glm"
+model_type = "glm5_next"
+quantization = "4bit"
+base_model = "GLM-5.3-Flash"
+capabilities = ["text", "thinking"]
+reasoning_dialect = "post_last_user"
+context_length = 1048576
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
+[storage_size]
+in_bytes = 203992076296
+
+# Source: https://huggingface.co/zai-org/GLM-5.3-Flash (generation_config.json)
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95
