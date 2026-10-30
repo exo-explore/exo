@@ -1,6 +1,7 @@
 """Shared types for MLX-related functionality."""
 
 from collections.abc import Sequence
+from typing import Protocol, runtime_checkable
 
 from mlx import core as mx
 from mlx import nn as nn
@@ -14,6 +15,23 @@ from mlx_lm.models.cache import (
 
 from exo.worker.engines.mlx.models.deepseek_v4.model import DeepseekV4Cache
 
+
+@runtime_checkable
+class SnapshotCache(Protocol):
+    """A model's own per-layer cache that can't be trimmed back token by token (e.g. one
+    that keeps a sliding window and pooled state). The prefix cache keeps snapshots of it
+    taken at known token counts and restores one of those instead of trimming."""
+
+    offset: int
+
+    @property
+    def nbytes(self) -> int: ...
+
+    def prefix_cache_snapshot(self) -> "SnapshotCache":
+        """An independent copy of the cache as it is now, with its arrays evaluated."""
+        ...
+
+
 # This list contains one cache entry per transformer layer
 KVCacheType = Sequence[
     KVCache
@@ -22,6 +40,7 @@ KVCacheType = Sequence[
     | ArraysCache
     | CacheList
     | DeepseekV4Cache
+    | SnapshotCache
 ]
 
 

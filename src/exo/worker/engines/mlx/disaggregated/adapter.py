@@ -21,7 +21,7 @@ from exo.worker.disaggregated.protocol import (
     write_kv_chunk,
 )
 from exo.worker.engines.mlx.models.deepseek_v4.model import DeepseekV4Cache
-from exo.worker.engines.mlx.types import KVCacheType
+from exo.worker.engines.mlx.types import KVCacheType, SnapshotCache
 from exo.worker.runner.bootstrap import logger
 
 _STR_TO_MX: dict[DType, mx.Dtype] = {
@@ -101,7 +101,7 @@ def send_mlx_kv_cache(
     tokens_sent = 0
     for layer_idx, c in enumerate(caches):
         match c:
-            case QuantizedKVCache() | CacheList() | DeepseekV4Cache():
+            case QuantizedKVCache() | CacheList() | DeepseekV4Cache() | SnapshotCache():
                 raise NotImplementedError
             case KVCache() | RotatingKVCache():
                 keys = c.keys

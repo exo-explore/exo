@@ -15,6 +15,7 @@ from exo.shared.types.worker.instances import (
 )
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 from exo.worker.engines.base import Builder
+from exo.worker.engines.mlx.models.spec_registry import fast_synch_allowed
 
 logger: "loguru.Logger" = loguru.logger
 
@@ -48,13 +49,17 @@ def use_fast_synch(instance: Instance, override: str | None) -> bool:
     (JACCL) instance makes for each collective. Over the TCP ring it makes no measurable
     difference to a model's speed, and it breaks down when two runners share a Mac's GPU:
     both models slow to a crawl, the ring fails with EFAULT, or the GPU deadlocks.
+    A model family can turn it off for its models (FamilySpec.fast_synch).
     `--fast-synch` / `--no-fast-synch` (EXO_FAST_SYNCH) override the choice.
     """
     if override == "true":
         return True
     if override == "false":
         return False
-    return isinstance(instance, MlxJacclInstance)
+    return isinstance(instance, MlxJacclInstance) and all(
+        fast_synch_allowed(shard.model_card.model_type)
+        for shard in instance.shard_assignments.runner_to_shard.values()
+    )
 
 
 def entrypoint(

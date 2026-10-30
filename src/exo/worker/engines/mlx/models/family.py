@@ -15,7 +15,10 @@ from exo.shared.types.common import ModelId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
 from exo.worker.engines.mlx.models.spec import FamilySpec
-from exo.worker.engines.mlx.sharding.pipeline import PipelineShardFixup
+from exo.worker.engines.mlx.sharding.pipeline import (
+    PipelineParallel,
+    PipelineShardFixup,
+)
 from exo.worker.engines.mlx.sharding.tensor import TensorParallelShardingStrategy
 
 
@@ -54,10 +57,20 @@ class Architecture:
     model_class: type[nn.Module]
     tensor_parallel: type[TensorParallelShardingStrategy] | None = None
     fix_pipeline_shard: PipelineShardFixup | None = None
+    # Replaces the generic pipeline split (PipelineFirstLayer / PipelineLastLayer around the
+    # node's layers) for models that pass more than one tensor between stages.
+    pipeline_parallel: PipelineParallel | None = None
+    # False for models whose cache can't be merged into, split from or filtered out of a
+    # batch (mlx-lm's BatchGenerator needs that): their requests run one at a time.
+    batched_generation: bool = True
     # The inner model's layer counter to set to the shard's layer count in pipeline
     # parallelism, for models that loop over it rather than over their layers.
     pipeline_layer_count: Literal["num_layers", "num_hidden_layers"] | None = None
     output_parser: OutputParser | None = None
+    # Called once the model is loaded (and sharded, on more than one node), with the
+    # checkpoint folder: for models that need more than their weights to run, e.g. a table
+    # built from the tokenizer, or weights read from the checkpoint files at run time.
+    post_load: Callable[[nn.Module, Path], None] | None = None
 
 
 @final
@@ -79,6 +92,13 @@ class PromptEncoder:
 
     applies_to: Callable[[TextGenerationTaskParams], bool]
     encode: Callable[[list[dict[str, Any]], TextGenerationTaskParams], str]
+    # The config.json model_types it renders for. When the loaded model's type is known,
+    # an encoder that lists its model_types is picked by them alone, not by applies_to.
+    model_types: frozenset[str] = frozenset()
+    # True when its think tags are exactly the model's format (e.g. a bare `</think>` that
+    # closes thinking in chat mode): exo then leaves an unmatched `</think>` as it is
+    # instead of putting a `<think>` before it.
+    exact_think_tags: bool = False
 
 
 @final

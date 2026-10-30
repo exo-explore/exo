@@ -7,6 +7,7 @@ Importable without MLX. The worker-side registry, with sharding, parsers and enc
 
 from exo.worker.engines.mlx.models.deepseek_v3.spec import SPEC as DEEPSEEK_V3
 from exo.worker.engines.mlx.models.deepseek_v4.spec import SPEC as DEEPSEEK_V4
+from exo.worker.engines.mlx.models.deepseek_v41.spec import SPEC as DEEPSEEK_V41
 from exo.worker.engines.mlx.models.gemma.spec import SPEC as GEMMA
 from exo.worker.engines.mlx.models.glm.spec import SPEC as GLM
 from exo.worker.engines.mlx.models.gpt_oss.spec import SPEC as GPT_OSS
@@ -28,6 +29,7 @@ FAMILY_SPECS: tuple[FamilySpec, ...] = (
     QWEN3,
     GEMMA,
     DEEPSEEK_V3,
+    DEEPSEEK_V41,
     DEEPSEEK_V4,
     LLAMA,
     MINIMAX,
@@ -55,6 +57,11 @@ def family_spec_for_model_type(model_type: str | None) -> FamilySpec | None:
     if model_type is None:
         return None
     return _BY_MODEL_TYPE.get(model_type)
+
+
+def fast_synch_allowed(model_type: str | None) -> bool:
+    spec = family_spec_for_model_type(model_type)
+    return spec is None or spec.fast_synch
 
 
 def placement_rules_for_model_type(model_type: str | None) -> PlacementRules:

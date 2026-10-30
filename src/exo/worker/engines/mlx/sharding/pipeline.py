@@ -1,3 +1,4 @@
+from collections.abc import Generator
 from inspect import signature
 from typing import Literal, Protocol, cast
 
@@ -5,6 +6,8 @@ import mlx.core as mx
 import mlx.nn as nn
 from mlx_lm.models.cache import ArraysCache, KVCache
 
+from exo.shared.types.worker.runner_response import ModelLoadingResponse
+from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.engines.mlx.sharding.blocks import CustomMlxLayer, LayerCallable
 
 _pending_prefill_sends: list[tuple[mx.array, int, mx.distributed.Group]] = []
@@ -172,6 +175,22 @@ class PipelineShardFixup(Protocol):
         start_layer: int,
         end_layer: int,
     ) -> None: ...
+
+
+class PipelineParallel(Protocol):
+    """A model family's own pipeline split, for models whose stages exchange more than the
+    one hidden-state tensor PipelineFirstLayer / PipelineLastLayer carry (e.g. state that
+    later layers read from earlier ones). It keeps the node's layers
+    [start_layer, end_layer), sets up the model's own sends and receives, evaluates the
+    node's layers yielding ModelLoadingResponse progress as the generic split does, and
+    returns the model."""
+
+    def __call__(
+        self,
+        model: nn.Module,
+        group: mx.distributed.Group,
+        model_shard_meta: PipelineShardMetadata,
+    ) -> Generator[ModelLoadingResponse, None, nn.Module]: ...
 
 
 class HybridCacheModel(Protocol):

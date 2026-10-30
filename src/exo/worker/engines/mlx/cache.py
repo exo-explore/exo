@@ -23,7 +23,7 @@ from exo.worker.engines.mlx.models.deepseek_v4.cache import copy_deepseek_v4_cac
 from exo.worker.engines.mlx.models.deepseek_v4.model import (
     DeepseekV4Cache,
 )
-from exo.worker.engines.mlx.types import KVCacheType, Model
+from exo.worker.engines.mlx.types import KVCacheType, Model, SnapshotCache
 from exo.worker.runner.bootstrap import logger
 
 if TYPE_CHECKING:
@@ -65,7 +65,12 @@ class CacheSnapshot:
     def __init__(
         self,
         states: list[
-            RotatingKVCache | ArraysCache | CacheList | DeepseekV4Cache | None
+            RotatingKVCache
+            | ArraysCache
+            | CacheList
+            | DeepseekV4Cache
+            | SnapshotCache
+            | None
         ],
         token_count: int,
     ):
@@ -101,8 +106,13 @@ def _copy_cache_list(cl: CacheList) -> CacheList:
 
 
 def copy_snapshot_entry(
-    entry: ArraysCache | RotatingKVCache | CacheList | DeepseekV4Cache | None,
-) -> ArraysCache | RotatingKVCache | CacheList | DeepseekV4Cache | None:
+    entry: ArraysCache
+    | RotatingKVCache
+    | CacheList
+    | DeepseekV4Cache
+    | SnapshotCache
+    | None,
+) -> ArraysCache | RotatingKVCache | CacheList | DeepseekV4Cache | SnapshotCache | None:
     match entry:
         case None:
             return None
@@ -115,11 +125,18 @@ def copy_snapshot_entry(
             return _copy_cache_list(entry)
         case DeepseekV4Cache():
             return copy_deepseek_v4_cache(entry)
+        case SnapshotCache():
+            return entry.prefix_cache_snapshot()
 
 
 def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
     states: list[
-        RotatingKVCache | ArraysCache | CacheList | DeepseekV4Cache | None
+        RotatingKVCache
+        | ArraysCache
+        | CacheList
+        | DeepseekV4Cache
+        | SnapshotCache
+        | None
     ] = []
     for c in cache:
         if isinstance(c, ArraysCache):
@@ -130,6 +147,8 @@ def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
             states.append(_copy_cache_list(c))
         elif isinstance(c, DeepseekV4Cache):
             states.append(copy_deepseek_v4_cache(c))
+        elif isinstance(c, SnapshotCache):
+            states.append(c.prefix_cache_snapshot())
         else:
             states.append(None)
     token_count = cache_length(cache)
@@ -157,7 +176,7 @@ def is_non_trimmable_cache_entry(c: object) -> bool:
         return True
     if isinstance(c, CacheList):
         return not bool(c.is_trimmable())  # type: ignore[reportUnknownMemberType]
-    return isinstance(c, DeepseekV4Cache)
+    return isinstance(c, (DeepseekV4Cache, SnapshotCache))
 
 
 def has_non_kv_caches(cache: KVCacheType) -> bool:
@@ -325,7 +344,7 @@ class KVPrefixCache:
             for c in prompt_cache:
                 if isinstance(c, (ArraysCache, RotatingKVCache)):
                     continue
-                if isinstance(c, DeepseekV4Cache):
+                if isinstance(c, (DeepseekV4Cache, SnapshotCache)):
                     continue
                 if hasattr(c, "offset"):
                     c.offset = restore_pos
@@ -443,6 +462,14 @@ def trim_cache(
     snapshot: CacheSnapshot | None = None,
 ) -> None:
     for i, c in enumerate(cache):
+        if isinstance(c, SnapshotCache):
+            # It can only go back to a snapshot.
+            if snapshot is None or snapshot.states[i] is None:
+                raise ValueError(f"Cannot trim {type(c).__name__} without a snapshot")
+            restored = copy_snapshot_entry(snapshot.states[i])
+            assert restored is not None
+            cache[i] = restored  # type: ignore
+            continue
         non_trimmable = isinstance(c, (ArraysCache, RotatingKVCache)) or (
             isinstance(c, CacheList) and not bool(c.is_trimmable())  # type: ignore[reportUnknownMemberType]
         )
@@ -480,7 +507,8 @@ def _entry_length(
     | QuantizedKVCache
     | ArraysCache
     | CacheList
-    | DeepseekV4Cache,
+    | DeepseekV4Cache
+    | SnapshotCache,
 ) -> int:
     # Use .offset attribute which KVCache types have (len() not implemented in older QuantizedKVCache).
     if hasattr(c, "offset"):

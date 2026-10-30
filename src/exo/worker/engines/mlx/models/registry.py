@@ -16,6 +16,7 @@ from exo.shared.types.common import ModelId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.worker.engines.mlx.models.deepseek_v3.family import FAMILY as DEEPSEEK_V3
 from exo.worker.engines.mlx.models.deepseek_v4.family import FAMILY as DEEPSEEK_V4
+from exo.worker.engines.mlx.models.deepseek_v41.family import FAMILY as DEEPSEEK_V41
 from exo.worker.engines.mlx.models.family import (
     Architecture,
     ModelClasses,
@@ -44,6 +45,7 @@ FAMILIES: tuple[ModelFamily, ...] = (
     QWEN3,
     GEMMA,
     DEEPSEEK_V3,
+    DEEPSEEK_V41,
     DEEPSEEK_V4,
     LLAMA,
     MINIMAX,
@@ -102,12 +104,36 @@ def get_model_classes(config: dict[str, Any]) -> tuple[type[nn.Module], type]:
     return mlx_lm_get_classes(config)
 
 
-def prompt_encoder_for(task_params: TextGenerationTaskParams) -> PromptEncoder | None:
+def model_type_of(model: nn.Module) -> str | None:
+    """The config.json model_type a loaded model was built from (mlx-lm models keep it)."""
+    model_type: object = getattr(model, "model_type", None)
+    return model_type if isinstance(model_type, str) else None
+
+
+def prompt_encoder_for(
+    task_params: TextGenerationTaskParams, model_type: str | None = None
+) -> PromptEncoder | None:
+    """The prompt encoder for the request's model. An encoder that lists model_types is
+    picked by the loaded model's type when that is known; the others (and every encoder,
+    when the type isn't known) by their applies_to on the request."""
     for family in FAMILIES:
         encoder = family.prompt_encoder
-        if encoder is not None and encoder.applies_to(task_params):
+        if encoder is None:
+            continue
+        if encoder.model_types and model_type is not None:
+            if model_type in encoder.model_types:
+                return encoder
+        elif encoder.applies_to(task_params):
             return encoder
     return None
+
+
+def keeps_think_tags(
+    task_params: TextGenerationTaskParams, model_type: str | None = None
+) -> bool:
+    """Whether the request's prompt keeps its think tags exactly as rendered."""
+    encoder = prompt_encoder_for(task_params, model_type)
+    return encoder is not None and encoder.exact_think_tags
 
 
 def template_messages_hooks_for(
