@@ -37,6 +37,12 @@ def pipeline_auto_parallel(
     Returns:
     The parallelized model
     """
+    architecture = architecture_for_model(model)
+    if architecture is not None and architecture.pipeline_parallel is not None:
+        return (
+            yield from architecture.pipeline_parallel(model, group, model_shard_meta)
+        )
+
     inner_model_instance: nn.Module = get_inner_model(model)
 
     layers = get_layers(inner_model_instance)
@@ -59,7 +65,6 @@ def pipeline_auto_parallel(
         group=group,
     )
 
-    architecture = architecture_for_model(model)
     if architecture is not None and architecture.fix_pipeline_shard is not None:
         architecture.fix_pipeline_shard(
             model, inner_model_instance, layers, start_layer, end_layer
