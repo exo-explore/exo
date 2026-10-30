@@ -60,6 +60,8 @@ from exo.worker.engines.mlx.models.gpt_oss.parser import parse_gpt_oss
 from exo.worker.engines.mlx.models.gpt_oss.sharding import (
     fix_pipeline_shard as gpt_oss_fixup,
 )
+from exo.worker.engines.mlx.models.inkling.model import Model as InklingModel
+from exo.worker.engines.mlx.models.inkling.parser import parse_inkling
 from exo.worker.engines.mlx.models.nemotron_h.sharding import (
     fix_pipeline_shard as nemotron_h_fixup,
 )
@@ -104,6 +106,9 @@ def _main_tensor_strategy(model_class: type) -> str | None:
         return "NemotronHShardingStrategy"
     elif issubclass(model_class, Gemma4Model):
         return "Gemma4ShardingStrategy"
+    # Changed on purpose: Inkling is new.
+    elif issubclass(model_class, InklingModel):
+        return "InklingShardingStrategy"
     else:
         return None
 
@@ -135,6 +140,9 @@ def _main_output_parser(
         return ("parse_deepseek_v32", True)
     elif issubclass(model_class, DeepseekV4Model) and "deepseek-v4" in normalized_id:
         return ("parse_deepseek_v4", True)
+    # Changed on purpose: Inkling is new.
+    elif issubclass(model_class, InklingModel) and "inkling" in normalized_id:
+        return ("parse_inkling", False)
     return None
 
 
@@ -177,7 +185,7 @@ def _mlx_lm_model_classes() -> dict[str, type]:
         if isinstance(model_class, type):
             classes[module_info.name] = model_class
     # Model types whose model a family ships itself, because mlx-lm has none
-    for model_type in ("deepseek_v4",):
+    for model_type in ("deepseek_v4", "inkling_mm_model"):
         assert model_type not in classes
         classes[model_type] = registry.get_model_classes({"model_type": model_type})[0]
     return classes
@@ -195,6 +203,7 @@ _SUPPORTED_MODEL_TYPES = [
     "glm4_moe_lite",
     "glm_moe_dsa",
     "gpt_oss",
+    "inkling_mm_model",
     "kimi_k25",
     "llama",
     "minimax",
@@ -251,6 +260,7 @@ _MODEL_IDS = _card_ids() + [
     "someone/gpt-oss-deepseek-v3.2-kimi-k2",
     "moonshotai/Kimi-K2-Instruct",
     "mlx-community/DeepSeek-V3.2-Speciale-4bit",
+    "thinkingmachines/Inkling-Small",
 ]
 
 
@@ -259,6 +269,7 @@ def _parser_name(parse: object) -> str:
         ("parse_gpt_oss", parse_gpt_oss),
         ("parse_deepseek_v32", parse_deepseek_v32),
         ("parse_deepseek_v4", parse_deepseek_v4),
+        ("parse_inkling", parse_inkling),
     ):
         if parse is function:
             return name
@@ -366,7 +377,11 @@ def test_model_id_hooks_are_unchanged(model_id: str) -> None:
         assert encoder is families_with_encoders[family_name]
 
     hooks = registry.template_messages_hooks_for(task)
-    assert len(hooks) == (1 if _main_prepares_gpt_oss_messages(model_id) else 0)
+    # Changed on purpose: Inkling is new (its hook opens a text message for a prefill).
+    inkling = "inkling" in model_id.lower()
+    assert len(hooks) == (
+        1 if _main_prepares_gpt_oss_messages(model_id) or inkling else 0
+    )
 
     loader = registry.tokenizer_loader_for(ModelId(model_id))
     assert (loader is not None) == _main_loads_kimi_tokenizer(model_id)
