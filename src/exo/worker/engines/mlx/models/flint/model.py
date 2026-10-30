@@ -13,8 +13,8 @@ positions, up to 7.4k tokens), mean KL goes from 0.0482 to 0.0454 and top-1 agre
 the reference is at least 1 nat confident from 0.9897 to 0.9921. transformers' own bf16 run
 scores 0.0452 and 0.9916 on the same positions.
 
-Speed: a decode step at batch 1 is ~1,900 small kernels, and their launches, not the
-weights' bandwidth, set its time. On Metal the layer runs fused kernels
+Speed: a decode step at batch 1 was ~2,000 small kernels, and their launches, more than
+the weights' bandwidth, set its time. On Metal the layer runs fused kernels
 (``kernels.py``) that compute exactly what the ops they replace compute, bit for bit:
 - every norm in one kernel instead of four (casts to and from float32 around the norm);
 - the residual add with the norm after it;

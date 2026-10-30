@@ -404,3 +404,75 @@ def test_sliding_attention_at_flints_shapes_equals_attention_over_all_keys(
         sinks=attention.softmax_offset,
     )
     assert _identical(blocked, expected)
+
+
+def _gather_experts(
+    x: mx.array,
+    weights: tuple[mx.array, ...],
+    indices: mx.array,
+    bits: int,
+    sort: bool,
+) -> mx.array:
+    return mx.gather_qmm(
+        x,
+        weights[0],
+        weights[1],
+        weights[2],
+        rhs_indices=indices,
+        transpose=True,
+        group_size=64,
+        bits=bits,
+        sorted_indices=sort,
+    )
+
+
+@needs_metal
+@pytest.mark.parametrize("bits", [3, 4, 6, 8])
+def test_stacked_expert_gather_equals_separate_gathers(bits: int) -> None:
+    """The experts' gate and up stacked into one gather give the same bits as two gathers,
+    unsorted (decode) and sorted by expert (prefill), at every bit width the cards use."""
+    experts, rows, dims = 16, 512, 2048
+
+    def quantized(seed: int) -> tuple[mx.array, mx.array, mx.array]:
+        w = mx.random.normal((experts, rows, dims), key=mx.random.key(seed)) * 0.02
+        weight, scales, biases = mx.quantize(
+            w.astype(mx.bfloat16), group_size=64, bits=bits
+        )
+        assert biases is not None
+        return weight, scales, biases
+
+    gate, up = quantized(30), quantized(31)
+    stack = tuple(
+        mx.concatenate([g, u], axis=-2) for g, u in zip(gate, up, strict=True)
+    )
+    for tokens in (1, 3, 200):
+        x = _bf16((tokens, 1, 1, dims), 32 + tokens)
+        indices = mx.random.randint(0, experts, (tokens, 6), key=mx.random.key(tokens))
+        indices = indices.astype(mx.uint32)
+        sort = indices.size >= 64
+        if sort:
+            order = mx.argsort(indices.flatten())
+            x = x.flatten(0, -3)[order // 6]
+            indices = indices.flatten()[order]
+        else:
+            x = mx.expand_dims(x.reshape(tokens, 1, dims), (-2, -3))
+
+        both = _gather_experts(x, stack, indices, bits, sort)
+        assert _identical(
+            both[..., :rows], _gather_experts(x, gate, indices, bits, sort)
+        )
+        assert _identical(both[..., rows:], _gather_experts(x, up, indices, bits, sort))
+
+
+@needs_metal
+@pytest.mark.parametrize("bits", [3, 4, 6, 8])
+def test_stacked_projection_at_every_bit_width(bits: int) -> None:
+    parts = [
+        nn.QuantizedLinear(2048, rows, bias=False, group_size=64, bits=bits)
+        for rows in (4096, 512, 512)
+    ]
+    stacked = StackedQuantizedLinear(list[nn.Module](parts))
+    for tokens in (1, 2, 4, 9, 300):
+        x = _bf16((1, tokens, 2048), 40 + tokens)
+        for part, out in zip(parts, stacked.split(x), strict=True):
+            assert _identical(out, part(x))
