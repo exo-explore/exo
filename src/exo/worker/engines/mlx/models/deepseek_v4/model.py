@@ -23,7 +23,10 @@
 #         are complete at each query's position (it could pick future rows);
 #       - the reference's FP8 rounding of the non-RoPE KV dims and FP4 rounding (after
 #         a Hadamard rotation) of the indexer's query and compressed keys, which the
-#         model was trained with (_fp8_kv_sim, _fp4_indexer_sim).
+#         model was trained with (_fp8_kv_sim, _fp4_indexer_sim);
+#   - a work-around for an MLX bug: scaled_dot_product_attention with sinks returns
+#     wrong values for head_dim 256/512 once batch * heads * queries * keys passes
+#     2**31, so V4Attention splits the queries of large prefill steps (_SDPA_MAX_SCORES).
 # Everything else below is the file as it was at that commit. exo loads it for
 # config model_type "deepseek_v4" through exo.worker.engines.mlx.models.get_model_classes.
 # Delete this copy once upstream mlx-lm ships a deepseek_v4 that exo can use.
@@ -1916,6 +1919,10 @@ class Indexer(nn.Module):
 # Attention                                                                   #
 # --------------------------------------------------------------------------- #
 
+# exo fix: the most attention scores (batch * heads * queries * keys) one sinks SDPA
+# call computes; larger prefill steps are split by queries (see V4Attention.__call__).
+_SDPA_MAX_SCORES = 2**30
+
 
 def _build_window_mask(
     B: int,
@@ -2314,11 +2321,33 @@ class V4Attention(nn.Module):
                 mask = win_mask
 
         kv_all_4d = kv_all[:, None, :, :]
-        o = scaled_dot_product_attention(
-            q, kv_all_4d, kv_all_4d,
-            cache=None, scale=self.scale, mask=mask,
-            sinks=self._sink_for(q.dtype),
+        sinks = self._sink_for(q.dtype)
+        # exo fix: mx.fast.scaled_dot_product_attention with sinks returns wrong
+        # values for head_dim 256/512 once n_heads * L_q * L_kv passes 2**31 (seen
+        # in MLX 0.32.3 and 0.32.4): a 4096-token prefill chunk crosses it in the
+        # CSA layers after ~16k tokens of context. Split the queries (counting the
+        # batch too, to stay clear of the limit when prompts are batched).
+        max_q = max(
+            1, _SDPA_MAX_SCORES // (B * q.shape[1] * kv_all_4d.shape[2])
         )
+        if S <= max_q:
+            o = scaled_dot_product_attention(
+                q, kv_all_4d, kv_all_4d,
+                cache=None, scale=self.scale, mask=mask, sinks=sinks,
+            )
+        else:
+            o = mx.concatenate(
+                [
+                    scaled_dot_product_attention(
+                        q[:, :, s0 : s0 + max_q], kv_all_4d, kv_all_4d,
+                        cache=None, scale=self.scale,
+                        mask=None if mask is None else mask[:, :, s0 : s0 + max_q],
+                        sinks=sinks,
+                    )
+                    for s0 in range(0, S, max_q)
+                ],
+                axis=2,
+            )
 
         # Fused: inverse-RoPE on the trailing rd dims + transpose-and-reshape
         # to [B, S, n_heads*head_dim] for wo_a.
