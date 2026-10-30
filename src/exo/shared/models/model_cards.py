@@ -1,6 +1,6 @@
 import json
 from enum import Enum
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import aiofiles
 import aiofiles.os as aios
@@ -271,22 +271,23 @@ class ModelCard(FrozenModel):
         )
 
 
+_LAYER_COUNT_KEYS = (
+    "num_hidden_layers",
+    "num_layers",
+    "n_layer",
+    "n_layers",
+    "num_decoder_layers",
+    "decoder_layers",
+)
+
+
 class ConfigData(BaseModel):
     model_config = {"extra": "ignore"}  # Allow unknown fields
 
     architectures: list[str] | None = None
     hidden_size: Annotated[int, Field(ge=0)] | None = None
     num_key_value_heads: PositiveInt | None = None
-    layer_count: int = Field(
-        validation_alias=AliasChoices(
-            "num_hidden_layers",
-            "num_layers",
-            "n_layer",
-            "n_layers",
-            "num_decoder_layers",
-            "decoder_layers",
-        )
-    )
+    layer_count: int = Field(validation_alias=AliasChoices(*_LAYER_COUNT_KEYS))
     max_position_embeddings: int = 0
     vision: VisionCardConfig | None = None
 
@@ -301,22 +302,27 @@ class ConfigData(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def defer_to_text_config(cls, data: dict[str, Any], info: ValidationInfo):
-        text_config = data.get("text_config")
+        # The language model's config: `text_config` in most multimodal checkpoints,
+        # `llm_config` in NVIDIA's Nemotron-H Omni ones.
+        text_config = data.get("text_config") or data.get("llm_config")
         if text_config is not None:
             for field in [
                 "architectures",
                 "hidden_size",
                 "num_key_value_heads",
                 "max_position_embeddings",
-                "num_hidden_layers",
-                "num_layers",
-                "n_layer",
-                "n_layers",
-                "num_decoder_layers",
-                "decoder_layers",
+                *_LAYER_COUNT_KEYS,
+                "layers_block_type",
             ]:
                 if (val := text_config.get(field)) is not None:  # pyright: ignore[reportAny]
                     data[field] = val
+
+        # Nemotron-H configs saved by transformers list their blocks instead of counting them.
+        block_types = data.get("layers_block_type")
+        if isinstance(block_types, list) and not any(
+            key in data for key in _LAYER_COUNT_KEYS
+        ):
+            data["num_hidden_layers"] = len(cast(list[object], block_types))
 
         vision_config = data.get("vision_config")
         image_token_id = data.get("image_token_id")

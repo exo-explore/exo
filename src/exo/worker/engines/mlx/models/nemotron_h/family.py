@@ -3,6 +3,7 @@ from exo.worker.engines.mlx.models.family import (
     ModelClasses,
     ModelFamily,
 )
+from exo.worker.engines.mlx.models.nemotron_h import omni
 from exo.worker.engines.mlx.models.nemotron_h.model import Model as NemotronHModel
 from exo.worker.engines.mlx.models.nemotron_h.model import (
     ModelArgs as NemotronHModelArgs,
@@ -29,6 +30,13 @@ FAMILY = ModelFamily(
             model_type="nemotron_h",
             model_class=NemotronHModel,
             model_args_class=NemotronHModelArgs,
+        ),
+        # mlx-lm has no nemotron_h_omni: the language model of the Omni checkpoints
+        # (omni.py). Its class subclasses the one above, so it shards like it.
+        ModelClasses(
+            model_type="nemotron_h_omni",
+            model_class=omni.Model,
+            model_args_class=omni.ModelArgs,
         ),
     ),
 )

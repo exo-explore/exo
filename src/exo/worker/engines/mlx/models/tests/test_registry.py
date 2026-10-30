@@ -201,6 +201,7 @@ _SUPPORTED_MODEL_TYPES = [
     "minimax",
     "ministral3",
     "nemotron_h",
+    "nemotron_h_omni",
     "qwen3",
     "qwen3_5",
     "qwen3_5_moe",
