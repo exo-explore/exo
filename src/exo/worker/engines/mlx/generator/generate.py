@@ -448,14 +448,12 @@ def warmup_inference(
 
     logger.info(f"warmed up by generating {tokens_generated} tokens")
     if group is not None:
-        check_for_cancel_every = int(
-            mx.max(
-                mx.distributed.all_gather(
-                    mx.array([check_for_cancel_every]),
-                    group=group,
-                )
-            ).item()
+        gathered = mx.distributed.all_gather(
+            mx.array([check_for_cancel_every]), group=group
         )
+        # On the CPU before the GPU max (see PipelineLastLayer)
+        mx.eval(gathered)
+        check_for_cancel_every = int(mx.max(gathered).item())
 
     logger.info(
         f"runner checking for cancellation every {check_for_cancel_every} tokens"
