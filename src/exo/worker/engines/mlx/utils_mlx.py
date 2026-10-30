@@ -29,6 +29,7 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 from exo.shared.models.model_cards import ModelId
 from exo.worker.engines.mlx.constants import TRUST_REMOTE_CODE
 from exo.worker.engines.mlx.models.registry import (
+    architecture_for_model,
     get_model_classes,
     prompt_encoder_for,
     template_messages_hooks_for,
@@ -194,6 +195,7 @@ def load_mlx_items(
                 "Model architecture doesn't support layer-by-layer progress tracking",
             )
         mx.eval(model)
+        run_post_load(model, model_path)
         end_time = time.perf_counter()
         logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
         tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
@@ -235,6 +237,13 @@ def load_mlx_items(
         vision_processor = None
 
     return cast(Model, model), tokenizer, vision_processor
+
+
+def run_post_load(model: nn.Module, model_path: Path) -> None:
+    """Run the model family's post-load step, if it has one."""
+    architecture = architecture_for_model(model)
+    if architecture is not None and architecture.post_load is not None:
+        architecture.post_load(model, model_path)
 
 
 def shard_and_load(
@@ -286,6 +295,7 @@ def shard_and_load(
 
     # TODO: Do we need this?
     mx.eval(model)
+    run_post_load(model, model_path)
 
     logger.debug("SHARDED")
     logger.debug(model)
