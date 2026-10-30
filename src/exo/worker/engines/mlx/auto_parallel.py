@@ -186,9 +186,13 @@ class PipelineLastLayer(CustomMlxLayer):
                 mx.eval(_cache.keys)  # type: ignore
 
         if not self.is_prefill:
-            output = mx.distributed.all_gather(output, group=self.group)[
-                -output.shape[0] :
-            ]
+            # Wait for the gather on the CPU, as for the recv in PipelineFirstLayer. A GPU op on
+            # an unfinished collective makes a GPU command buffer wait on the network, and a peer
+            # that falls behind by more than the GPU watchdog's few seconds then fails this rank
+            # with a Metal GPU timeout. The CPU has no such limit.
+            gathered = mx.distributed.all_gather(output, group=self.group)
+            mx.eval(gathered)
+            output = gathered[-output.shape[0] :]
             mx.eval(output)
 
         return output

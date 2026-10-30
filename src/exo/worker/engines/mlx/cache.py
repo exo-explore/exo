@@ -482,13 +482,15 @@ class KVPrefixCache:
         # A cache hit changes how much of a prompt each rank prefills, so every rank must
         # evict the same entries: evict if any rank is under memory pressure or over its
         # budget (each rank holds different layers, so their entries differ in size).
-        flags = mx.distributed.all_gather(
+        gathered = mx.distributed.all_gather(
             mx.array([local_pressure, float(over_budget)], dtype=mx.float32),
             group=self._group,
-        ).reshape(-1, 2)
+        )
+        # On the CPU before the GPU ops below (see PipelineLastLayer)
+        mx.eval(gathered)
         # .tolist() evals.
         worst_pressure, any_over_budget = cast(
-            list[float], mx.max(flags, axis=0).tolist()
+            list[float], mx.max(gathered.reshape(-1, 2), axis=0).tolist()
         )
         return worst_pressure > _MEMORY_THRESHOLD or any_over_budget > 0
 

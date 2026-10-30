@@ -934,11 +934,12 @@ def mx_all_gather_tasks(
 
     assert all(len(encoded_task_id) == uuid_byte_length for encoded_task_id in padded)
 
+    gathered_ids = mx.distributed.all_gather(mx.array(padded), group=group)
+    # On the CPU before the reshape, a GPU op (see PipelineLastLayer)
+    mx.eval(gathered_ids)
     gathered = cast(
         list[list[list[int]]],
-        mx.distributed.all_gather(mx.array(padded), group=group)
-        .reshape(world_size, max_tasks, -1)
-        .tolist(),
+        gathered_ids.reshape(world_size, max_tasks, -1).tolist(),
     )
     all_task_ids: list[list[TaskId]] = [
         [decode_task_id(encoded_task_id) for encoded_task_id in rank_tasks[:count]]
