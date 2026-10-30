@@ -14,7 +14,13 @@
 #     are absolute ("mlx_lm.models.base", ...);
 #   - the AutoConfig registration of a stand-in "deepseek_v4" config runs only when
 #     transformers has no deepseek_v4 config (transformers >= 5.8 has one; replacing it
-#     breaks loading the tokenizer).
+#     breaks loading the tokenizer);
+#   - fixes that make it match DeepSeek's official reference implementation
+#     (inference/model.py in deepseek-ai/DeepSeek-V4-Flash-0731 at 7872f01b), each
+#     marked in place:
+#       - Indexer: RoPE on the query runs along the sequence axis (it ran along the
+#         heads), and in multi-token steps the top-k sees only compressed rows that
+#         are complete at each query's position (it could pick future rows).
 # Everything else below is the file as it was at that commit. exo loads it for
 # config model_type "deepseek_v4" through exo.worker.engines.mlx.models.get_model_classes.
 # Delete this copy once upstream mlx-lm ships a deepseek_v4 that exo can use.
@@ -1799,10 +1805,14 @@ class Indexer(nn.Module):
         if idx_kv is None or idx_kv.shape[1] == 0:
             return None
 
+        # exo fix: RoPE positions run along the sequence axis. mx.fast.rope takes them
+        # from axis -2, so rotate q as [B, n_heads, S, head_dim].
         q = self.wq_b(qr).reshape(B, S, self.n_heads, self.head_dim)
+        q = q.transpose(0, 2, 1, 3)
         q = mx.concatenate(
             [q[..., :-rd], self.rope(q[..., -rd:], offset=offset)], axis=-1
         )
+        q = q.transpose(0, 2, 1, 3)
         per_head_weights = self.weights_proj(x) * (
             self.softmax_scale * (self.n_heads ** -0.5)
         )
@@ -1821,6 +1831,15 @@ class Indexer(nn.Module):
                 < lengths_a[:, None, None]
             )
             score = mx.where(valid, score, mx.array(-1e30, dtype=score.dtype))
+
+        # exo fix: in multi-token steps (prefill), rows that complete later in the step are
+        # not visible to earlier queries. Exclude them before top-k, like the
+        # reference, so each query keeps index_topk rows it can attend to.
+        if S > 1:
+            visible = _compressed_visibility(
+                B, S, offset, idx_kv.shape[1], self.compress_ratio
+            )[:, 0]
+            score = mx.where(visible, score, mx.array(-math.inf, dtype=score.dtype))
 
         k = min(self.index_topk, idx_kv.shape[1])
         return mx.argpartition(-score, kth=k - 1, axis=-1)[..., :k].astype(
