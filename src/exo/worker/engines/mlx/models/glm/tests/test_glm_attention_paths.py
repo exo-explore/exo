@@ -1,5 +1,5 @@
-"""GLM-5.x attention fast paths against mlx-lm's own GlmMoeDsaAttention, and the kernels
-they use against plain MLX: dense and sparse prefill, single-token and batched decode."""
+"""GLM-5.x fast paths against mlx-lm's own GlmMoeDsaAttention and MoE (dense and sparse
+prefill, single-token and batched decode), and the kernels they use against plain MLX."""
 
 from typing import Any, cast
 
@@ -9,6 +9,9 @@ import pytest
 from mlx.utils import tree_flatten
 from mlx_lm.generate import _merge_caches  # pyright: ignore[reportPrivateUsage]
 from mlx_lm.models.cache import CacheList, KVCache
+from mlx_lm.models.deepseek_v32 import (
+    group_expert_select,  # pyright: ignore[reportUnknownVariableType]
+)
 from mlx_lm.models.glm_moe_dsa import Model as MlxLmModel
 
 from exo.worker.engines.mlx.models.glm.glm_moe_dsa import (
@@ -21,6 +24,8 @@ from exo.worker.engines.mlx.models.glm.kernels import (
     gather_rows,
     indexer_scores,
     metal_kernels_available,
+    moe_combine,
+    router_select,
 )
 from exo.worker.engines.mlx.models.glm.tests.test_glm_moe_dsa import CONFIG
 
@@ -190,3 +195,37 @@ def test_decode_cache_is_unchanged_in_layout() -> None:
     _, ours = _models()
     caches = cast(list[CacheList], ours.make_cache())  # pyright: ignore[reportUnknownMemberType]
     assert all(isinstance(cache[0], KVCache) for cache in caches)
+
+
+@needs_metal
+@pytest.mark.parametrize("normalize", [True, False])
+def test_router_select_matches_group_expert_select(normalize: bool) -> None:
+    k1, k2 = mx.random.split(mx.random.key(1))
+    logits = mx.random.normal((2, 3, 256), key=k1) * 3
+    bias = mx.random.normal((256,), key=k2) * 0.1
+    inds, scores = router_select(logits, bias, 8, 2.5, normalize)
+    expected_inds, expected_scores = cast(
+        tuple[mx.array, mx.array],
+        group_expert_select(logits, bias, 8, 1, 1, 2.5, normalize),
+    )
+    order = mx.argsort(inds, axis=-1)
+    expected_order = mx.argsort(expected_inds, axis=-1)
+    assert mx.array_equal(
+        mx.take_along_axis(inds, order, axis=-1),
+        mx.take_along_axis(expected_inds, expected_order, axis=-1),
+    ).item()
+    assert mx.allclose(
+        mx.take_along_axis(scores, order, axis=-1),
+        mx.take_along_axis(expected_scores, expected_order, axis=-1),
+        atol=1e-6,
+    ).item()
+
+
+@needs_metal
+def test_moe_combine_rounds_like_mlx_lm() -> None:
+    k1, k2, k3 = mx.random.split(mx.random.key(2), 3)
+    routed = mx.random.normal((2, 1, 8, 96), key=k1).astype(mx.bfloat16)
+    weights = mx.random.uniform(shape=(2, 1, 8), key=k2)
+    shared = mx.random.normal((2, 1, 96), key=k3).astype(mx.bfloat16)
+    expected = (routed * weights[..., None]).sum(axis=-2).astype(mx.bfloat16) + shared
+    assert mx.array_equal(moe_combine(routed, weights, shared), expected).item()

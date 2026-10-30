@@ -1,9 +1,9 @@
 # type: ignore
 # basedpyright skips this file (MLX array code against untyped mlx-lm internals and
-# mx.fast.metal_kernel, which the repo's mlx stubs don't cover); dsa_attention.pyi types
-# what other modules use. Same arrangement as deepseek_v4/model.py and its .pyi.
-"""GLM-5.x (DeepSeek sparse attention with a shared indexer) attention for exo: mlx-lm's
-GlmMoeDsaAttention computed faster, and the indexer's head reduction in float32.
+# mx.fast.metal_kernel, which the repo's mlx stubs don't cover); layers.pyi types what
+# other modules use. Same arrangement as deepseek_v4/model.py and its .pyi.
+"""GLM-5.x layers for exo: mlx-lm's GlmMoeDsaAttention and DeepseekV32MoE computed faster,
+and the DSA indexer's head reduction in float32.
 
 - Dense prefill scores the 192-wide no-rope part and the 64-wide rope part of each head in
   one 256-wide product with a boolean mask, instead of a separate rope-part product
@@ -16,6 +16,9 @@ GlmMoeDsaAttention computed faster, and the indexer's head reduction in float32.
 - The indexer's per-key score (relu(q.k) times each head's weight, summed over its heads)
   is summed in float32 in one pass (kernels.indexer_scores). mlx-lm adds the heads one at a
   time in bfloat16, which rounds 31 times and leaves many keys tied at the top-k boundary.
+- The MoE adds its experts' weighted outputs and the shared expert's in one kernel
+  (kernels.moe_combine, with mlx-lm's rounding), where mlx-lm runs a multiply, a sum, a
+  cast and an add.
 
 Where the Metal kernels can't run (no Metal GPU as the default device) every call goes to
 mlx-lm's own implementation.
@@ -25,14 +28,16 @@ from functools import partial
 from typing import Any, cast
 
 import mlx.core as mx
+from mlx.nn.layers.distributed import sum_gradients
 from mlx_lm.models.base import scaled_dot_product_attention
-from mlx_lm.models.deepseek_v32 import Indexer
+from mlx_lm.models.deepseek_v32 import DeepseekV32MoE, Indexer
 from mlx_lm.models.glm_moe_dsa import GlmMoeDsaAttention, ModelArgs
 
 from exo.worker.engines.mlx.models.glm.kernels import (
     gather_rows,
     indexer_scores,
     metal_kernels_available,
+    moe_combine,
 )
 
 # Context length (cached plus new keys) from which a single sequence's prefill chunk attends
@@ -301,3 +306,22 @@ class GlmAttention(GlmMoeDsaAttention):
         latent = (probs @ kv_latent).reshape(batch, heads, 1, self.kv_lora_rank)
         output = self.unembed_out(latent)  # [B, H, 1, v]
         return output.transpose(0, 2, 1, 3).reshape(batch, 1, -1)
+
+
+class GlmMoE(DeepseekV32MoE):
+    """mlx-lm's DeepseekV32MoE with the experts' outputs combined in one kernel."""
+
+    def __call__(self, x: mx.array) -> mx.array:
+        if self.sharding_group is not None:
+            x = sum_gradients(self.sharding_group)(x)
+        inds, scores = self.gate(x)
+        routed = self.switch_mlp(x, inds)
+        if self.config.n_shared_experts is not None and metal_kernels_available():
+            y = moe_combine(routed, scores, self.shared_experts(x))
+        else:
+            y = (routed * scores[..., None]).sum(axis=-2).astype(routed.dtype)
+            if self.config.n_shared_experts is not None:
+                y = y + self.shared_experts(x)
+        if self.sharding_group is not None:
+            y = mx.distributed.all_sum(y, group=self.sharding_group)
+        return y

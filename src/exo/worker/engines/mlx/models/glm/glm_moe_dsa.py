@@ -22,7 +22,7 @@ past 2048 tokens of a 20k-token prompt takes top-1 from 0.959 to 0.968 (mean KL 
 6.2e-5). The epsilon alone is below bf16 noise on those weights; in float32 on
 tiny-random/glm-5.3 it cuts the last layer's error from 2.6e-3 to 6.0e-5.
 
-Speed: the attention is dsa_attention.GlmAttention (same math, restructured; see its
+Speed: the attention is layers.GlmAttention (same math, restructured; see its
 docstring), and the indexer's head reduction there is summed in float32 (3. above).
 """
 
@@ -38,9 +38,14 @@ from mlx_lm.models.deepseek_v32 import (
 from mlx_lm.models.glm_moe_dsa import Model as MlxLmModel
 from mlx_lm.models.glm_moe_dsa import ModelArgs
 
-from exo.worker.engines.mlx.models.glm.dsa_attention import (
+from exo.worker.engines.mlx.models.glm.kernels import (
+    metal_kernels_available,
+    router_select,
+)
+from exo.worker.engines.mlx.models.glm.layers import (
     SPARSE_PREFILL_MIN_CONTEXT,
     GlmAttention,
+    GlmMoE,
 )
 
 __all__ = [
@@ -48,6 +53,7 @@ __all__ = [
     "SPARSE_PREFILL_MIN_CONTEXT",
     "Float32RouterGate",
     "GlmAttention",
+    "GlmMoE",
     "Model",
     "ModelArgs",
 ]
@@ -64,6 +70,21 @@ class Float32RouterGate(MoEGate):
         if weight.dtype != mx.float32:
             weight = weight.astype(mx.float32)
         logits = x.astype(mx.float32) @ weight.T
+        n_experts = logits.shape[-1]
+        if (
+            self.n_group == 1
+            and n_experts % 32 == 0
+            and n_experts <= 1024
+            and metal_kernels_available()
+        ):
+            # The selection below in one kernel (kernels.router_select).
+            return router_select(
+                logits,
+                self.e_score_correction_bias,
+                self.top_k,
+                self.routed_scaling_factor,
+                self.top_k > 1 and self.norm_topk_prob,
+            )
         return cast(
             tuple[mx.array, mx.array],
             group_expert_select(
@@ -92,11 +113,12 @@ class Model(MlxLmModel):
                 key_norm.eps = INDEXER_KEY_NORM_EPS
             mlp = cast(nn.Module, layer.mlp)
             if isinstance(getattr(mlp, "gate", None), MoEGate):
-                # Same parameter names (gate.weight, gate.e_score_correction_bias).
-                # MoEGate reads only the routing fields, which GLM's args share.
-                mlp.gate = Float32RouterGate(
-                    cast(DeepseekV32ModelArgs, cast(object, config))
-                )
+                # Same parameter names (gate.*, switch_mlp.*, shared_experts.*). MoEGate
+                # and the MoE read only the routing and expert fields, which GLM's args share.
+                moe_config = cast(DeepseekV32ModelArgs, cast(object, config))
+                moe = GlmMoE(moe_config)
+                moe.gate = Float32RouterGate(moe_config)
+                layer.mlp = moe
 
     def sanitize(self, weights: dict[str, mx.array]) -> dict[str, mx.array]:
         weights = cast(

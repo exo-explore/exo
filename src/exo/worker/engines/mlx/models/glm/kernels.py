@@ -44,8 +44,81 @@ _GATHER_ROWS_SOURCE = r"""
     o[c] = s[c];
 """
 
+_ROUTER_SELECT_SOURCE = r"""
+    // One threadgroup per token, one thread per expert (E <= 1024, a multiple of 32).
+    const uint t = threadgroup_position_in_grid.x;
+    const uint e = thread_position_in_threadgroup.x;
+    const uint lane = thread_index_in_simdgroup;
+    const uint sg = simdgroup_index_in_threadgroup;
+    threadgroup float group_best[32];
+    threadgroup uint group_index[32];
+    threadgroup float chosen_score[K];
+    threadgroup uint chosen_index[K];
+    const float s = 1.0f / (1.0f + metal::exp(-logits[size_t(t) * E + e]));
+    float biased = s + bias[e];
+    for (int k = 0; k < K; k++) {
+        float v = biased;
+        uint i = e;
+        for (uint offset = 16; offset > 0; offset >>= 1) {
+            const float other_v = simd_shuffle_down(v, offset);
+            const uint other_i = simd_shuffle_down(i, offset);
+            if (other_v > v || (other_v == v && other_i < i)) {
+                v = other_v;
+                i = other_i;
+            }
+        }
+        if (lane == 0) {
+            group_best[sg] = v;
+            group_index[sg] = i;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (e == 0) {
+            float best = group_best[0];
+            uint best_i = group_index[0];
+            for (uint g = 1; g < E / 32; g++) {
+                if (group_best[g] > best || (group_best[g] == best && group_index[g] < best_i)) {
+                    best = group_best[g];
+                    best_i = group_index[g];
+                }
+            }
+            chosen_index[k] = best_i;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (e == chosen_index[k]) {
+            chosen_score[k] = s;
+            biased = -INFINITY;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (e == 0) {
+        float denominator = 0.0f;
+        for (int k = 0; k < K; k++) denominator += chosen_score[k];
+        for (int k = 0; k < K; k++) {
+            float weight = chosen_score[k];
+            if (NORMALIZE) weight = weight / denominator;
+            inds[size_t(t) * K + k] = chosen_index[k];
+            scores[size_t(t) * K + k] = weight * scaling[0];
+        }
+    }
+"""
+
+_MOE_COMBINE_SOURCE = r"""
+    // routed [T, K, D], weights [T, K] float32, shared [T, D] -> out [T, D]
+    const uint d = thread_position_in_grid.x;
+    const uint t = thread_position_in_grid.y;
+    if (d >= D) return;
+    float acc = 0.0f;
+    for (int k = 0; k < K; k++) {
+        acc += float(routed[(size_t(t) * K + k) * D + d]) * weights[size_t(t) * K + k];
+    }
+    const T routed_sum = T(acc);
+    out[size_t(t) * D + d] = T(float(routed_sum) + float(shared[size_t(t) * D + d]));
+"""
+
 _indexer_scores_kernel = None
 _gather_rows_kernel = None
+_router_select_kernel = None
+_moe_combine_kernel = None
 
 
 def metal_kernels_available() -> bool:
@@ -125,3 +198,74 @@ def gather_rows(source: mx.array, indices: mx.array) -> mx.array:
         output_dtypes=[source.dtype],
     )
     return outputs[0].reshape(*indices.shape, width)
+
+
+def router_select(
+    logits: mx.array,
+    bias: mx.array,
+    top_k: int,
+    routed_scaling_factor: float,
+    normalize: bool,
+) -> tuple[mx.array, mx.array]:
+    """mlx-lm's group_expert_select for one expert group (n_group == 1), in one kernel:
+    sigmoid scores, the bias added only to choose the top_k experts, the chosen experts'
+    unbiased scores normalised (if normalize) and scaled. Ties go to the lower expert
+    index. logits [..., E] float32 -> (indices uint32 [..., top_k], scores float32)."""
+    global _router_select_kernel
+    if _router_select_kernel is None:
+        _router_select_kernel = mx.fast.metal_kernel(
+            name="glm_router_select",
+            input_names=["logits", "bias", "scaling"],
+            output_names=["inds", "scores"],
+            source=_ROUTER_SELECT_SOURCE,
+        )
+    *lead, n_experts = logits.shape
+    if n_experts % 32 != 0 or n_experts > 1024:
+        raise ValueError("router_select needs a multiple of 32 experts, at most 1024")
+    tokens = 1
+    for size in lead:
+        tokens *= size
+    inds, scores = _router_select_kernel(
+        inputs=[
+            logits.reshape(tokens, n_experts),
+            bias.astype(mx.float32),
+            mx.array([routed_scaling_factor], mx.float32),
+        ],
+        template=[("E", n_experts), ("K", top_k), ("NORMALIZE", normalize)],
+        grid=(tokens * n_experts, 1, 1),
+        threadgroup=(n_experts, 1, 1),
+        output_shapes=[(tokens, top_k), (tokens, top_k)],
+        output_dtypes=[mx.uint32, mx.float32],
+    )
+    return inds.reshape(*lead, top_k), scores.reshape(*lead, top_k)
+
+
+def moe_combine(routed: mx.array, weights: mx.array, shared: mx.array) -> mx.array:
+    """(routed * weights[..., None]).sum(-2) in float32, rounded to routed's dtype, plus
+    the shared expert's output: mlx-lm's MoE combine (three kernels) as one, same rounding.
+    routed [..., K, D], weights [..., K] float32, shared [..., D] -> [..., D]."""
+    global _moe_combine_kernel
+    if _moe_combine_kernel is None:
+        _moe_combine_kernel = mx.fast.metal_kernel(
+            name="glm_moe_combine",
+            input_names=["routed", "weights", "shared"],
+            output_names=["out"],
+            source=_MOE_COMBINE_SOURCE,
+        )
+    *lead, n_chosen, width = routed.shape
+    tokens = 1
+    for size in lead:
+        tokens *= size
+    (out,) = _moe_combine_kernel(
+        inputs=[
+            routed.reshape(tokens, n_chosen, width),
+            weights.reshape(tokens, n_chosen),
+            shared.reshape(tokens, width),
+        ],
+        template=[("T", routed.dtype), ("K", n_chosen), ("D", width)],
+        grid=(width, tokens, 1),
+        threadgroup=(min(256, width), 1, 1),
+        output_shapes=[(tokens, width)],
+        output_dtypes=[routed.dtype],
+    )
+    return out.reshape(*lead, width)

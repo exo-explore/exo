@@ -1,7 +1,8 @@
-"""Type stubs for dsa_attention.py (GLM-5.x attention; basedpyright skips the .py)."""
+"""Type stubs for layers.py (GLM-5.x attention and MoE; basedpyright skips the .py)."""
 
 import mlx.core as mx
 import mlx.nn as nn
+from mlx_lm.models.deepseek_v32 import ModelArgs as DeepseekV32ModelArgs
 from mlx_lm.models.glm_moe_dsa import ModelArgs
 
 SPARSE_PREFILL_MIN_CONTEXT: int
@@ -35,3 +36,7 @@ class GlmAttention(nn.Module):
         cache: object | None = None,
         prev_topk_indices: mx.array | None = None,
     ) -> tuple[mx.array, mx.array | None]: ...
+
+class GlmMoE(nn.Module):
+    gate: nn.Module
+    def __init__(self, config: DeepseekV32ModelArgs) -> None: ...
