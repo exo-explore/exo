@@ -4,6 +4,7 @@ hidden_size = 4480
 supports_tensor = true
 tasks = ["TextGeneration"]
 family = "nemotron"
+model_type = "nemotron_h"
 quantization = "4bit"
 base_model = "NVIDIA Nemotron-Nano-9B-v2"
 capabilities = ["text"]
