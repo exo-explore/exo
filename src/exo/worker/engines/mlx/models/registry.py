@@ -134,6 +134,18 @@ def keeps_think_tags(
     return encoder is not None and encoder.exact_think_tags
 
 
+def model_type_keeps_think_tags(model_type: str | None) -> bool:
+    """Whether prompts for a loaded model of this type keep their think tags exactly as
+    rendered, for callers that have the prompt's token ids but not the request (the
+    disaggregated prefill server). Only encoders that list model_types can say."""
+    return model_type is not None and any(
+        encoder is not None
+        and model_type in encoder.model_types
+        and encoder.exact_think_tags
+        for encoder in (family.prompt_encoder for family in FAMILIES)
+    )
+
+
 def template_messages_hooks_for(
     task_params: TextGenerationTaskParams,
 ) -> list[TemplateMessagesHook]:
