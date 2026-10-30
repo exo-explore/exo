@@ -44,6 +44,7 @@ import contextlib
 
 import mlx.core as mx
 import mlx.nn as nn
+from mlx.utils import tree_flatten
 from mlx_lm.generate import generation_stream
 from mlx_lm.utils import load_model
 from pydantic import RootModel
@@ -153,6 +154,57 @@ def mlx_distributed_init(
         return group
 
 
+class MissingWeightsError(ValueError):
+    """The checkpoint does not provide every parameter of the model class it loads as."""
+
+
+@contextlib.contextmanager
+def _record_loaded_weight_names(names: set[str]) -> Generator[None]:
+    """Record the parameter names mlx-lm's load_model hands to Module.load_weights."""
+    original = nn.Module.load_weights
+
+    def recording(
+        self: nn.Module,
+        file_or_weights: str | list[tuple[str, mx.array]],
+        strict: bool = True,
+    ) -> nn.Module:
+        if isinstance(file_or_weights, list):
+            names.update(name for name, _ in file_or_weights)
+        return original(self, file_or_weights, strict=strict)
+
+    nn.Module.load_weights = recording
+    try:
+        yield
+    finally:
+        nn.Module.load_weights = original
+
+
+def load_model_checked(model_path: Path) -> nn.Module:
+    """mlx-lm's load_model(lazy=True, strict=False), refusing checkpoints that leave
+    model parameters unset.
+
+    strict=False tolerates checkpoint tensors the model doesn't use (MTP layers, vision
+    towers), but it also silently keeps any parameter the checkpoint lacks at its random
+    initialisation. That is how GLM-5.2/5.3 ran with 57 randomly initialised DSA indexers
+    on an mlx-lm without cross-layer indexer sharing.
+    """
+    loaded_names: set[str] = set()
+    with _record_loaded_weight_names(loaded_names):
+        model, _ = load_model(
+            model_path, lazy=True, strict=False, get_model_classes=get_model_classes
+        )
+    parameter_names = {name for name, _ in tree_flatten(model.parameters())}
+    missing = sorted(parameter_names - loaded_names)
+    if missing:
+        preview = ", ".join(missing[:8])
+        raise MissingWeightsError(
+            f"The checkpoint at {model_path} does not provide {len(missing)} of the "
+            f"model's parameters (e.g. {preview}); they would run randomly initialised. "
+            "The model's architecture is probably not supported."
+        )
+    return model
+
+
 def initialize_mlx(
     bound_instance: BoundInstance,
 ) -> mx.distributed.Group:
@@ -178,9 +230,7 @@ def load_mlx_items(
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
         start_time = time.perf_counter()
-        model, _ = load_model(
-            model_path, lazy=True, strict=False, get_model_classes=get_model_classes
-        )
+        model = load_model_checked(model_path)
         # Eval layers one by one for progress reporting
         try:
             inner = get_inner_model(model)
@@ -243,9 +293,7 @@ def shard_and_load(
 ) -> Generator[ModelLoadingResponse, None, tuple[nn.Module, TokenizerWrapper]]:
     model_path = build_model_path(shard_metadata.model_card.model_id)
 
-    model, _ = load_model(
-        model_path, lazy=True, strict=False, get_model_classes=get_model_classes
-    )
+    model = load_model_checked(model_path)
     logger.debug(model)
     if hasattr(model, "model") and isinstance(model.model, DeepseekV3Model):  # type: ignore
         pass
