@@ -5,6 +5,7 @@ num_key_value_heads = 16
 supports_tensor = true
 tasks = ["TextGeneration"]
 family = "gemma"
+model_type = "gemma4"
 quantization = "4bit"
 base_model = "Gemma 4 31B"
 capabilities = ["text", "vision"]
