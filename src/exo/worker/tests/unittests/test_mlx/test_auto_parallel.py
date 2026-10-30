@@ -2,7 +2,7 @@ import json
 import multiprocessing as mp
 import os
 import tempfile
-from typing import Any
+from typing import Any, cast
 
 import mlx.core as mx
 import mlx.nn as mlx_nn
@@ -22,6 +22,7 @@ def run_pipeline_device(
     world_size: int,
     hostfile_path: str,
     result_queue: Any,  # pyright: ignore[reportAny]
+    layers_return_tuples: bool = False,
 ) -> None:
     import os
 
@@ -36,6 +37,12 @@ def run_pipeline_device(
         def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
             return x * 2
 
+    class MockTupleLayerInner(mlx_nn.Module):
+        """Returns (hidden state, extra), like GLM MoE DSA layers (hidden, top-k)."""
+
+        def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
+            return cast(mx.array, cast(object, (x * 2, mx.array([rank]))))
+
     class MockModel(mlx_nn.Module):
         def __init__(self, layers: list[mlx_nn.Module]) -> None:
             super().__init__()
@@ -43,13 +50,18 @@ def run_pipeline_device(
 
         def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
             for layer in self.layers:
-                x = layer(x, *args, **kwargs)
+                out = layer(x, *args, **kwargs)
+                if layers_return_tuples:
+                    x, extra = cast(tuple[mx.array, mx.array], cast(object, out))
+                    assert extra.tolist() == [rank]
+                else:
+                    x = out
             return x
 
     try:
         group = mx.distributed.init(backend="ring", strict=True)
 
-        mock = MockLayerInner()
+        mock = MockTupleLayerInner() if layers_return_tuples else MockLayerInner()
         first = PipelineFirstLayer(mock, r=rank, group=group)
         composed = PipelineLastLayer(first, r=rank, s=world_size, group=group)
 
@@ -93,11 +105,13 @@ def test_missing_attribute_raises() -> None:
         _ = wrapped.nonexistent_attr  # type: ignore[attr-defined]
 
 
-def test_composed_call_works() -> None:
+@pytest.mark.parametrize(
+    ("layers_return_tuples", "base_port"), [(False, 29500), (True, 29510)]
+)
+def test_composed_call_works(layers_return_tuples: bool, base_port: int) -> None:
     ctx = mp.get_context("spawn")
 
     world_size = 2
-    base_port = 29500
 
     hosts = [f"127.0.0.1:{base_port + i}" for i in range(world_size)]
 
@@ -112,7 +126,13 @@ def test_composed_call_works() -> None:
         for rank in range(world_size):
             p = ctx.Process(
                 target=run_pipeline_device,
-                args=(rank, world_size, hostfile_path, result_queue),
+                args=(
+                    rank,
+                    world_size,
+                    hostfile_path,
+                    result_queue,
+                    layers_return_tuples,
+                ),
             )
             p.start()
             processes.append(p)
