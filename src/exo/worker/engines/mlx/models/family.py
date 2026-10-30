@@ -58,6 +58,10 @@ class Architecture:
     # parallelism, for models that loop over it rather than over their layers.
     pipeline_layer_count: Literal["num_layers", "num_hidden_layers"] | None = None
     output_parser: OutputParser | None = None
+    # PromptEncoder.exact_think_tags for a model rendered through its Jinja chat template:
+    # its template's think tags are exactly the model's format (e.g. a bare `</think>`
+    # that closes thinking when it is off), so exo leaves an unmatched `</think>` as it is.
+    exact_think_tags: bool = False
 
 
 @final
@@ -79,6 +83,13 @@ class PromptEncoder:
 
     applies_to: Callable[[TextGenerationTaskParams], bool]
     encode: Callable[[list[dict[str, Any]], TextGenerationTaskParams], str]
+    # The config.json model_types it renders for. When the loaded model's type is known,
+    # an encoder that lists its model_types is picked by them alone, not by applies_to.
+    model_types: frozenset[str] = frozenset()
+    # True when its think tags are exactly the model's format (e.g. a bare `</think>` that
+    # closes thinking in chat mode): exo then leaves an unmatched `</think>` as it is
+    # instead of putting a `<think>` before it.
+    exact_think_tags: bool = False
 
 
 @final

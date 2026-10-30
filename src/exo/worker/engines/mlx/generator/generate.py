@@ -49,6 +49,7 @@ from exo.worker.engines.mlx.constants import (
     MAX_TOKENS,
 )
 from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
+from exo.worker.engines.mlx.models.registry import keeps_think_tags, model_type_of
 from exo.worker.engines.mlx.sharding.pipeline import (
     PipelineFirstLayer,
     PipelineLastLayer,
@@ -420,6 +421,7 @@ def warmup_inference(
     warmup_prompt = apply_chat_template(
         tokenizer=tokenizer,
         task_params=warmup_task_params,
+        model_type=model_type_of(model),
     )
 
     tokens_generated = 0
@@ -551,7 +553,8 @@ def mlx_generate(
 
     # Encode prompt once at the top and fix unmatched think tags
     all_prompt_tokens = encode_prompt(tokenizer, prompt)
-    all_prompt_tokens = fix_unmatched_think_end_tokens(all_prompt_tokens, tokenizer)
+    if not keeps_think_tags(task, model_type_of(model)):
+        all_prompt_tokens = fix_unmatched_think_end_tokens(all_prompt_tokens, tokenizer)
     min_prefix_hit_length = max(1000, system_prompt_token_count(task, tokenizer))
 
     vision: VisionResult | None = None

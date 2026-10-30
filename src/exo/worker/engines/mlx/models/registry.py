@@ -28,6 +28,7 @@ from exo.worker.engines.mlx.models.gemma.family import FAMILY as GEMMA
 from exo.worker.engines.mlx.models.glm.family import FAMILY as GLM
 from exo.worker.engines.mlx.models.gpt_oss.family import FAMILY as GPT_OSS
 from exo.worker.engines.mlx.models.kimi.family import FAMILY as KIMI
+from exo.worker.engines.mlx.models.laguna.family import FAMILY as LAGUNA
 from exo.worker.engines.mlx.models.llama.family import FAMILY as LLAMA
 from exo.worker.engines.mlx.models.minimax.family import FAMILY as MINIMAX
 from exo.worker.engines.mlx.models.nemotron_h.family import FAMILY as NEMOTRON_H
@@ -49,6 +50,7 @@ FAMILIES: tuple[ModelFamily, ...] = (
     MINIMAX,
     NEMOTRON_H,
     STEP,
+    LAGUNA,
 )
 assert tuple(family.spec for family in FAMILIES) == FAMILY_SPECS
 
@@ -102,12 +104,49 @@ def get_model_classes(config: dict[str, Any]) -> tuple[type[nn.Module], type]:
     return mlx_lm_get_classes(config)
 
 
-def prompt_encoder_for(task_params: TextGenerationTaskParams) -> PromptEncoder | None:
+def model_type_of(model: nn.Module) -> str | None:
+    """The config.json model_type a loaded model was built from (mlx-lm models keep it)."""
+    model_type: object = getattr(model, "model_type", None)
+    return model_type if isinstance(model_type, str) else None
+
+
+def prompt_encoder_for(
+    task_params: TextGenerationTaskParams, model_type: str | None = None
+) -> PromptEncoder | None:
+    """The prompt encoder for the request's model. An encoder that lists model_types is
+    picked by the loaded model's type when that is known; the others (and every encoder,
+    when the type isn't known) by their applies_to on the request."""
     for family in FAMILIES:
         encoder = family.prompt_encoder
-        if encoder is not None and encoder.applies_to(task_params):
+        if encoder is None:
+            continue
+        if encoder.model_types and model_type is not None:
+            if model_type in encoder.model_types:
+                return encoder
+        elif encoder.applies_to(task_params):
             return encoder
     return None
+
+
+# model_types whose architecture renders exact think tags through its Jinja chat template.
+_EXACT_THINK_TAG_MODEL_TYPES = frozenset(
+    architecture.model_type
+    for family in FAMILIES
+    for architecture in family.architectures
+    if architecture.exact_think_tags
+)
+
+
+def keeps_think_tags(
+    task_params: TextGenerationTaskParams, model_type: str | None = None
+) -> bool:
+    """Whether the request's prompt keeps its think tags exactly as rendered: its prompt
+    encoder says so, or, for a model rendered through its Jinja chat template, its
+    architecture does."""
+    encoder = prompt_encoder_for(task_params, model_type)
+    if encoder is not None and encoder.exact_think_tags:
+        return True
+    return model_type in _EXACT_THINK_TAG_MODEL_TYPES
 
 
 def template_messages_hooks_for(

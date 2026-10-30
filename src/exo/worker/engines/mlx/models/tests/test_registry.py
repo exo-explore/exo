@@ -25,6 +25,8 @@ from mlx_lm.models.glm4_moe_lite import Model as GLM4MoeLiteModel
 from mlx_lm.models.gpt_oss import GptOssMoeModel
 from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.models.kimi_k25 import Model as KimiK25Model
+from mlx_lm.models.laguna import LagunaModel as LagunaInnerModel
+from mlx_lm.models.laguna import Model as LagunaModel
 from mlx_lm.models.llama import Model as LlamaModel
 from mlx_lm.models.minimax import Model as MiniMaxModel
 from mlx_lm.models.ministral3 import Model as Ministral3Model
@@ -59,6 +61,9 @@ from exo.worker.engines.mlx.models.family import ModelClasses
 from exo.worker.engines.mlx.models.gpt_oss.parser import parse_gpt_oss
 from exo.worker.engines.mlx.models.gpt_oss.sharding import (
     fix_pipeline_shard as gpt_oss_fixup,
+)
+from exo.worker.engines.mlx.models.laguna.sharding import (
+    fix_pipeline_shard as laguna_fixup,
 )
 from exo.worker.engines.mlx.models.nemotron_h.sharding import (
     fix_pipeline_shard as nemotron_h_fixup,
@@ -104,6 +109,9 @@ def _main_tensor_strategy(model_class: type) -> str | None:
         return "NemotronHShardingStrategy"
     elif issubclass(model_class, Gemma4Model):
         return "Gemma4ShardingStrategy"
+    # Changed on purpose: Laguna is new, and main had no strategy for it.
+    elif issubclass(model_class, LagunaModel):
+        return "LagunaShardingStrategy"
     else:
         return None
 
@@ -161,6 +169,8 @@ _FIXUP_FOR_INNER_CLASS: list[tuple[type, PipelineShardFixup]] = [
     (Qwen3_5TextModelInner, qwen3_fixup),
     (Qwen3NextInnerModel, qwen3_fixup),
     (NemotronHInnerModel, nemotron_h_fixup),
+    # Changed on purpose: Laguna is new.
+    (LagunaInnerModel, laguna_fixup),
 ]
 
 
@@ -196,6 +206,7 @@ _SUPPORTED_MODEL_TYPES = [
     "glm_moe_dsa",
     "gpt_oss",
     "kimi_k25",
+    "laguna",
     "llama",
     "minimax",
     "ministral3",
@@ -418,3 +429,34 @@ def test_a_family_can_provide_its_own_model_classes(
     )
     with pytest.raises(ValueError, match="not supported"):
         registry.get_model_classes({"model_type": "no_such_model_type"})
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "mlx-community/DeepSeek-V4-Flash",
+        "mlx-community/DeepSeek-V4-Pro",
+        "deepseek-ai/DeepSeek-V4-Flash-0731",
+    ],
+)
+def test_deepseek_v4_ids_get_the_v4_encoder_by_model_type(model_id: str) -> None:
+    v4_encoder = next(
+        family.prompt_encoder
+        for family in registry.FAMILIES
+        if family.spec.name == "deepseek_v4"
+    )
+    task = _task(model_id)
+    assert registry.prompt_encoder_for(task, "deepseek_v4") is v4_encoder
+    # without the loaded model's type, the id still picks it
+    assert registry.prompt_encoder_for(task) is v4_encoder
+
+
+@pytest.mark.parametrize("model_type", ["deepseek_v41", "llama", "glm_moe_dsa"])
+def test_the_v4_encoder_is_not_picked_for_other_model_types(model_type: str) -> None:
+    v4_encoder = next(
+        family.prompt_encoder
+        for family in registry.FAMILIES
+        if family.spec.name == "deepseek_v4"
+    )
+    task = _task("deepseek-ai/DeepSeek-V4.1-Flash")
+    assert registry.prompt_encoder_for(task, model_type) is not v4_encoder
