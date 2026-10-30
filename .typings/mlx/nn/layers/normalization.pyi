@@ -90,6 +90,7 @@ class RMSNorm(Module):
     """
 
     weight: mx.array
+    eps: float
 
     def __init__(self, dims: int, eps: float = ...) -> None: ...
     def __call__(self, x) -> mx.array: ...

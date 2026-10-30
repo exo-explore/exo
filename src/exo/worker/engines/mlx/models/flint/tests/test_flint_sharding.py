@@ -16,7 +16,6 @@ import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
 import pytest
-from mlx_lm.models.flint import Model, ModelArgs
 
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.types.backends import Backend
@@ -27,6 +26,7 @@ from exo.worker.engines.mlx.auto_parallel import (
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
+from exo.worker.engines.mlx.models.flint.model import Model, ModelArgs
 
 # Layer kinds chosen so that rank 1 of a split at layer 2 starts on a sliding layer:
 # the whole model's first full layer is 0 and first sliding layer is 1, neither of which
