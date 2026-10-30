@@ -13,7 +13,7 @@ from exo.shared.tests.conftest import get_pipeline_shard_metadata
 from exo.shared.types.common import ModelId
 from exo.shared.types.worker.runner_response import ModelLoadingResponse
 from exo.shared.types.worker.shards import PipelineShardMetadata
-from exo.worker.engines.mlx import auto_parallel, utils_mlx
+from exo.worker.engines.mlx import auto_parallel, builder, utils_mlx
 from exo.worker.engines.mlx.models.family import Architecture
 
 
@@ -107,3 +107,34 @@ def test_pipeline_parallel_override_replaces_the_generic_split(
     # the generic wrappers were not applied
     layers = cast(list[nn.Module], model.model.layers)
     assert all(isinstance(layer, nn.Linear) for layer in layers)
+
+
+@pytest.mark.parametrize(
+    ("batched", "no_batch_env", "expected"),
+    [
+        (True, False, True),
+        (False, False, False),
+        (True, True, False),
+        (None, False, True),
+        (None, True, False),
+    ],
+)
+def test_generates_in_batches(
+    monkeypatch: pytest.MonkeyPatch,
+    batched: bool | None,
+    no_batch_env: bool,
+    expected: bool,
+) -> None:
+    architecture = (
+        None
+        if batched is None
+        else Architecture(
+            model_type="m", model_class=_Model, batched_generation=batched
+        )
+    )
+    monkeypatch.setattr(builder, "architecture_for_model", _registered(architecture))
+    if no_batch_env:
+        monkeypatch.setenv("EXO_NO_BATCH", "1")
+    else:
+        monkeypatch.delenv("EXO_NO_BATCH", raising=False)
+    assert builder.generates_in_batches(_Model()) is expected
