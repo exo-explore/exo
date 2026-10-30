@@ -20,7 +20,10 @@
 #     marked in place:
 #       - Indexer: RoPE on the query runs along the sequence axis (it ran along the
 #         heads), and in multi-token steps the top-k sees only compressed rows that
-#         are complete at each query's position (it could pick future rows).
+#         are complete at each query's position (it could pick future rows);
+#       - the reference's FP8 rounding of the non-RoPE KV dims and FP4 rounding (after
+#         a Hadamard rotation) of the indexer's query and compressed keys, which the
+#         model was trained with (_fp8_kv_sim, _fp4_indexer_sim).
 # Everything else below is the file as it was at that commit. exo loads it for
 # config model_type "deepseek_v4" through exo.worker.engines.mlx.models.get_model_classes.
 # Delete this copy once upstream mlx-lm ships a deepseek_v4 that exo can use.
@@ -1701,6 +1704,11 @@ class Compressor(nn.Module):
                 float(ratio),
                 self.rope.freqs,
             )
+        # exo fix: the reference's FP4 (indexer) / FP8 (attention) rounding of new rows
+        if key == _K_IDX:
+            new_pooled = _fp4_indexer_sim(new_pooled)
+        else:
+            new_pooled = _fp8_kv_sim(new_pooled, self.rope_head_dim)
         return cache.update_pool(new_pooled, key)
 
     def _overlap_transform_kv_runtime(
@@ -1741,6 +1749,62 @@ class Compressor(nn.Module):
         if prev_score is not None:
             out[:, 0, :R, :] = prev_score[:, :, :d]
         return out
+
+
+# --------------------------------------------------------------------------- #
+# exo fix: reference QAT simulation (FP8 KV, FP4 indexer)                     #
+# --------------------------------------------------------------------------- #
+# The reference rounds the non-RoPE KV dims to FP8 (e4m3, one power-of-two
+# scale per 64 values) and the indexer q / compressed k to FP4 (e2m1, one
+# power-of-two scale per 32 values, after a Hadamard rotation). The model was
+# trained with these roundings, so reproduce them (values stay bf16).
+
+
+def _pow2_ceil(x: mx.array) -> mx.array:
+    """Exact 2**ceil(log2(x)) for positive float32 x (exponent bits)."""
+    bits = x.astype(mx.float32).view(mx.int32)
+    exponent = mx.bitwise_and(mx.right_shift(bits, 23), 0xFF)
+    mantissa = mx.bitwise_and(bits, (1 << 23) - 1)
+    e = exponent - 127 + (mantissa != 0).astype(mx.int32)
+    return mx.left_shift(e + 127, 23).view(mx.float32)
+
+
+def _round_e2m1(v: mx.array) -> mx.array:
+    """Round to the nearest FP4 (e2m1) value, ties to even; |v| <= 6."""
+    a = mx.abs(v)
+    q = mx.where(a <= 0.25, 0.0, mx.where(a < 0.75, 0.5, mx.where(
+        a <= 1.25, 1.0, mx.where(a < 1.75, 1.5, mx.where(
+            a <= 2.5, 2.0, mx.where(a < 3.5, 3.0, mx.where(a <= 5.0, 4.0, 6.0)))))))
+    return mx.where(v < 0, -q, q)
+
+
+def _block_round(x: mx.array, block: int, fp4: bool) -> mx.array:
+    qmax, amin = (6.0, 6.0 * 2.0**-126) if fp4 else (448.0, 1e-4)
+    shape, dtype = x.shape, x.dtype
+    xf = x.astype(mx.float32).reshape(*shape[:-1], shape[-1] // block, block)
+    amax = mx.maximum(mx.max(mx.abs(xf), axis=-1, keepdims=True), amin)
+    s = _pow2_ceil(amax * (1.0 / qmax))
+    y = mx.clip(xf / s, -qmax, qmax)
+    y = _round_e2m1(y) if fp4 else mx.from_fp8(mx.to_fp8(y), dtype=mx.float32)
+    return (y * s).reshape(shape).astype(dtype)
+
+
+def _fp8_kv_sim(kv: mx.array, rd: int) -> mx.array:
+    return mx.concatenate([_block_round(kv[..., :-rd], 64, False), kv[..., -rd:]], axis=-1)
+
+
+_HADAMARD: Dict[int, mx.array] = {}
+
+
+def _fp4_indexer_sim(x: mx.array) -> mx.array:
+    n = x.shape[-1]
+    if n not in _HADAMARD:
+        h = mx.array([[1.0]])
+        while h.shape[0] < n:
+            h = mx.concatenate([mx.concatenate([h, h], 1), mx.concatenate([h, -h], 1)], 0)
+        _HADAMARD[n] = h * (n**-0.5)
+    rotated = (x.astype(mx.float32) @ _HADAMARD[n].T).astype(x.dtype)
+    return _block_round(rotated, 32, True)
 
 
 # --------------------------------------------------------------------------- #
@@ -1812,7 +1876,8 @@ class Indexer(nn.Module):
         q = mx.concatenate(
             [q[..., :-rd], self.rope(q[..., -rd:], offset=offset)], axis=-1
         )
-        q = q.transpose(0, 2, 1, 3)
+        # exo fix: Hadamard rotation and FP4 rounding of the query, like the reference
+        q = _fp4_indexer_sim(q.transpose(0, 2, 1, 3))
         per_head_weights = self.weights_proj(x) * (
             self.softmax_scale * (self.n_heads ** -0.5)
         )
@@ -2166,6 +2231,8 @@ class V4Attention(nn.Module):
 
         # Fused: partial-RoPE on q + kv in one compiled call.
         q, kv = _attn_qkv_partial_rope(q, kv, offset, rd, self.rope.freqs)
+        # exo fix: FP8 rounding of the non-RoPE KV dims, like the reference
+        kv = _fp8_kv_sim(kv, rd)
 
         if self.compress_ratio:
             if v4_cache is None:
