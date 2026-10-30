@@ -212,7 +212,6 @@ def fix_pipeline_shard(
         if not full_attn_layers or not linear_layers:
             patch_hybrid_cache(
                 cast(Qwen3_5TextModel | Qwen3NextModel, model),
-                fa_idx=inner_model_instance.fa_idx,
                 has_full_attn=bool(full_attn_layers),
                 ssm_idx=inner_model_instance.ssm_idx,
                 has_linear=bool(linear_layers),

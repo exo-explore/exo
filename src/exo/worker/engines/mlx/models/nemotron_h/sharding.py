@@ -258,7 +258,6 @@ def fix_pipeline_shard(
         if not has_attn or not has_mamba:
             patch_hybrid_cache(
                 cast(NemotronHModel, model),
-                fa_idx=inner_model_instance.fa_idx,
                 has_full_attn=has_attn,
                 ssm_idx=inner_model_instance.ssm_idx,
                 has_linear=has_mamba,
