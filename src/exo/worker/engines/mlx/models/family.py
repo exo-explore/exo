@@ -58,6 +58,10 @@ class Architecture:
     # parallelism, for models that loop over it rather than over their layers.
     pipeline_layer_count: Literal["num_layers", "num_hidden_layers"] | None = None
     output_parser: OutputParser | None = None
+    # Called once the model is loaded (and sharded, on more than one node), with the
+    # checkpoint folder: for models that need more than their weights to run, e.g. a table
+    # built from the tokenizer, or weights read from the checkpoint files at run time.
+    post_load: Callable[[nn.Module, Path], None] | None = None
 
 
 @final
