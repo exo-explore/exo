@@ -60,6 +60,9 @@ class Architecture:
     # Replaces the generic pipeline split (PipelineFirstLayer / PipelineLastLayer around the
     # node's layers) for models that pass more than one tensor between stages.
     pipeline_parallel: PipelineParallel | None = None
+    # False for models whose cache can't be merged into, split from or filtered out of a
+    # batch (mlx-lm's BatchGenerator needs that): their requests run one at a time.
+    batched_generation: bool = True
     # The inner model's layer counter to set to the shard's layer count in pipeline
     # parallelism, for models that loop over it rather than over their layers.
     pipeline_layer_count: Literal["num_layers", "num_hidden_layers"] | None = None

@@ -4,6 +4,7 @@ from collections.abc import Generator
 from dataclasses import dataclass
 
 import mlx.core as mx
+import mlx.nn as nn
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.common import ModelId
@@ -13,6 +14,7 @@ from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import ModelLoadingResponse
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.base import Builder, Engine
+from exo.worker.engines.mlx.models.registry import architecture_for_model
 from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.batch_generator import (
     BatchGenerator,
@@ -28,6 +30,16 @@ from .utils_mlx import (
     use_generation_stream_by_default,
 )
 from .vision import VisionProcessor
+
+
+def generates_in_batches(model: nn.Module) -> bool:
+    """Whether requests share batched decode steps (BatchGenerator) or run one at a time
+    (SequentialGenerator): batching is off with EXO_NO_BATCH, or for a model family whose
+    cache can't be batched."""
+    if os.environ.get("EXO_NO_BATCH"):
+        return False
+    architecture = architecture_for_model(model)
+    return architecture is None or architecture.batched_generation
 
 
 @dataclass
@@ -87,7 +99,7 @@ class MlxBuilder(Builder):
         kv_prefix_cache = KVPrefixCache(self.group)
 
         device_rank = 0 if self.group is None else self.group.rank()
-        if os.environ.get("EXO_NO_BATCH"):
+        if not generates_in_batches(self.inference_model):
             logger.info("using SequentialGenerator (batching disabled)")
             return SequentialGenerator(
                 model=self.inference_model,
