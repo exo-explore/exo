@@ -57,7 +57,7 @@ from exo.worker.engines.mlx.sharding.pipeline import (
     set_pipeline_prefill,
     set_pipeline_queue_sends,
 )
-from exo.worker.engines.mlx.types import KVCacheType, Model
+from exo.worker.engines.mlx.types import KVCacheType, Model, SnapshotCache
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     fix_unmatched_think_end_tokens,
@@ -385,7 +385,7 @@ def prefill(
             if restored is not None:
                 cache[i] = restored  # type: ignore
         else:
-            assert not non_trimmable
+            assert not non_trimmable and not isinstance(c, SnapshotCache)
             c.trim(2)
 
     elapsed = time.perf_counter() - start_time
