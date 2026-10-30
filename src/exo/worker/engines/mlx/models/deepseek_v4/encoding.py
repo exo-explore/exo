@@ -2,7 +2,45 @@
 """
 DeepSeek-V4 Encoding
 
-From upstream
+Vendored from DeepSeek's reference encoder for DeepSeek V4 (the model ships no Jinja
+chat template).
+
+Source:   https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash/blob/a7aaed80dd2df27620eb534454253ea25eb11c7a/encoding/encoding_dsv4.py
+Revision: a7aaed80dd2df27620eb534454253ea25eb11c7a ("Release DeepSeek-V4", 2026-04-24);
+          the file (git blob cdb68f233a71b142732372b901fa140d7d2148a3) is unchanged
+          up to revision 60d8d70770c6776ff598c94bb586a859a38244f1 (2026-06-22).
+          deepseek-ai/DeepSeek-V4-Pro carries the same encoder.
+Vendored: 2026-04-27 (exo PR #1978).
+Licence:  MIT, Copyright (c) 2023 DeepSeek (notice below).
+
+Local changes, none of which change behaviour:
+- formatted with ruff (line wrapping, quotes, import order);
+- this docstring replaces the original module docstring;
+- `# type: ignore` for the whole file and two `# noqa` comments (E722, N806);
+- an unused exception variable dropped (`except Exception as err:` -> `except Exception:`);
+- in `render_message`, an `if`/`elif` pair with the same body merged into one condition.
+
+MIT License
+
+Copyright (c) 2023 DeepSeek
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 """
 
 import copy

@@ -21,8 +21,8 @@ from exo.worker.engines.mlx.models.deepseek_v3.dsml_encoding import (
     parse_dsml_output,
 )
 from exo.worker.engines.mlx.models.deepseek_v3.parser import parse_deepseek_v32
+from exo.worker.engines.mlx.models.deepseek_v4.parser import parse_deepseek_v4
 from exo.worker.runner.llm_inference.model_output_parsers import (
-    parse_deepseek_v4,
     parse_thinking_models,
 )
 

@@ -23,11 +23,8 @@ from exo.shared.types.chunks import (
 )
 from exo.shared.types.common import ModelId
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
-from exo.worker.engines.mlx.models.deepseek_v3.dsml_encoding import parse_dsml_output
-from exo.worker.engines.mlx.models.deepseek_v3.parser import (
-    parse_deepseek_v32,
-    parse_dsml_stream,
-)
+from exo.worker.engines.mlx.models.deepseek_v3.parser import parse_deepseek_v32
+from exo.worker.engines.mlx.models.deepseek_v4.parser import parse_deepseek_v4
 from exo.worker.engines.mlx.types import Model
 from exo.worker.engines.mlx.utils_mlx import (
     detect_thinking_prompt_suffix,
@@ -221,15 +218,6 @@ def parse_gpt_oss(
 
         if response.finish_reason is not None:
             yield response
-
-
-def parse_deepseek_v4(
-    responses: Generator[GenerationResponse | None],
-) -> Generator[GenerationResponse | ToolCallResponse | None]:
-    dsml_token = "｜DSML｜"
-    start = f"<{dsml_token}tool_calls>"
-    end = f"</{dsml_token}tool_calls>"
-    return parse_dsml_stream(responses, start, end, parse_dsml_output)
 
 
 def parse_thinking_models(
