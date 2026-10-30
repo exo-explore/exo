@@ -73,6 +73,12 @@ def test_add_rms_norm_float32_is_add_then_norm_bit_for_bit(
     h, normed = kernels.add_rms_norm_float32(x, y, weight, 1e-5)
     assert _identical(h, x + y)
     assert _identical(normed, _reference_norm(x + y, weight, 1e-5))
+    h, normed, normed_float32 = kernels.add_rms_norm_float32_with_copy(
+        x, y, weight, 1e-5
+    )
+    assert _identical(h, x + y)
+    assert _identical(normed, _reference_norm(x + y, weight, 1e-5))
+    assert _identical(normed_float32, normed.astype(mx.float32))
 
 
 @needs_metal

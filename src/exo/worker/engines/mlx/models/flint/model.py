@@ -361,16 +361,22 @@ class FlintSparseMoeBlock(SparseMoeBlock):
             out = mx.unflatten(out[inverse], 0, indices.shape)
         return out.squeeze(-2)
 
-    def __call__(self, x: mx.array, residual: mx.array | None = None) -> mx.array:
+    def __call__(
+        self,
+        x: mx.array,
+        residual: mx.array | None = None,
+        x_float32: mx.array | None = None,
+    ) -> mx.array:
         """The block's output, plus ``residual`` when given (the decoder layer passes its
-        residual stream when the block is not sharded)."""
+        residual stream when the block is not sharded). ``x_float32`` is
+        ``x.astype(float32)`` when the caller has it."""
         if not kernels.fused_kernels_available():
             out = super().__call__(x)
             return out if residual is None else residual + out
         group = self.sharding_group
         if group is not None:
             x = sum_gradients(group)(x)
-        logits = self.gate(x.astype(mx.float32))
+        logits = self.gate(x.astype(mx.float32) if x_float32 is None else x_float32)
         indices, weights = expert_routing(
             logits,
             self._zero_bias,
@@ -408,11 +414,14 @@ class FlintDecoderLayer(DecoderLayer):
     ) -> mx.array:
         attention = self.self_attn(self.input_layernorm(x), mask, cache)
         norm = self.post_attention_layernorm
-        h, normed = kernels.add_rms_norm_float32(x, attention, norm.weight, norm.eps)
         mlp = self.mlp
         # Tensor parallelism wraps the block to all-reduce its output: then add here.
         if isinstance(mlp, FlintSparseMoeBlock) and mlp.sharding_group is None:
-            return mlp(normed, residual=h)
+            h, normed, normed_float32 = kernels.add_rms_norm_float32_with_copy(
+                x, attention, norm.weight, norm.eps
+            )
+            return mlp(normed, residual=h, x_float32=normed_float32)
+        h, normed = kernels.add_rms_norm_float32(x, attention, norm.weight, norm.eps)
         return h + mlp(normed)
 
 
