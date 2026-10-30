@@ -15,6 +15,7 @@ from exo.worker.engines.mlx.models.flint.model import (
     FlintAttention,
     FlintSparseMoeBlock,
     Model,
+    StackedQuantizedLinear,
 )
 
 needs_metal = pytest.mark.skipif(
@@ -199,9 +200,8 @@ def _reference_model() -> MlxLmModel:
 
 
 def _quantizable(path: str, module: nn.Module) -> bool:
-    return isinstance(module, (nn.Linear, nn.Embedding)) and not path.endswith(
-        "mlp.gate"
-    )
+    """As the checkpoints are: everything but the router."""
+    return hasattr(module, "to_quantized") and not path.endswith("mlp.gate")
 
 
 def _quantized_pair() -> tuple[Model, MlxLmModel]:
@@ -290,3 +290,33 @@ def test_attention_with_other_head_dims_runs_the_original_attention() -> None:
     original.set_dtype(mx.bfloat16)  # pyright: ignore[reportUnknownMemberType]
     original.load_weights(tree_flatten(attention.parameters()))  # pyright: ignore[reportArgumentType]
     assert _identical(attention(x), original(x))
+
+
+@needs_metal
+def test_projections_are_stacked_at_the_first_call() -> None:
+    """q/k/v and every gate/up pair become one stacked projection; nothing else changes."""
+    fused, _ = _quantized_pair()
+    prompt = mx.random.randint(0, _ARGS.vocab_size, (1, 3), key=mx.random.key(6))
+    mx.eval(fused(prompt, cache=fused.make_cache()))
+    names = {name for name, _ in tree_flatten(fused.parameters())}
+    for i in range(_ARGS.num_hidden_layers):
+        attention = f"model.layers.{i}.self_attn"
+        assert f"{attention}.qkv_proj.weight" in names
+        assert f"{attention}.q_proj.weight" not in names
+        assert f"{attention}.o_proj.weight" in names
+    assert "model.layers.0.mlp.gate_up_proj.weight" in names  # dense layer
+    assert "model.layers.1.mlp.shared_expert.gate_up_proj.weight" in names
+    assert "model.layers.1.mlp.switch_mlp.gate_up_proj.weight" in names
+    assert "model.layers.1.mlp.switch_mlp.down_proj.weight" in names
+
+
+@needs_metal
+def test_stacked_projection_runs_each_part_alone_beyond_a_few_rows() -> None:
+    parts = [nn.QuantizedLinear(256, rows, bias=False) for rows in (512, 256, 256)]
+    stacked = StackedQuantizedLinear(list[nn.Module](parts))
+    for tokens in (1, 4, 5, 64):
+        x = _bf16((1, tokens, 256), 15)
+        outputs = stacked.split(x)
+        assert (stacked.stacked(x) is None) == (tokens > 4)
+        for part, out in zip(parts, outputs, strict=True):
+            assert _identical(out, part(x))
