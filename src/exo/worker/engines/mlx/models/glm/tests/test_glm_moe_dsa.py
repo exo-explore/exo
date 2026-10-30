@@ -2,11 +2,13 @@
 
 from typing import Any, cast
 
+import mlx.core as mx
 import mlx.nn as nn
 
 from exo.worker.engines.mlx.models import registry
 from exo.worker.engines.mlx.models.glm.glm_moe_dsa import (
     INDEXER_KEY_NORM_EPS,
+    Float32RouterGate,
     Model,
     ModelArgs,
 )
@@ -72,3 +74,24 @@ def test_indexers_use_the_reference_key_norm_epsilon() -> None:
         if indexer is not None:
             key_norm = cast(nn.LayerNorm, indexer.k_norm)
             assert cast(float, key_norm.eps) == INDEXER_KEY_NORM_EPS
+
+
+def test_moe_layers_route_in_float32() -> None:
+    model = Model(cast(ModelArgs, ModelArgs.from_dict(CONFIG)))  # pyright: ignore[reportUnknownMemberType]
+    layers = cast(list[nn.Module], model.model.layers)  # pyright: ignore[reportUnknownMemberType]
+    gates = [getattr(cast(nn.Module, layer.mlp), "gate", None) for layer in layers]
+    # first_k_dense_replace = 3: three dense MLPs, then MoE layers.
+    assert [isinstance(gate, Float32RouterGate) for gate in gates] == [
+        False,
+        False,
+        False,
+        True,
+        True,
+    ]
+    gate = cast(Float32RouterGate, gates[3])
+    x = mx.random.normal((1, 3, CONFIG["hidden_size"])).astype(mx.bfloat16)
+    indices, scores = gate(x)
+    expected_logits = x.astype(mx.float32) @ gate.weight.T.astype(mx.float32)
+    assert indices.shape == (1, 3, CONFIG["num_experts_per_tok"])
+    assert scores.dtype == mx.float32
+    assert expected_logits.dtype == mx.float32
