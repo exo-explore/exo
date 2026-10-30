@@ -88,6 +88,10 @@ class TemplateMessagesHook:
 
     applies_to: Callable[[TextGenerationTaskParams], bool]
     prepare: Callable[[list[dict[str, Any]]], None]
+    # Written between the generation prompt and an assistant prefill (a request whose last
+    # message is a partial assistant turn), for templates that open an assistant message's
+    # content with a marker of their own.
+    prefill_prefix: str = ""
 
 
 @final

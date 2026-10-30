@@ -532,7 +532,8 @@ def render_chat_template(
     for msg in formatted_messages:
         _normalize_tool_calls(msg)
 
-    for hook in template_messages_hooks_for(task_params):
+    template_hooks = template_messages_hooks_for(task_params)
+    for hook in template_hooks:
         hook.prepare(formatted_messages)
 
     extra_kwargs: dict[str, Any] = {}
@@ -585,6 +586,7 @@ def render_chat_template(
             prompt += suffix
 
     if partial_assistant_content:
+        prompt += "".join(hook.prefill_prefix for hook in template_hooks)
         prompt += partial_assistant_content
 
     return prompt
