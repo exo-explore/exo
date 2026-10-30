@@ -5,6 +5,7 @@ num_key_value_heads = 8
 supports_tensor = true
 tasks = ["TextGeneration"]
 family = "glm"
+model_type = "glm4_moe"
 quantization = "8bit"
 base_model = "GLM 4.7"
 capabilities = ["text", "thinking", "thinking_toggle"]
