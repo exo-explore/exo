@@ -89,6 +89,7 @@ in_bytes = 729808896
 
 ### Optional Fields
 
+- `model_type`: The `model_type` from the checkpoint's `config.json` (e.g. `"llama"`, `"deepseek_v4"`). The master uses it to find the model's family and its placement rules
 - `components`: For multi-component models (like image models with separate text encoders and transformers)
 - `uses_cfg`: Whether the model uses classifier-free guidance (for image models)
 - `trust_remote_code`: Whether to allow remote code execution (defaults to `false` for security)

@@ -169,6 +169,9 @@ class ModelCard(FrozenModel):
     tasks: list[ModelTask]
     components: list[ComponentInfo] | None = None
     family: str = ""
+    # config.json `model_type` of the checkpoint. The master looks up the model's family
+    # (placement rules) by it; see exo.worker.engines.mlx.models.
+    model_type: str | None = None
     quantization: str = ""
     base_model: str = ""
     capabilities: list[str] = []
