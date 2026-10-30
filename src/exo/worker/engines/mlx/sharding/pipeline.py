@@ -148,6 +148,20 @@ def get_layers(inner_model_instance: nn.Module) -> list[LayerCallable]:
     return layers
 
 
+class PipelineShardFixup(Protocol):
+    """A model family's adjustments after its layers were cut to [start_layer, end_layer):
+    e.g. recomputing which cache entry its attention mask is built from."""
+
+    def __call__(
+        self,
+        model: nn.Module,
+        inner_model_instance: nn.Module,
+        layers: list[LayerCallable],
+        start_layer: int,
+        end_layer: int,
+    ) -> None: ...
+
+
 class HybridCacheModel(Protocol):
     """A model whose cache mixes attention (KV) and linear-attention/SSM entries."""
 
