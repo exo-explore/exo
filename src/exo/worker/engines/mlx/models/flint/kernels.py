@@ -232,9 +232,14 @@ def _kernels() -> "dict[str, mx.fast.MetalKernel]":
     }
 
 
+@cache
+def _metal_available() -> bool:
+    return mx.metal.is_available()
+
+
 def fused_kernels_available() -> bool:
     """The kernels need Metal, and the default device to be the GPU."""
-    return mx.metal.is_available() and mx.default_device().type == mx.gpu
+    return _metal_available() and mx.default_device().type == mx.gpu
 
 
 @cache
