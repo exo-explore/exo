@@ -100,6 +100,10 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
             processed_logits.append(sample_logits)
         logits = mx.concatenate(processed_logits, axis=0)
 
+    # Normalise in float32. In bfloat16 the log-probs of the likeliest tokens are
+    # rounded to steps of up to 0.125 and close candidates tie, which changes what
+    # greedy and top-k sampling pick and what the API reports as log-probs.
+    logits = logits.astype(mx.float32)
     logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
 
     if any(self.samplers):
