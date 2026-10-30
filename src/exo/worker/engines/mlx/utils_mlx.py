@@ -28,10 +28,12 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.models.model_cards import ModelId
 from exo.worker.engines.mlx.constants import TRUST_REMOTE_CODE
-from exo.worker.engines.mlx.models.deepseek_v3 import prompt as deepseek_v32_prompt
-from exo.worker.engines.mlx.models.deepseek_v4 import prompt as deepseek_v4_prompt
-from exo.worker.engines.mlx.models.gpt_oss import prompt as gpt_oss_prompt
-from exo.worker.engines.mlx.models.kimi import tokenizer as kimi_tokenizer
+from exo.worker.engines.mlx.models.registry import (
+    get_model_classes,
+    prompt_encoder_for,
+    template_messages_hooks_for,
+    tokenizer_loader_for,
+)
 from exo.worker.engines.mlx.models.spec_registry import eos_token_ids_for_model_id
 
 try:
@@ -176,7 +178,9 @@ def load_mlx_items(
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
         start_time = time.perf_counter()
-        model, _ = load_model(model_path, lazy=True, strict=False)
+        model, _ = load_model(
+            model_path, lazy=True, strict=False, get_model_classes=get_model_classes
+        )
         # Eval layers one by one for progress reporting
         try:
             inner = get_inner_model(model)
@@ -239,7 +243,9 @@ def shard_and_load(
 ) -> Generator[ModelLoadingResponse, None, tuple[nn.Module, TokenizerWrapper]]:
     model_path = build_model_path(shard_metadata.model_card.model_id)
 
-    model, _ = load_model(model_path, lazy=True, strict=False)
+    model, _ = load_model(
+        model_path, lazy=True, strict=False, get_model_classes=get_model_classes
+    )
     logger.debug(model)
     if hasattr(model, "model") and isinstance(model.model, DeepseekV3Model):  # type: ignore
         pass
@@ -333,9 +339,10 @@ def load_tokenizer_for_model_id(
     """
     eos_token_ids = get_eos_token_ids_for_model(model_id)
 
-    # Kimi uses a custom TikTokenTokenizer that transformers 5.x can't load via AutoTokenizer
-    if kimi_tokenizer.applies_to(model_id):
-        return kimi_tokenizer.load_tokenizer(model_path, eos_token_ids)
+    # e.g. Kimi uses a custom TikTokenTokenizer that transformers 5.x can't load via AutoTokenizer
+    tokenizer_loader = tokenizer_loader_for(model_id)
+    if tokenizer_loader is not None:
+        return tokenizer_loader.load(model_path, eos_token_ids)
 
     # We should really consider going back to mlx lm load to get tokenizer
     tokenizer = load_tokenizer(
@@ -467,14 +474,9 @@ def render_chat_template(
         partial_assistant_content = cast(str, formatted_messages[-1].get("content", ""))
         formatted_messages = formatted_messages[:-1]
 
-    if deepseek_v32_prompt.applies_to(task_params):
-        prompt = deepseek_v32_prompt.encode_prompt(formatted_messages, task_params)
-        if partial_assistant_content:
-            prompt += partial_assistant_content
-        return prompt
-
-    if deepseek_v4_prompt.applies_to(task_params):
-        prompt = deepseek_v4_prompt.encode_prompt(formatted_messages, task_params)
+    prompt_encoder = prompt_encoder_for(task_params)
+    if prompt_encoder is not None:
+        prompt = prompt_encoder.encode(formatted_messages, task_params)
         if partial_assistant_content:
             prompt += partial_assistant_content
         return prompt
@@ -482,8 +484,8 @@ def render_chat_template(
     for msg in formatted_messages:
         _normalize_tool_calls(msg)
 
-    if gpt_oss_prompt.applies_to(task_params):
-        gpt_oss_prompt.prepare_template_messages(formatted_messages)
+    for hook in template_messages_hooks_for(task_params):
+        hook.prepare(formatted_messages)
 
     extra_kwargs: dict[str, Any] = {}
     if task_params.enable_thinking is not None:

@@ -1,9 +1,6 @@
 from collections.abc import Generator, Iterator
 from typing import Any
 
-from mlx_lm.models.deepseek_v4 import Model as DeepseekV4Model
-from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
-from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.api.types import ToolCallItem
@@ -15,9 +12,7 @@ from exo.shared.types.chunks import (
 )
 from exo.shared.types.common import ModelId
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
-from exo.worker.engines.mlx.models.deepseek_v3.parser import parse_deepseek_v32
-from exo.worker.engines.mlx.models.deepseek_v4.parser import parse_deepseek_v4
-from exo.worker.engines.mlx.models.gpt_oss.parser import parse_gpt_oss
+from exo.worker.engines.mlx.models.registry import architecture_for_model_class
 from exo.worker.engines.mlx.types import Model
 from exo.worker.engines.mlx.utils_mlx import (
     detect_thinking_prompt_suffix,
@@ -64,26 +59,17 @@ def apply_all_parsers(
     generator = receiver
 
     normalized_id = model_id.normalize().lower()
-    if issubclass(model_type, GptOssModel):
-        generator = parse_gpt_oss(generator)
-    elif issubclass(model_type, DeepseekV32Model) and "deepseek" in normalized_id:
-        if tokenizer.has_thinking:
+    architecture = architecture_for_model_class(model_type)
+    output_parser = None if architecture is None else architecture.output_parser
+    if output_parser is not None and output_parser.applies_to_model_id(normalized_id):
+        if output_parser.after_thinking_parser and tokenizer.has_thinking:
             generator = parse_thinking_models(
                 generator,
                 tokenizer.think_start,
                 tokenizer.think_end,
                 starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
             )
-        generator = parse_deepseek_v32(generator)
-    elif issubclass(model_type, DeepseekV4Model) and "deepseek-v4" in normalized_id:
-        if tokenizer.has_thinking:
-            generator = parse_thinking_models(
-                generator,
-                tokenizer.think_start,
-                tokenizer.think_end,
-                starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
-            )
-        generator = parse_deepseek_v4(generator)
+        generator = output_parser.parse(generator)
     else:
         if tokenizer.has_thinking:
             generator = parse_thinking_models(
