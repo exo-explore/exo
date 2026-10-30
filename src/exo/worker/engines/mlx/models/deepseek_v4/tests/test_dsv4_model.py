@@ -5,13 +5,21 @@ path equals the unsplit one, and the reference's rounding helpers. Real-weight c
 with DeepSeek's reference implementation are in the PR's report."""
 
 from collections.abc import Iterator
+from typing import cast
 
 import mlx.core as mx
 import numpy as np
 import pytest
 
+from exo.worker.engines.mlx.cache import (
+    CacheSnapshot,
+    KVPrefixCache,
+    cache_length,
+    snapshot_ssm_states,
+)
 from exo.worker.engines.mlx.models.deepseek_v4 import model as dsv4
 from exo.worker.engines.mlx.models.deepseek_v4.model import Model, ModelArgs
+from exo.worker.engines.mlx.types import Model as ExoModel
 
 PROMPT_TOKENS = 160
 
@@ -128,3 +136,40 @@ def test_fp8_kv_rounding_keeps_the_rope_dims() -> None:
     rel = mx.abs(rounded[..., :-64] - kv[..., :-64]) / mx.abs(kv[..., :-64])
     # e4m3 keeps 3 mantissa bits: at most 2**-4 relative error away from tiny values
     assert float(mx.max(mx.where(mx.abs(kv[..., :-64]) > 0.1, rel, 0.0))) <= 2**-4
+
+
+def test_prefix_cache_partial_hit_keeps_only_the_shared_prefix(
+    tiny_model: Model,
+) -> None:
+    """A new prompt sharing the first 48 tokens of a cached one restores the cache at 48
+    tokens (V4's cache can't trim, so from a snapshot), and continuing from there gives
+    what prefilling the new prompt from scratch gives. The cache used to keep all of the
+    cached prompt, so the new prompt's tokens followed the old prompt's."""
+    rng = np.random.default_rng(1)
+    first = rng.integers(0, 256, size=96).astype(np.int32)
+    second = first.copy()
+    second[48:] = rng.integers(0, 256, size=48)
+
+    # exo's prefill: a snapshot of every non-trimmable cache after each chunk
+    cache = tiny_model.make_cache()
+    snapshots: list[CacheSnapshot] = []
+    for start in range(0, 96, 16):
+        mx.eval(tiny_model(mx.array(first[None, start : start + 16]), cache=cache))
+        snapshots.append(snapshot_ssm_states(cache))
+    prefix_cache = KVPrefixCache(None)
+    prefix_cache.add_kv_cache(mx.array(first), cache, snapshots)
+
+    restored, remaining, index, exact = prefix_cache.get_kv_cache(
+        cast(ExoModel, cast(object, tiny_model)), mx.array(second)
+    )
+    assert index == 0 and not exact
+    assert remaining.shape[0] == 48
+    assert cache_length(restored) == 48
+
+    continued = tiny_model(remaining[None], cache=list(restored))[0, -1]
+    fresh = tiny_model(mx.array(second[None]), cache=tiny_model.make_cache())[0, -1]
+    np.testing.assert_allclose(
+        np.array(continued.astype(mx.float32)),
+        np.array(fresh.astype(mx.float32)),
+        atol=1e-4,
+    )
