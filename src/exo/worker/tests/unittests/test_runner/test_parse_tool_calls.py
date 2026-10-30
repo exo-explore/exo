@@ -21,7 +21,7 @@ def _make_responses(texts: list[str]) -> Generator[GenerationResponse]:
         )
 
 
-def _dummier_parser(text: str) -> dict[str, Any]:
+def _dummier_parser(text: str, _tools: object = None) -> dict[str, Any]:
     return {"name": "test_fn", "arguments": {"arg": text}}
 
 
@@ -69,7 +69,7 @@ class TestParseToolCalls:
     def test_failed_parse_yields_text(self):
         """When tool call parsing fails, the text should be yielded as-is."""
 
-        def _failing_parser(text: str) -> dict[str, Any]:
+        def _failing_parser(text: str, _tools: object = None) -> dict[str, Any]:
             raise ValueError("parse failed")
 
         texts = ["<tool_call>", "bad content", "</tool_call>"]
@@ -105,10 +105,53 @@ class TestParseToolCalls:
         assert results[0].text == "<tool_call>\n</function=\n</tool_call>"
         assert results[0].finish_reason == "stop"
 
+    def test_string_arguments_that_look_like_json_stay_strings(self):
+        """mlx-lm's glm47 parser (GLM-4.5 and later, Flint) decodes an argument value as
+        JSON unless the tool's schema says it is a string, so it needs the request's
+        tools. Without them a file's content came back as an object or a number."""
+        from mlx_lm.tool_parsers import glm47
+
+        parser = make_mlx_parser(
+            glm47.tool_call_start, glm47.tool_call_end, glm47.parse_tool_call
+        )
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                            "content": {"type": "string"},
+                            "mode": {"type": "integer"},
+                        },
+                    },
+                },
+            }
+        ]
+        texts = [
+            "<tool_call>",
+            "write_file<arg_key>path</arg_key><arg_value>package.json</arg_value>",
+            '<arg_key>content</arg_key><arg_value>{"name": "demo"}</arg_value>',
+            "<arg_key>mode</arg_key><arg_value>420</arg_value>",
+            "</tool_call>",
+        ]
+        results = list(parse_tool_calls(_make_responses(texts), parser, tools))
+
+        assert len(results) == 1
+        assert isinstance(results[0], ToolCallResponse)
+        assert results[0].tool_calls[0].name == "write_file"
+        assert json.loads(results[0].tool_calls[0].arguments) == {
+            "path": "package.json",
+            "content": '{"name": "demo"}',
+            "mode": 420,
+        }
+
     def test_text_after_a_failed_parse_keeps_coming(self):
         """A malformed tool call mid-answer doesn't cut off the rest of the answer."""
 
-        def _failing_parser(text: str) -> dict[str, Any]:
+        def _failing_parser(text: str, _tools: object = None) -> dict[str, Any]:
             raise ValueError("parse failed")
 
         texts = ["<tool_call>", "</function=", "</tool_call>", " and", " more"]
@@ -148,7 +191,9 @@ class TestParseToolCalls:
     def test_tool_schema_coerces_string_arguments_to_expected_types(self):
         """Tool argument values should be coerced using provided JSON schema."""
 
-        def _parser_with_string_args(_text: str) -> dict[str, Any]:
+        def _parser_with_string_args(
+            _text: str, _tools: object = None
+        ) -> dict[str, Any]:
             return {
                 "name": "process",
                 "arguments": {
@@ -203,7 +248,7 @@ class TestParseToolCalls:
     def test_schema_coercion_skips_unknown_tools(self):
         """If no matching tool schema exists, arguments should remain unchanged."""
 
-        def _parser_with_string_id(_text: str) -> dict[str, Any]:
+        def _parser_with_string_id(_text: str, _tools: object = None) -> dict[str, Any]:
             return {
                 "name": "process",
                 "arguments": {"action": "output", "id": "0"},

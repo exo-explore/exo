@@ -19,6 +19,8 @@ import mlx_lm.models
 import pytest
 from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
 from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
+from mlx_lm.models.flint import FlintModel as FlintInnerModel
+from mlx_lm.models.flint import Model as FlintModel
 from mlx_lm.models.gemma4 import Model as Gemma4Model
 from mlx_lm.models.glm4_moe import Model as Glm4MoeModel
 from mlx_lm.models.glm4_moe_lite import Model as GLM4MoeLiteModel
@@ -56,6 +58,9 @@ from exo.worker.engines.mlx.models.deepseek_v4.model import (
 )
 from exo.worker.engines.mlx.models.deepseek_v4.parser import parse_deepseek_v4
 from exo.worker.engines.mlx.models.family import ModelClasses
+from exo.worker.engines.mlx.models.flint.sharding import (
+    fix_pipeline_shard as flint_fixup,
+)
 from exo.worker.engines.mlx.models.gpt_oss.parser import parse_gpt_oss
 from exo.worker.engines.mlx.models.gpt_oss.sharding import (
     fix_pipeline_shard as gpt_oss_fixup,
@@ -104,6 +109,9 @@ def _main_tensor_strategy(model_class: type) -> str | None:
         return "NemotronHShardingStrategy"
     elif issubclass(model_class, Gemma4Model):
         return "Gemma4ShardingStrategy"
+    # Changed on purpose: Flint is new, and main had no strategy for it.
+    elif issubclass(model_class, FlintModel):
+        return "FlintShardingStrategy"
     else:
         return None
 
@@ -161,6 +169,8 @@ _FIXUP_FOR_INNER_CLASS: list[tuple[type, PipelineShardFixup]] = [
     (Qwen3_5TextModelInner, qwen3_fixup),
     (Qwen3NextInnerModel, qwen3_fixup),
     (NemotronHInnerModel, nemotron_h_fixup),
+    # Changed on purpose: Flint is new.
+    (FlintInnerModel, flint_fixup),
 ]
 
 
@@ -180,6 +190,11 @@ def _mlx_lm_model_classes() -> dict[str, type]:
     for model_type in ("deepseek_v4",):
         assert model_type not in classes
         classes[model_type] = registry.get_model_classes({"model_type": model_type})[0]
+    # Model types whose family ships a subclass of mlx-lm's model, which exo loads instead
+    for model_type in ("flint",):
+        shipped = registry.get_model_classes({"model_type": model_type})[0]
+        assert issubclass(shipped, classes[model_type])
+        classes[model_type] = shipped
     return classes
 
 
@@ -190,6 +205,7 @@ _SUPPORTED_MODEL_TYPES = [
     "deepseek_v3",
     "deepseek_v32",
     "deepseek_v4",
+    "flint",
     "gemma4",
     "glm4_moe",
     "glm4_moe_lite",
