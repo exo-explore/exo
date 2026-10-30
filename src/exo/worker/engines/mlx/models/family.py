@@ -105,6 +105,20 @@ class TemplateMessagesHook:
 
 @final
 @dataclass(frozen=True)
+class ReasoningEffortHook:
+    """Maps exo's reasoning settings onto a chat template that understands only some
+    ``reasoning_effort`` values (and renders every other one as its maximum)."""
+
+    applies_to: Callable[[TextGenerationTaskParams], bool]
+    # The reasoning_effort to give the template; None gives none (its default).
+    template_effort: Callable[[TextGenerationTaskParams], str | None]
+    # Appended after the generation prompt when the request turns thinking off and the
+    # template has no switch for it (e.g. closing the reasoning block it opened).
+    thinking_off_suffix: Callable[[TextGenerationTaskParams], str | None]
+
+
+@final
+@dataclass(frozen=True)
 class TokenizerLoader:
     """Loads tokenizers that mlx-lm's loader can't."""
 
@@ -120,4 +134,5 @@ class ModelFamily:
     model_classes: tuple[ModelClasses, ...] = ()
     prompt_encoder: PromptEncoder | None = None
     template_messages_hook: TemplateMessagesHook | None = None
+    reasoning_effort_hook: ReasoningEffortHook | None = None
     tokenizer_loader: TokenizerLoader | None = None
