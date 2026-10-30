@@ -65,7 +65,9 @@ _RMS_SOURCE = """
       uint d = lid * N_READS + i;
       if (d < D) {
         float wi = static_cast<float>(w[d]);
-        out[row + d] = static_cast<T>(wi * (thread_x[i] * local_inv_mean[0]));
+        T normed = static_cast<T>(wi * (thread_x[i] * local_inv_mean[0]));
+        out[row + d] = normed;
+        STORE_FLOAT32
       }
     }
 """
@@ -188,13 +190,23 @@ def _kernels() -> "dict[str, mx.fast.MetalKernel]":
             name="flint_rms_norm_float32",
             input_names=["x", "w", "eps"],
             output_names=["out"],
-            source=_RMS_SOURCE.replace("LOAD", _LOAD_X),
+            source=_RMS_SOURCE.replace("LOAD", _LOAD_X).replace("STORE_FLOAT32", ""),
         ),
         "add_rms": mx.fast.metal_kernel(
             name="flint_add_rms_norm_float32",
             input_names=["x", "y", "w", "eps"],
             output_names=["h", "out"],
-            source=_RMS_SOURCE.replace("LOAD", _LOAD_X_PLUS_Y),
+            source=_RMS_SOURCE.replace("LOAD", _LOAD_X_PLUS_Y).replace(
+                "STORE_FLOAT32", ""
+            ),
+        ),
+        "add_rms_f32": mx.fast.metal_kernel(
+            name="flint_add_rms_norm_float32_with_copy",
+            input_names=["x", "y", "w", "eps"],
+            output_names=["h", "out", "out_float32"],
+            source=_RMS_SOURCE.replace("LOAD", _LOAD_X_PLUS_Y).replace(
+                "STORE_FLOAT32", "out_float32[row + d] = static_cast<float>(normed);"
+            ),
         ),
         "qk": mx.fast.metal_kernel(
             name="flint_qk_norm_rope",
@@ -291,6 +303,27 @@ def add_rms_norm_float32(
         output_dtypes=[x.dtype, x.dtype],
     )
     return h, normed
+
+
+def add_rms_norm_float32_with_copy(
+    x: mx.array, y: mx.array, weight: mx.array, eps: float
+) -> tuple[mx.array, mx.array, mx.array]:
+    """``add_rms_norm_float32`` and its normed output cast to float32 (the MoE router's
+    input, ``normed.astype(float32)``)."""
+    if not _norm_fusable(x) or x.shape != y.shape or x.dtype != y.dtype:
+        h, normed = add_rms_norm_float32(x, y, weight, eps)
+        return h, normed, normed.astype(mx.float32)
+    dim = x.shape[-1]
+    threads = _norm_threads(dim)
+    h, normed, normed_float32 = _kernels()["add_rms_f32"](
+        inputs=[x, y, weight, _float32_scalar(eps)],
+        template=[("T", x.dtype), ("D", dim)],
+        grid=(x.size // dim * threads, 1, 1),
+        threadgroup=(threads, 1, 1),
+        output_shapes=[x.shape, x.shape, x.shape],
+        output_dtypes=[x.dtype, x.dtype, mx.float32],
+    )
+    return h, normed, normed_float32
 
 
 def qk_norm_rope_fusable(q: mx.array, head_dim: int) -> bool:
