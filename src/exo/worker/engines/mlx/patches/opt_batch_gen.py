@@ -4,6 +4,7 @@ from typing import cast
 
 import mlx.core as mx
 from mlx_lm.generate import GenerationBatch, PromptProcessingBatch, generation_stream
+from mlx_lm.models.cache import BatchKVCache
 
 from exo.worker.engines.mlx.sampling import history_window, recent_tokens
 
@@ -212,7 +213,48 @@ def _prompt_after_decode_step(
     _original_prompt(self, tokens)
 
 
+_original_make_mask = cast(
+    Callable[..., mx.array | str | None],
+    BatchKVCache.make_mask,
+)
+
+
+def _no_left_padding(cache: BatchKVCache) -> bool:
+    """Whether no sequence of the batch is left-padded. Left padding only changes when
+    sequences join or leave the batch, so the answer is cached against the padding array and
+    reading it back synchronises once per change, not once per step."""
+    padding = cache.left_padding
+    checked = cast(
+        tuple[mx.array, bool] | None, getattr(cache, "_exo_padding_checked", None)
+    )
+    if checked is None or checked[0] is not padding:
+        checked = (padding, bool((padding <= 0).all().item()))
+        cache._exo_padding_checked = checked  # pyright: ignore[reportAttributeAccessIssue]
+    return checked[1]
+
+
+def _make_mask_without_padding(
+    self: BatchKVCache,
+    N: int,  # noqa: N803 (mlx-lm's name)
+    return_array: bool = False,
+    **kwargs: object,
+) -> mx.array | str | None:
+    """A one-token step's attention mask is (position >= key index) & (left padding <= key
+    index), which is all true when no sequence is left-padded, as at batch size 1. Attention
+    with an all-true boolean mask uses every key, exactly as with no mask, so leave it out: that
+    saves building it and reading it in every attention layer."""
+    if (
+        N == 1
+        and not return_array
+        and kwargs.get("window_size") is None
+        and _no_left_padding(self)
+    ):
+        return None
+    return _original_make_mask(self, N, return_array=return_array, **kwargs)
+
+
 def apply_batch_gen_patch() -> None:
     GenerationBatch._step = _patched_step
     GenerationBatch.extend = _extend_with_array_logprobs
     PromptProcessingBatch.prompt = _prompt_after_decode_step
+    BatchKVCache.make_mask = _make_mask_without_padding

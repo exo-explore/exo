@@ -6,10 +6,12 @@ from collections.abc import Callable
 
 import mlx.core as mx
 import pytest
+from mlx_lm.models.cache import BatchKVCache
 from mlx_lm.sample_utils import apply_top_k
 from mlx_lm.sample_utils import make_logits_processors as mlx_make_logits_processors
 from mlx_lm.sample_utils import make_sampler as mlx_make_sampler
 
+from exo.worker.engines.mlx.patches.opt_batch_gen import apply_batch_gen_patch
 from exo.worker.engines.mlx.sampling import (
     RecentTokensProcessor,
     can_select_top_k,
@@ -206,3 +208,43 @@ def test_history_window() -> None:
     # a context size of 0 reads the whole history in mlx-lm: no window
     (unbounded,) = make_logits_processors(1.2, 0, None, None)
     assert not isinstance(unbounded, RecentTokensProcessor)
+
+
+def _batch_cache(left_padding: list[int], length: int) -> BatchKVCache:
+    cache = BatchKVCache(left_padding)
+    keys = mx.random.normal(
+        (len(left_padding), 2, length, 8), key=mx.random.key(length)
+    )
+    cache.update_and_fetch(keys, keys)
+    return cache
+
+
+def test_one_token_steps_skip_an_all_true_mask() -> None:
+    apply_batch_gen_patch()
+    unpadded = _batch_cache([0, 0], 10)
+    assert unpadded.make_mask(1) is None
+    assert isinstance(unpadded.make_mask(1, return_array=True), mx.array)
+    assert isinstance(unpadded.make_mask(1, window_size=4), mx.array)
+    assert isinstance(unpadded.make_mask(3), mx.array)
+    padded = _batch_cache([0, 2], 10)
+    mask = padded.make_mask(1)
+    assert isinstance(mask, mx.array)
+    assert not mask.all().item()
+    # once the padding is gone (the padded sequence left), the mask goes too
+    padded.filter([0])
+    assert padded.make_mask(1) is None
+
+
+@metal
+def test_attention_without_the_all_true_mask_is_identical() -> None:
+    queries = mx.random.normal((2, 4, 1, 64), key=mx.random.key(0)).astype(mx.bfloat16)
+    keys = mx.random.normal((2, 2, 700, 64), key=mx.random.key(1)).astype(mx.bfloat16)
+    values = mx.random.normal((2, 2, 700, 64), key=mx.random.key(2)).astype(mx.bfloat16)
+    mask = mx.ones((2, 1, 1, 700), dtype=mx.bool_)
+    with_mask = mx.fast.scaled_dot_product_attention(
+        queries, keys, values, scale=0.125, mask=mask
+    )
+    without = mx.fast.scaled_dot_product_attention(
+        queries, keys, values, scale=0.125, mask=None
+    )
+    assert mx.array_equal(with_mask.view(mx.uint16), without.view(mx.uint16)).item()
