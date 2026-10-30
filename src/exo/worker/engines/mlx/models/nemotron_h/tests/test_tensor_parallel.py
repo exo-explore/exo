@@ -14,9 +14,10 @@ from typing import Any, cast
 
 import mlx.core as mx
 import mlx.nn as nn
-from mlx_lm.models.nemotron_h import Model, ModelArgs, NemotronHMamba2Mixer
+from mlx_lm.models.nemotron_h import NemotronHMamba2Mixer
 
 from exo.shared.types.worker.runner_response import ModelLoadingResponse
+from exo.worker.engines.mlx.models.nemotron_h.model import Model, ModelArgs
 from exo.worker.engines.mlx.models.nemotron_h.tests.tiny import CONFIG, PROMPT
 
 

@@ -6,7 +6,6 @@ from typing import cast
 import mlx.core as mx
 import mlx.nn as nn
 from mlx_lm.models.cache import ArraysCache
-from mlx_lm.models.nemotron_h import Model, ModelArgs
 
 from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.backends import Backend
@@ -16,6 +15,7 @@ from exo.shared.types.worker.runner_response import ModelLoadingResponse
 from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.worker.engines.mlx.auto_parallel import pipeline_auto_parallel
 from exo.worker.engines.mlx.cache import copy_snapshot_entry
+from exo.worker.engines.mlx.models.nemotron_h.model import Model, ModelArgs
 from exo.worker.engines.mlx.models.nemotron_h.tests.tiny import CONFIG, PROMPT
 
 
