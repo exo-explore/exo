@@ -180,33 +180,56 @@ class HybridCacheModel(Protocol):
     def make_cache(self) -> list[ArraysCache | KVCache]: ...
 
 
+_arrays_cache_make_mask = ArraysCache.make_mask
+
+
+def _arrays_cache_make_mask_for_attention(
+    self: ArraysCache,
+    n: int,
+    return_array: bool = False,
+    window_size: int | None = None,
+) -> mx.array | None:
+    return _arrays_cache_make_mask(self, n)
+
+
+def accept_attention_mask_options_on_arrays_caches() -> None:
+    """Let ArraysCache.make_mask take create_attention_mask's keyword options.
+
+    A hybrid model builds its attention mask from the cache entry at `fa_idx`. In a
+    pipeline shard without attention layers that entry is an ArraysCache, whose make_mask
+    takes only N; the mask goes unused there. This is set on the class rather than on the
+    shard's cache objects: exo's prefill restores SSM states into new ArraysCache objects,
+    and batching merges caches into new ones, so a per-object patch is lost after the
+    first prefill.
+    """
+    setattr(ArraysCache, "make_mask", _arrays_cache_make_mask_for_attention)  # noqa: B010
+
+
 def patch_hybrid_cache(
     model: HybridCacheModel,
-    fa_idx: int,
     has_full_attn: bool,
     ssm_idx: int,
     has_linear: bool,
 ) -> None:
     """For a pipeline shard of a hybrid model that holds only one kind of layer, keep
     make_mask working on the cache entry the model reads its mask from."""
-    # Hacks to make make_mask happy.
+    if not has_full_attn:
+        accept_attention_mask_options_on_arrays_caches()
+    if has_linear:
+        return
     original = model.make_cache
 
     def patched() -> list[ArraysCache | KVCache]:
+        # No SSM layer: the SSM mask is built from an attention cache entry. Make it None.
         cache = original()
-        if not has_full_attn:
-            entry = cache[fa_idx]
-            orig_make_mask = entry.make_mask
-            entry.make_mask = lambda n, **_kw: orig_make_mask(n)  # type: ignore
-        if not has_linear:
-            orig_ssm_make_mask = cache[ssm_idx].make_mask
+        orig_ssm_make_mask = cache[ssm_idx].make_mask
 
-            def _ssm_mask(
-                n: int, **kw: bool | int | None
-            ) -> mx.array | Literal["causal"] | None:
-                return orig_ssm_make_mask(n, **kw) if kw else None
+        def _ssm_mask(
+            n: int, **kw: bool | int | None
+        ) -> mx.array | Literal["causal"] | None:
+            return orig_ssm_make_mask(n, **kw) if kw else None
 
-            cache[ssm_idx].make_mask = _ssm_mask  # type: ignore
+        cache[ssm_idx].make_mask = _ssm_mask  # type: ignore
         return cache
 
     model.make_cache = patched

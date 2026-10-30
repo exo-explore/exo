@@ -176,10 +176,11 @@ def _mlx_lm_model_classes() -> dict[str, type]:
         model_class = cast(object, getattr(module, "Model", None))
         if isinstance(model_class, type):
             classes[module_info.name] = model_class
-    # Model types whose model a family ships itself, because mlx-lm has none
-    for model_type in ("deepseek_v4",):
-        assert model_type not in classes
-        classes[model_type] = registry.get_model_classes({"model_type": model_type})[0]
+    # Model types whose model a family ships itself: because mlx-lm has none, or to
+    # change mlx-lm's (exo loads these classes, not mlx-lm's)
+    for family in registry.FAMILIES:
+        for shipped in family.model_classes:
+            classes[shipped.model_type] = shipped.model_class
     return classes
 
 
@@ -200,6 +201,7 @@ _SUPPORTED_MODEL_TYPES = [
     "minimax",
     "ministral3",
     "nemotron_h",
+    "nemotron_h_omni",
     "qwen3",
     "qwen3_5",
     "qwen3_5_moe",
