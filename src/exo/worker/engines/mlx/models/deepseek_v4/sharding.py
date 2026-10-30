@@ -4,10 +4,10 @@ from typing import cast
 import mlx.core as mx
 import mlx.nn as nn
 from mlx.nn.layers.distributed import sum_gradients
-from mlx_lm.models.deepseek_v4 import DeepseekV4MoE, V4Attention
-from mlx_lm.models.deepseek_v4 import Model as DeepseekV4Model
 
 from exo.shared.types.worker.runner_response import ModelLoadingResponse
+from exo.worker.engines.mlx.models.deepseek_v4.model import DeepseekV4MoE, V4Attention
+from exo.worker.engines.mlx.models.deepseek_v4.model import Model as DeepseekV4Model
 from exo.worker.engines.mlx.sharding.blocks import CustomMlxLayer, LayerCallable
 from exo.worker.engines.mlx.sharding.tensor import TensorParallelShardingStrategy
 

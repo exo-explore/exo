@@ -106,8 +106,8 @@ def test_arrays_cache_inject() -> None:
     ]
     cache = ArraysCache(size=2)
     inject_arrays_cache(cache, blobs)
-    s0 = cache.state[0]
-    s1 = cache.state[1]
+    s0 = cache.cache[0]
+    s1 = cache.cache[1]
     assert s0 is not None and s1 is not None
     assert _equal(s0, a)
     assert _equal(s1, b)
@@ -225,7 +225,7 @@ def test_mixed_cache_roundtrip() -> None:
     src_arr = ArraysCache(size=2)
     arr_a = _rand((3,), mx.bfloat16)
     arr_b = _rand((2, 4), mx.bfloat16)
-    src_arr.state = [arr_a, arr_b]
+    src_arr.cache = [arr_a, arr_b]
 
     buf = io.BytesIO()
     write_header(
@@ -261,8 +261,8 @@ def test_mixed_cache_roundtrip() -> None:
     assert _equal(dst_rot.values, src_rot_v)
     assert dst_rot._idx == seq_len
 
-    assert len(dst_arr.state) == 2
-    s0, s1 = dst_arr.state[0], dst_arr.state[1]
+    assert len(dst_arr.cache) == 2
+    s0, s1 = dst_arr.cache[0], dst_arr.cache[1]
     assert s0 is not None and s1 is not None
     assert _equal(s0, arr_a)
     assert _equal(s1, arr_b)

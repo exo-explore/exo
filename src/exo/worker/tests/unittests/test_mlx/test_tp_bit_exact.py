@@ -235,7 +235,7 @@ MODEL_CONFIGS = {
         ),
     ),
     "deepseek_v4": dict(
-        module="mlx_lm.models.deepseek_v4",
+        module="exo.worker.engines.mlx.models.deepseek_v4.model",
         args=dict(
             model_type="deepseek_v4",
             vocab_size=256,

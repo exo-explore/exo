@@ -91,7 +91,7 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
     logits = self.model(inputs[:, None], cache=self.prompt_cache)
     logits = logits[:, -1, :]
 
-    if self.logits_processors is not None and any(self.logits_processors):
+    if any(self.logits_processors):
         processed_logits: list[mx.array] = []
         for e in range(len(self.uids)):
             sample_logits = logits[e : e + 1]
@@ -102,11 +102,10 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
 
     logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
 
-    if self.samplers is not None and any(self.samplers):
+    if any(self.samplers):
         all_samples: list[mx.array] = []
         for e in range(len(self.uids)):
-            sample_sampler = self.samplers[e] or self.fallback_sampler
-            all_samples.append(sample_sampler(logprobs[e : e + 1]))
+            all_samples.append(self.samplers[e](logprobs[e : e + 1]))
         sampled = mx.concatenate(all_samples, axis=0)
     else:
         sampled = self.fallback_sampler(logprobs)
@@ -161,6 +160,28 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
     return token_list, current_lp
 
 
+_original_extend = cast(
+    Callable[[GenerationBatch, GenerationBatch], None],
+    GenerationBatch.extend,
+)
+
+
+def _logprob_rows(logprobs: mx.array | list[mx.array]) -> list[mx.array]:
+    return list(logprobs) if isinstance(logprobs, mx.array) else logprobs
+
+
+def _extend_with_array_logprobs(self: GenerationBatch, batch: GenerationBatch) -> None:
+    """The patched step keeps a step's log-probs as one [batch, vocab] array, where
+    mlx-lm keeps a list of rows, so that it can take the top-k of every row at once.
+    mlx-lm's extend appends to those lists: give it lists."""
+    for generation_batch in (self, batch):
+        generation_batch._current_logprobs = _logprob_rows(
+            generation_batch._current_logprobs
+        )
+        generation_batch._next_logprobs = _logprob_rows(generation_batch._next_logprobs)
+    _original_extend(self, batch)
+
+
 _original_prompt = cast(
     Callable[[PromptProcessingBatch, list[list[int]]], None],
     PromptProcessingBatch.prompt,
@@ -181,4 +202,5 @@ def _prompt_after_decode_step(
 
 def apply_batch_gen_patch() -> None:
     GenerationBatch._step = _patched_step
+    GenerationBatch.extend = _extend_with_array_logprobs
     PromptProcessingBatch.prompt = _prompt_after_decode_step

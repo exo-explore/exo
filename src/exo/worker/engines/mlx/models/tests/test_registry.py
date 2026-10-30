@@ -18,7 +18,6 @@ import mlx.nn as nn
 import mlx_lm.models
 import pytest
 from mlx_lm.models.deepseek_v3 import Model as DeepseekV3Model
-from mlx_lm.models.deepseek_v4 import Model as DeepseekV4Model
 from mlx_lm.models.deepseek_v32 import Model as DeepseekV32Model
 from mlx_lm.models.gemma4 import Model as Gemma4Model
 from mlx_lm.models.glm4_moe import Model as Glm4MoeModel
@@ -51,6 +50,10 @@ from exo.shared.types.text_generation import (
 )
 from exo.worker.engines.mlx.models import registry
 from exo.worker.engines.mlx.models.deepseek_v3.parser import parse_deepseek_v32
+from exo.worker.engines.mlx.models.deepseek_v4.model import Model as DeepseekV4Model
+from exo.worker.engines.mlx.models.deepseek_v4.model import (
+    ModelArgs as DeepseekV4ModelArgs,
+)
 from exo.worker.engines.mlx.models.deepseek_v4.parser import parse_deepseek_v4
 from exo.worker.engines.mlx.models.family import ModelClasses
 from exo.worker.engines.mlx.models.gpt_oss.parser import parse_gpt_oss
@@ -173,6 +176,10 @@ def _mlx_lm_model_classes() -> dict[str, type]:
         model_class = cast(object, getattr(module, "Model", None))
         if isinstance(model_class, type):
             classes[module_info.name] = model_class
+    # Model types whose model a family ships itself, because mlx-lm has none
+    for model_type in ("deepseek_v4",):
+        assert model_type not in classes
+        classes[model_type] = registry.get_model_classes({"model_type": model_type})[0]
     return classes
 
 
@@ -320,11 +327,16 @@ def test_pipeline_fixups_cover_every_model_type_they_applied_to(
 
 def test_architectures_are_keyed_by_their_mlx_lm_model_type() -> None:
     for family in registry.FAMILIES:
+        shipped = {c.model_type: c.model_class for c in family.model_classes}
         for architecture in family.architectures:
-            assert (
-                architecture.model_class.__module__
-                == f"mlx_lm.models.{architecture.model_type}"
-            )
+            if architecture.model_type in shipped:
+                # The family's own model.py, for a model mlx-lm doesn't have
+                assert architecture.model_class is shipped[architecture.model_type]
+            else:
+                assert (
+                    architecture.model_class.__module__
+                    == f"mlx_lm.models.{architecture.model_type}"
+                )
             assert architecture.model_type in family.spec.model_types
     assert tuple(family.spec for family in registry.FAMILIES) == FAMILY_SPECS
 
@@ -368,7 +380,6 @@ def test_model_id_hooks_are_unchanged(model_id: str) -> None:
         ("kimi_k2", "deepseek_v3"),
         ("minimax_m2", "minimax"),
         ("qwen3_5_moe", "qwen3_5_moe"),
-        ("deepseek_v4", "deepseek_v4"),
     ],
 )
 def test_model_classes_default_to_mlx_lm(model_type: str, module: str) -> None:
@@ -378,6 +389,13 @@ def test_model_classes_default_to_mlx_lm(model_type: str, module: str) -> None:
     mlx_lm_module = importlib.import_module(f"mlx_lm.models.{module}")
     assert model_class is cast(type, mlx_lm_module.Model)
     assert model_args_class is cast(type, mlx_lm_module.ModelArgs)
+
+
+def test_deepseek_v4_loads_with_the_model_in_its_family_folder() -> None:
+    assert registry.get_model_classes({"model_type": "deepseek_v4"}) == (
+        DeepseekV4Model,
+        DeepseekV4ModelArgs,
+    )
 
 
 def test_a_family_can_provide_its_own_model_classes(
