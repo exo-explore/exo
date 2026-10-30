@@ -42,6 +42,8 @@ _MAIN_TENSOR_ARCHITECTURES = [
     ["Step3p5ForCausalLM"],
     ["NemotronHForCausalLM"],
     ["Gemma4ForConditionalGeneration"],
+    # Changed on purpose: Hy3 is new.
+    ["HYV3ForCausalLM"],
 ]
 
 _MAIN_MLX_VLM_MODEL_TYPE_ALIASES: dict[str, str] = {
@@ -105,7 +107,7 @@ _CARDS = [card for _, card in _CARD_FILES]
 
 
 def test_there_are_builtin_cards() -> None:
-    assert len(_CARDS) == 123
+    assert len(_CARDS) == 124
 
 
 @pytest.mark.parametrize(
