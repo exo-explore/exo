@@ -141,6 +141,9 @@ def _main_output_parser(
 def _main_prompt_encoder(model: str) -> str | None:
     if "deepseek-v3.2" in model.lower():
         return "deepseek_v32"
+    # Changed on purpose: DeepSeek V4.1 has its own prompt format (main gave it V4's).
+    if "deepseek-v4.1" in model.lower():
+        return "deepseek_v41"
     if "deepseek-v4" in model.lower():
         return "deepseek_v4"
     return None
@@ -360,9 +363,11 @@ def test_model_id_hooks_are_unchanged(model_id: str) -> None:
     if expected is None:
         assert encoder is None
     else:
-        family_name = {"deepseek_v32": "deepseek_v3", "deepseek_v4": "deepseek_v4"}[
-            expected
-        ]
+        family_name = {
+            "deepseek_v32": "deepseek_v3",
+            "deepseek_v4": "deepseek_v4",
+            "deepseek_v41": "deepseek_v41",
+        }[expected]
         assert encoder is families_with_encoders[family_name]
 
     hooks = registry.template_messages_hooks_for(task)
@@ -449,3 +454,12 @@ def test_the_v4_encoder_is_not_picked_for_other_model_types(model_type: str) -> 
     )
     task = _task("deepseek-ai/DeepSeek-V4.1-Flash")
     assert registry.prompt_encoder_for(task, model_type) is not v4_encoder
+
+
+def test_v41_keeps_its_bare_think_end_and_others_do_not() -> None:
+    # V4.1's chat mode ends the prompt with `</think>` and no opener
+    v4_task = _task("mlx-community/DeepSeek-V4-Flash")
+    assert not registry.keeps_think_tags(v4_task, "deepseek_v4")
+    v41_task = _task("deepseek-ai/DeepSeek-V4.1-Flash")
+    assert registry.keeps_think_tags(v41_task, "deepseek_v41")
+    assert not registry.keeps_think_tags(_task("Qwen/Qwen3-8B"), "qwen3")

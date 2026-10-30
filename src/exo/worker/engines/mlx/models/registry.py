@@ -16,6 +16,7 @@ from exo.shared.types.common import ModelId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.worker.engines.mlx.models.deepseek_v3.family import FAMILY as DEEPSEEK_V3
 from exo.worker.engines.mlx.models.deepseek_v4.family import FAMILY as DEEPSEEK_V4
+from exo.worker.engines.mlx.models.deepseek_v41.family import FAMILY as DEEPSEEK_V41
 from exo.worker.engines.mlx.models.family import (
     Architecture,
     ModelClasses,
@@ -44,6 +45,7 @@ FAMILIES: tuple[ModelFamily, ...] = (
     QWEN3,
     GEMMA,
     DEEPSEEK_V3,
+    DEEPSEEK_V41,
     DEEPSEEK_V4,
     LLAMA,
     MINIMAX,
