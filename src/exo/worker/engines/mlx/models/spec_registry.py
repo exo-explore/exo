@@ -7,6 +7,7 @@ Importable without MLX. The worker-side registry, with sharding, parsers and enc
 
 from exo.worker.engines.mlx.models.deepseek_v3.spec import SPEC as DEEPSEEK_V3
 from exo.worker.engines.mlx.models.deepseek_v4.spec import SPEC as DEEPSEEK_V4
+from exo.worker.engines.mlx.models.flint.spec import SPEC as FLINT
 from exo.worker.engines.mlx.models.gemma.spec import SPEC as GEMMA
 from exo.worker.engines.mlx.models.glm.spec import SPEC as GLM
 from exo.worker.engines.mlx.models.gpt_oss.spec import SPEC as GPT_OSS
@@ -33,6 +34,7 @@ FAMILY_SPECS: tuple[FamilySpec, ...] = (
     MINIMAX,
     NEMOTRON_H,
     STEP,
+    FLINT,
 )
 
 

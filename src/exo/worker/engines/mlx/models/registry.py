@@ -24,6 +24,7 @@ from exo.worker.engines.mlx.models.family import (
     TemplateMessagesHook,
     TokenizerLoader,
 )
+from exo.worker.engines.mlx.models.flint.family import FAMILY as FLINT
 from exo.worker.engines.mlx.models.gemma.family import FAMILY as GEMMA
 from exo.worker.engines.mlx.models.glm.family import FAMILY as GLM
 from exo.worker.engines.mlx.models.gpt_oss.family import FAMILY as GPT_OSS
@@ -49,6 +50,7 @@ FAMILIES: tuple[ModelFamily, ...] = (
     MINIMAX,
     NEMOTRON_H,
     STEP,
+    FLINT,
 )
 assert tuple(family.spec for family in FAMILIES) == FAMILY_SPECS
 

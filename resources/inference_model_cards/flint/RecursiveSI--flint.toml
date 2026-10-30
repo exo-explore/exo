@@ -1,0 +1,24 @@
+model_id = "RecursiveSI/flint"
+n_layers = 49
+hidden_size = 2048
+num_key_value_heads = 4
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "flint"
+model_type = "flint"
+quantization = "bf16"
+base_model = "Flint"
+capabilities = ["text", "thinking", "code"]
+# The template sends reasoning_content back for every earlier assistant turn.
+reasoning_dialect = "post_last_user"
+context_length = 262144
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
+[storage_size]
+in_bytes = 79575138056
+
+# Source: https://huggingface.co/RecursiveSI/flint/blob/main/generation_config.json
+# Source: https://huggingface.co/RecursiveSI/flint#recommended-generation-settings
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95
+top_k = 20
