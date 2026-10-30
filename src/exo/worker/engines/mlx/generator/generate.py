@@ -3,9 +3,12 @@ import functools
 import math
 import time
 import uuid
-from typing import Callable, Generator, cast, get_args
+from typing import Callable, Generator, Protocol, cast, get_args
 
 import mlx.core as mx
+from mlx_lm.generate import (
+    GenerationResponse as MlxGenerationResponse,
+)
 from mlx_lm.generate import (
     generation_stream,
     maybe_quantize_kv_cache,
@@ -49,7 +52,12 @@ from exo.worker.engines.mlx.constants import (
     MAX_TOKENS,
 )
 from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
-from exo.worker.engines.mlx.models.registry import keeps_think_tags, model_type_of
+from exo.worker.engines.mlx.models.family import SamplingParameters
+from exo.worker.engines.mlx.models.registry import (
+    architecture_for_model,
+    keeps_think_tags,
+    model_type_of,
+)
 from exo.worker.engines.mlx.sharding.pipeline import (
     PipelineFirstLayer,
     PipelineLastLayer,
@@ -466,6 +474,65 @@ def warmup_inference(
     return check_for_cancel_every
 
 
+class _Detokenizer(Protocol):
+    @property
+    def last_segment(self) -> str: ...
+    def reset(self) -> None: ...
+    def add_token(self, token: int) -> None: ...
+    def finalize(self) -> None: ...
+
+
+def stream_tokens(
+    tokenizer: TokenizerWrapper,
+    prompt: mx.array,
+    tokens: Generator[tuple[int, mx.array]],
+    max_tokens: int,
+) -> Generator[MlxGenerationResponse]:
+    """mlx-lm's stream_generate around a family's own token generator: detokenizes, stops
+    at an end-of-sequence token or max_tokens, and reports the same statistics."""
+    detokenizer = cast(_Detokenizer, tokenizer.detokenizer)
+    detokenizer.reset()
+    eos = set(eos_ids_from_tokenizer(tokenizer))
+    tic = time.perf_counter()
+    prompt_tps = 0.0
+    token, logprobs, n = 0, mx.array(0.0), 0
+    with mx.stream(generation_stream):
+        for n, (token, logprobs) in enumerate(tokens):
+            if n == 0:
+                prompt_tps = prompt.size / (time.perf_counter() - tic)
+                tic = time.perf_counter()
+            if token in eos:
+                break
+            detokenizer.add_token(token)
+            if (n + 1) == max_tokens:
+                break
+            yield MlxGenerationResponse(
+                text=detokenizer.last_segment,
+                token=token,
+                logprobs=logprobs,
+                from_draft=False,
+                prompt_tokens=prompt.size,
+                prompt_tps=prompt_tps,
+                generation_tokens=n + 1,
+                generation_tps=(n + 1) / (time.perf_counter() - tic),
+                peak_memory=mx.get_peak_memory() / 1e9,
+                finish_reason=None,
+            )
+    detokenizer.finalize()
+    yield MlxGenerationResponse(
+        text=detokenizer.last_segment,
+        token=token,
+        logprobs=logprobs,
+        from_draft=False,
+        prompt_tokens=prompt.size,
+        prompt_tps=prompt_tps,
+        generation_tokens=n + 1,
+        generation_tps=(n + 1) / (time.perf_counter() - tic),
+        peak_memory=mx.get_peak_memory() / 1e9,
+        finish_reason="stop" if token in eos else "length",
+    )
+
+
 def ban_token_ids(token_ids: list[int]) -> Callable[[mx.array, mx.array], mx.array]:
     token_ids = [int(t) for t in token_ids]
 
@@ -616,11 +683,17 @@ def mlx_generate(
         eos_ids = eos_ids_from_tokenizer(tokenizer)
         logits_processors = [ban_token_ids(eos_ids)] + logits_processors
 
-    sampler = make_sampler(
-        temp=task.temperature if task.temperature is not None else 0.7,
+    sampling = SamplingParameters(
+        temperature=task.temperature if task.temperature is not None else 0.7,
         top_p=task.top_p if task.top_p is not None else 1.0,
         min_p=task.min_p if task.min_p is not None else 0.05,
         top_k=task.top_k if task.top_k is not None else 0,
+    )
+    sampler = make_sampler(
+        temp=sampling.temperature,
+        top_p=sampling.top_p,
+        min_p=sampling.min_p,
+        top_k=sampling.top_k,
     )
 
     # Normalize stop sequences to a list
@@ -722,7 +795,15 @@ def mlx_generate(
     logger.info("Starting decode")
     mx_barrier(group)
 
-    for completion_tokens, out in enumerate(
+    architecture = architecture_for_model(model)
+    family_tokens = (
+        architecture.token_generator(
+            model, last_token, max_tokens, sampling, logits_processors, caches
+        )
+        if architecture is not None and architecture.token_generator is not None
+        else None
+    )
+    responses = (
         stream_generate(
             model=model,
             tokenizer=tokenizer,
@@ -734,9 +815,11 @@ def mlx_generate(
             prefill_step_size=1,
             kv_group_size=KV_GROUP_SIZE,
             kv_bits=KV_BITS,
-        ),
-        start=1,
-    ):
+        )
+        if family_tokens is None
+        else stream_tokens(tokenizer, last_token, family_tokens, max_tokens)
+    )
+    for completion_tokens, out in enumerate(responses, start=1):
         generated_text_parts.append(out.text)
         accumulated_text += out.text
 
