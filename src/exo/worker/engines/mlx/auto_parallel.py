@@ -28,8 +28,6 @@ from mlx_lm.models.qwen3_moe import Model as Qwen3MoeModel
 from mlx_lm.models.qwen3_next import Model as Qwen3NextModel
 from mlx_lm.models.qwen3_vl import Model as Qwen3VLModel
 from mlx_lm.models.step3p5 import Model as Step35Model
-from mlx_lm.models.step3p5 import Step3p5MLP as Step35MLP
-from mlx_lm.models.step3p5 import Step3p5Model as Step35InnerModel
 
 from exo.shared.types.worker.runner_response import ModelLoadingResponse
 from exo.shared.types.worker.shards import PipelineShardMetadata
@@ -56,6 +54,10 @@ from exo.worker.engines.mlx.models.nemotron_h.sharding import (
 from exo.worker.engines.mlx.models.qwen3.sharding import QwenShardingStrategy
 from exo.worker.engines.mlx.models.qwen3.sharding import (
     fix_pipeline_shard as fix_qwen3_pipeline_shard,
+)
+from exo.worker.engines.mlx.models.step.sharding import Step35ShardingStrategy
+from exo.worker.engines.mlx.models.step.sharding import (
+    fix_pipeline_shard as fix_step_pipeline_shard,
 )
 from exo.worker.engines.mlx.sharding.blocks import (
     CustomMlxLayer,
@@ -117,18 +119,7 @@ def pipeline_auto_parallel(
         model, inner_model_instance, layers, start_layer, end_layer
     )
 
-    if isinstance(inner_model_instance, Step35InnerModel):
-        inner_model_instance.num_layers = len(layers)
-        sliding_layers = [
-            i for i, layer in enumerate(layers) if getattr(layer, "is_sliding", False)
-        ]
-        full_layers = [
-            i
-            for i, layer in enumerate(layers)
-            if not getattr(layer, "is_sliding", True)
-        ]
-        inner_model_instance._swa_idx = 0 if not sliding_layers else sliding_layers[0]
-        inner_model_instance._full_idx = 0 if not full_layers else full_layers[0]
+    fix_step_pipeline_shard(model, inner_model_instance, layers, start_layer, end_layer)
 
     fix_qwen3_pipeline_shard(
         model, inner_model_instance, layers, start_layer, end_layer
@@ -327,49 +318,6 @@ def _set_layers(model: nn.Module, layers: list[LayerCallable]) -> None:
         inner_model_instance.h = layers
     else:
         raise ValueError("Model must have either a 'layers' or 'h' attribute")
-
-
-class Step35ShardingStrategy(TensorParallelShardingStrategy):
-    def shard_model(
-        self,
-        model: nn.Module,
-    ) -> Generator[ModelLoadingResponse, None, nn.Module]:
-        model = cast(Step35Model, model)
-        total = len(model.layers)
-
-        for i, layer in enumerate(model.layers):
-            mx.eval(layer.parameters())
-            layer.self_attn.q_proj = self.all_to_sharded_linear(layer.self_attn.q_proj)
-            layer.self_attn.k_proj = self.all_to_sharded_linear(layer.self_attn.k_proj)
-            layer.self_attn.v_proj = self.all_to_sharded_linear(layer.self_attn.v_proj)
-            layer.self_attn.o_proj = self.sharded_to_all_linear(layer.self_attn.o_proj)
-
-            layer.self_attn.num_heads //= self.N
-            layer.self_attn.num_kv_heads //= self.N
-
-            if getattr(layer.self_attn, "use_head_wise_attn_gate", False):
-                layer.self_attn.g_proj = self.all_to_sharded_linear(
-                    layer.self_attn.g_proj
-                )
-
-            if isinstance(layer.mlp, Step35MLP):
-                layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
-                layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
-                layer.mlp.down_proj = self.sharded_to_all_linear(layer.mlp.down_proj)
-            else:
-                layer.mlp.sharding_group = self.group
-                self.all_to_sharded_linear_in_place(layer.mlp.share_expert.gate_proj)
-                self.all_to_sharded_linear_in_place(layer.mlp.share_expert.up_proj)
-                self.sharded_to_all_linear_in_place(layer.mlp.share_expert.down_proj)
-                self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.gate_proj)
-                self.all_to_sharded_linear_in_place(layer.mlp.switch_mlp.up_proj)
-                self.sharded_to_all_linear_in_place(layer.mlp.switch_mlp.down_proj)
-
-            mx.eval(layer)
-            mx.clear_cache()
-
-            yield ModelLoadingResponse(layers_loaded=i, total=total)
-        return model
 
 
 class WrappedGemma4Experts(CustomMlxLayer):

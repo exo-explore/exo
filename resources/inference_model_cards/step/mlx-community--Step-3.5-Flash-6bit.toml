@@ -1,18 +1,19 @@
-model_id = "mlx-community/Step-3.5-Flash-4bit"
+model_id = "mlx-community/Step-3.5-Flash-6bit"
 n_layers = 45
 hidden_size = 4096
 num_key_value_heads = 8
 supports_tensor = true
 tasks = ["TextGeneration"]
 family = "step"
-quantization = "4bit"
+model_type = "step3p5"
+quantization = "6bit"
 base_model = "Step 3.5 Flash"
 capabilities = ["text", "thinking", "thinking_toggle"]
 
 context_length = 262144
 backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 [storage_size]
-in_bytes = 114572190076
+in_bytes = 159039627774
 
 # Source: https://huggingface.co/stepfun-ai/Step-3.5-Flash/discussions/3
 # Source: https://github.com/stepfun-ai/Step-3.5-Flash/blob/main/llama.cpp/docs/step3.5-flash.md
