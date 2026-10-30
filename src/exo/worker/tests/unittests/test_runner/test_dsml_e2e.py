@@ -7,7 +7,7 @@ from exo.shared.types.worker.runner_response import (
     GenerationResponse,
     ToolCallResponse,
 )
-from exo.worker.engines.mlx.vendor.dsml_encoding import (
+from exo.worker.engines.mlx.models.deepseek_v3.dsml_encoding import (
     ASSISTANT_TOKEN,
     BOS_TOKEN,
     DSML_TOKEN,
@@ -20,9 +20,9 @@ from exo.worker.engines.mlx.vendor.dsml_encoding import (
     encode_messages,
     parse_dsml_output,
 )
+from exo.worker.engines.mlx.models.deepseek_v3.parser import parse_deepseek_v32
 from exo.worker.runner.llm_inference.model_output_parsers import (
     parse_deepseek_v4,
-    parse_deepseek_v32,
     parse_thinking_models,
 )
 

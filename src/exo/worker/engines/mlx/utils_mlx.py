@@ -29,6 +29,7 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.models.model_cards import ModelId
 from exo.worker.engines.mlx.constants import TRUST_REMOTE_CODE
+from exo.worker.engines.mlx.models.deepseek_v3 import prompt as deepseek_v32_prompt
 
 try:
     from mlx_lm.tokenizer_utils import load_tokenizer
@@ -482,10 +483,6 @@ def _patch_lossy_chat_template(template: str) -> str | None:
     return patched if n > 0 else None
 
 
-def _needs_dsml_encoding(task_params: TextGenerationTaskParams) -> bool:
-    return "deepseek-v3.2" in task_params.model.lower()
-
-
 def _needs_v4_encoding(task_params: TextGenerationTaskParams) -> bool:
     return "deepseek-v4" in task_params.model.lower()
 
@@ -560,17 +557,8 @@ def render_chat_template(
         partial_assistant_content = cast(str, formatted_messages[-1].get("content", ""))
         formatted_messages = formatted_messages[:-1]
 
-    if _needs_dsml_encoding(task_params):
-        from exo.worker.engines.mlx.vendor.dsml_encoding import encode_messages
-
-        prompt = encode_messages(
-            messages=formatted_messages,
-            # Only use chat mode if enable thinking is explicitly Fakse.
-            thinking_mode="chat"
-            if task_params.enable_thinking is False
-            else "thinking",
-            tools=task_params.tools,
-        )
+    if deepseek_v32_prompt.applies_to(task_params):
+        prompt = deepseek_v32_prompt.encode_prompt(formatted_messages, task_params)
         if partial_assistant_content:
             prompt += partial_assistant_content
         return prompt

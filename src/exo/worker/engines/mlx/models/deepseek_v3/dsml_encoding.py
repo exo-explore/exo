@@ -1,3 +1,14 @@
+"""DeepSeek V3.2 prompt encoding and DSML tool-call parsing.
+
+Provenance: written for exo (first added in exo PR #1548, 2026-02-19, then moved to
+``engines/mlx/vendor/`` and now here); it is not copied from another project.
+It imports, rather than copies, mlx-lm's DeepSeek V3.2 encoder
+(``mlx_lm/chat_templates/deepseek_v32.py`` in https://github.com/ml-explore/mlx-lm, MIT
+licence) and adds on top of it: keeping prior-turn reasoning when tools are in play,
+repairing orphan ``</think>`` tags and dropping empty think blocks, and a parser for
+DSML ``function_calls`` blocks in model output.
+"""
+
 import json
 import re
 from typing import Any

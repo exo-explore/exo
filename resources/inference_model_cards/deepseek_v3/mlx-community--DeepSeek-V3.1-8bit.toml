@@ -5,6 +5,7 @@ num_key_value_heads = 128
 supports_tensor = true
 tasks = ["TextGeneration"]
 family = "deepseek"
+model_type = "deepseek_v3"
 quantization = "8bit"
 base_model = "DeepSeek V3.1"
 capabilities = ["text", "thinking", "thinking_toggle"]
