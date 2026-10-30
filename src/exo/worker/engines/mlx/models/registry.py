@@ -28,6 +28,7 @@ from exo.worker.engines.mlx.models.gemma.family import FAMILY as GEMMA
 from exo.worker.engines.mlx.models.glm.family import FAMILY as GLM
 from exo.worker.engines.mlx.models.gpt_oss.family import FAMILY as GPT_OSS
 from exo.worker.engines.mlx.models.kimi.family import FAMILY as KIMI
+from exo.worker.engines.mlx.models.laguna.family import FAMILY as LAGUNA
 from exo.worker.engines.mlx.models.llama.family import FAMILY as LLAMA
 from exo.worker.engines.mlx.models.minimax.family import FAMILY as MINIMAX
 from exo.worker.engines.mlx.models.nemotron_h.family import FAMILY as NEMOTRON_H
@@ -49,6 +50,7 @@ FAMILIES: tuple[ModelFamily, ...] = (
     MINIMAX,
     NEMOTRON_H,
     STEP,
+    LAGUNA,
 )
 assert tuple(family.spec for family in FAMILIES) == FAMILY_SPECS
 
