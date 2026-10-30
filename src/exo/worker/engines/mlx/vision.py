@@ -8,6 +8,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
+import transformers
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 from mlx_vlm.prompt_utils import get_message_json
 from mlx_vlm.utils import load_image_processor
@@ -48,6 +50,28 @@ def _torch_tensor_to_mx(
     if str(tensor.dtype) == "torch.bfloat16":  # type: ignore
         return mx.array(tensor.float().numpy(), dtype=mx.bfloat16)  # type: ignore
     return mx.array(tensor.numpy())  # type: ignore
+
+
+def _load_auto_image_processor(repo: str) -> "ImageProcessor":
+    try:
+        return AutoImageProcessor.from_pretrained(repo, trust_remote_code=True)  # type: ignore
+    except ValueError:
+        # Some conversions (e.g. mlx-community's Qwen3.8) name an image processor
+        # class in processor_config.json that this transformers release does not
+        # have; preprocessor_config.json still names one it does.
+        preprocessor_config = Path(repo) / "preprocessor_config.json"
+        if not preprocessor_config.exists():
+            raise
+        name: object = json.loads(preprocessor_config.read_text()).get(  # pyright: ignore[reportAny]
+            "image_processor_type"
+        )
+        processor_class: object = (
+            getattr(transformers, name, None) if isinstance(name, str) else None
+        )
+        if processor_class is None:
+            raise
+        logger.info(f"Loading image processor {name} from {preprocessor_config}")
+        return processor_class.from_pretrained(repo)  # type: ignore
 
 
 def _filter_config(cls: type, d: dict[str, Any]) -> dict[str, Any]:
@@ -349,9 +373,7 @@ class VisionEncoder:
         if image_proc is not None:
             self._processor = image_proc
         else:
-            self._processor = AutoImageProcessor.from_pretrained(  # type: ignore
-                repo, trust_remote_code=True
-            )
+            self._processor = _load_auto_image_processor(repo)
         if processor_repo:
             self._merge_kernel_size = vision_cfg.get("merge_kernel_size", [2, 2])  # type: ignore
             self._needs_nhwc = True
