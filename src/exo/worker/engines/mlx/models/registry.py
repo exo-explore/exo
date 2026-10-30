@@ -126,6 +126,14 @@ def prompt_encoder_for(
     return None
 
 
+def keeps_think_tags(
+    task_params: TextGenerationTaskParams, model_type: str | None = None
+) -> bool:
+    """Whether the request's prompt keeps its think tags exactly as rendered."""
+    encoder = prompt_encoder_for(task_params, model_type)
+    return encoder is not None and encoder.exact_think_tags
+
+
 def template_messages_hooks_for(
     task_params: TextGenerationTaskParams,
 ) -> list[TemplateMessagesHook]:
