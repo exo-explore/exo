@@ -7,7 +7,9 @@ and the DSA indexer's head reduction in float32.
 
 - Dense prefill scores the 192-wide no-rope part and the 64-wide rope part of each head in
   one 256-wide product with a boolean mask, instead of a separate rope-part product
-  materialised as an additive float mask over every [head, query, key].
+  materialised as an additive float mask over every [head, query, key]. In a sequence's
+  first chunk the queries before index_topk (whose selection is every earlier key) use
+  MLX's fused causal kernel.
 - Sparse (top-k) prefill starts at SPARSE_PREFILL_MIN_CONTEXT keys of context instead of
   mlx-lm's 16384, where it overtakes dense attention on a Mac Studio (M3 Ultra), and
   gathers the selected keys with 16-byte vector copies (kernels.gather_rows).
@@ -131,6 +133,9 @@ class GlmAttention(GlmMoeDsaAttention):
     def __init__(self, config: ModelArgs, layer_idx: int) -> None:
         super().__init__(config, layer_idx)
         self.sparse_prefill_min_context = SPARSE_PREFILL_MIN_CONTEXT
+        # Queries at positions below index_topk see fewer keys than the indexer keeps, so
+        # their selection is every earlier key: plain causal attention.
+        self.index_topk = config.index_topk
 
     def __call__(
         self,
@@ -207,15 +212,13 @@ class GlmAttention(GlmMoeDsaAttention):
         cache: Any,
     ) -> mx.array:
         """All heads' keys and values decompressed from the latent cache; the 192 no-rope
-        and 64 rope dimensions of each head scored together, with a boolean mask."""
+        and 64 rope dimensions of each head scored together, with a boolean mask.
+
+        In a sequence's first chunk, the queries before index_topk attend to every earlier
+        key (their top-k is all of them), so they go through MLX's fused causal kernel over
+        the first index_topk keys, and only the later queries need the selection mask."""
         batch, heads, length, _ = q_nope.shape
         n_keys = kv_latent.shape[2]
-        if topk_indices is not None:
-            selected = mx.zeros((*topk_indices.shape[:-1], n_keys), dtype=mx.bool_)
-            selected = mx.put_along_axis(
-                selected, topk_indices, mx.array(True), axis=-1
-            )
-            mask = selected if mask is None else selected & mask
         keys = mx.concatenate(
             [
                 self.embed_q(kv_latent, transpose=False),
@@ -225,9 +228,33 @@ class GlmAttention(GlmMoeDsaAttention):
         )
         values = self.unembed_out(kv_latent)
         queries = mx.concatenate([q_nope, q_pe], axis=-1)
+        head = self.index_topk
+        causal_head = (
+            topk_indices is not None and batch == 1 and n_keys == length > head
+        )
+        if causal_head:
+            first = mx.fast.scaled_dot_product_attention(
+                queries[:, :, :head],
+                keys[:, :, :head],
+                values[:, :, :head],
+                scale=self.scale,
+                mask="causal",
+            )
+            queries = queries[:, :, head:]
+            topk_indices = topk_indices[..., head:, :]
+            if mask is not None:
+                mask = mask[..., head:, :]
+        if topk_indices is not None:
+            selected = mx.zeros((*topk_indices.shape[:-1], n_keys), dtype=mx.bool_)
+            selected = mx.put_along_axis(
+                selected, topk_indices, mx.array(True), axis=-1
+            )
+            mask = selected if mask is None else selected & mask
         output = scaled_dot_product_attention(
             queries, keys, values, cache=cache, scale=self.scale, mask=mask
         )
+        if causal_head:
+            output = mx.concatenate([first, output], axis=2)
         return output.transpose(0, 2, 1, 3).reshape(batch, length, -1)
 
     def _sparse_prefill(
