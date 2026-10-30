@@ -75,6 +75,8 @@ CUSTOM_CARD_SYNC_INTERVAL = 1.0
 CUSTOM_CARD_ANNOUNCE_INTERVAL = 10.0
 # How long the worker waits for an instance it asked to delete to go, before asking again
 DELETION_REQUEST_RETRY = 10.0
+# How long a runner told to shut down has to take that up itself before it is stopped
+RUNNER_SHUTDOWN_GRACE = 3.0
 
 
 class Worker:
@@ -431,18 +433,25 @@ class Worker:
                 case Shutdown(runner_id=runner_id):
                     runner = self.runners.pop(runner_id)
                     try:
-                        with fail_after(3):
+                        with fail_after(RUNNER_SHUTDOWN_GRACE):
                             await runner.start_task(task)
                             # Give it a moment to start shutting down by itself
                             await runner.wait_for_acknowledgement(task.task_id)
                     except TimeoutError:
-                        await self.event_sender.send(
-                            TaskStatusUpdated(
-                                task_id=task.task_id, task_status=TaskStatus.TimedOut
-                            )
+                        logger.warning(
+                            f"Runner {runner_id} didn't take up its shutdown, stopping it"
                         )
                     finally:
                         runner.shutdown()
+                    # The runner is stopped, which is what the task is for, and only the worker
+                    # can say so: a runner that has died never gets the task, and one that takes
+                    # it up is no longer listened to once it has acknowledged it, so its own
+                    # report never arrives. Unfinished, the task would stay in the state for good.
+                    await self.event_sender.send(
+                        TaskStatusUpdated(
+                            task_id=task.task_id, task_status=TaskStatus.Complete
+                        )
+                    )
                 case CancelTask(
                     cancelled_task_id=cancelled_task_id, runner_id=runner_id
                 ):
