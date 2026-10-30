@@ -79,7 +79,7 @@ def get_weights_size(model_shard_meta: ShardMetadata) -> Memory:
     return Memory.from_float_kb(
         (model_shard_meta.end_layer - model_shard_meta.start_layer)
         / model_shard_meta.n_layers
-        * model_shard_meta.model_card.storage_size.in_kb
+        * model_shard_meta.model_card.resident_size.in_kb
         / (
             1
             if isinstance(model_shard_meta, PipelineShardMetadata)
