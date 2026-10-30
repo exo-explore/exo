@@ -1,7 +1,6 @@
 import json
 import os
 import re
-import sys
 import tempfile
 import time
 from collections.abc import Generator
@@ -29,6 +28,13 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.models.model_cards import ModelId
 from exo.worker.engines.mlx.constants import TRUST_REMOTE_CODE
+from exo.worker.engines.mlx.models.registry import (
+    get_model_classes,
+    prompt_encoder_for,
+    template_messages_hooks_for,
+    tokenizer_loader_for,
+)
+from exo.worker.engines.mlx.models.spec_registry import eos_token_ids_for_model_id
 
 try:
     from mlx_lm.tokenizer_utils import load_tokenizer
@@ -60,11 +66,10 @@ from exo.shared.types.worker.shards import (
     TensorShardMetadata,
 )
 from exo.worker.engines.mlx.auto_parallel import (
-    get_inner_model,
-    get_layers,
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
+from exo.worker.engines.mlx.sharding.pipeline import get_inner_model, get_layers
 from exo.worker.engines.mlx.types import Model
 from exo.worker.runner.bootstrap import logger
 
@@ -173,7 +178,9 @@ def load_mlx_items(
         logger.info(f"Single device used for {bound_instance.instance}")
         model_path = build_model_path(bound_instance.bound_shard.model_card.model_id)
         start_time = time.perf_counter()
-        model, _ = load_model(model_path, lazy=True, strict=False)
+        model, _ = load_model(
+            model_path, lazy=True, strict=False, get_model_classes=get_model_classes
+        )
         # Eval layers one by one for progress reporting
         try:
             inner = get_inner_model(model)
@@ -236,7 +243,9 @@ def shard_and_load(
 ) -> Generator[ModelLoadingResponse, None, tuple[nn.Module, TokenizerWrapper]]:
     model_path = build_model_path(shard_metadata.model_card.model_id)
 
-    model, _ = load_model(model_path, lazy=True, strict=False)
+    model, _ = load_model(
+        model_path, lazy=True, strict=False, get_model_classes=get_model_classes
+    )
     logger.debug(model)
     if hasattr(model, "model") and isinstance(model.model, DeepseekV3Model):  # type: ignore
         pass
@@ -309,28 +318,7 @@ def get_eos_token_ids_for_model(model_id: ModelId) -> list[int] | None:
     Returns:
         List of EOS token IDs, or None if the model uses standard tokenizer config
     """
-    model_id_lower = model_id.lower()
-    if "kimi-k2" in model_id_lower:
-        return [163586]
-    elif "glm-5" in model_id_lower:
-        # 154820: <|endoftext|>, 154827: <|user|>, 154829: <|observation|>
-        return [154820, 154827, 154829]
-    elif "glm" in model_id_lower:
-        # For GLM-4.7 and older
-        return [151336, 151329, 151338]
-    elif "gpt-oss" in model_id_lower:
-        return [200002, 200012]
-    elif (
-        "qwen3.5" in model_id_lower
-        or "qwen-3.5" in model_id_lower
-        or "qwen3.6" in model_id_lower
-        or "qwen-3.6" in model_id_lower
-    ):
-        # For Qwen3.5 / Qwen3.6: 248046 (<|im_end|>), 248044 (<|endoftext|>)
-        return [248046, 248044]
-    elif "gemma-4" in model_id_lower or "gemma-3" in model_id_lower:
-        return [1, 106, 50]
-    return None
+    return eos_token_ids_for_model_id(model_id)
 
 
 def load_tokenizer_for_model_id(
@@ -349,57 +337,12 @@ def load_tokenizer_for_model_id(
     Returns:
         TokenizerWrapper instance configured for the model
     """
-    model_id_lower = model_id.lower()
     eos_token_ids = get_eos_token_ids_for_model(model_id)
 
-    # Kimi uses a custom TikTokenTokenizer that transformers 5.x can't load via AutoTokenizer
-    if "kimi-k2" in model_id_lower:
-        import importlib.util
-        import types
-
-        sys.path.insert(0, str(model_path))
-
-        # Load tool_declaration_ts first (tokenization_kimi imports it with relative import)
-        tool_decl_path = model_path / "tool_declaration_ts.py"
-        if tool_decl_path.exists():
-            spec = importlib.util.spec_from_file_location(
-                "tool_declaration_ts", tool_decl_path
-            )
-            if spec and spec.loader:
-                tool_decl_module = importlib.util.module_from_spec(spec)
-                sys.modules["tool_declaration_ts"] = tool_decl_module
-                spec.loader.exec_module(tool_decl_module)
-
-        # Load tokenization_kimi with patched source (convert relative to absolute import)
-        tok_path = model_path / "tokenization_kimi.py"
-        source = tok_path.read_text()
-        source = source.replace("from .tool_declaration_ts", "from tool_declaration_ts")
-        spec = importlib.util.spec_from_file_location("tokenization_kimi", tok_path)
-        if spec:
-            tok_module = types.ModuleType("tokenization_kimi")
-            tok_module.__file__ = str(tok_path)
-            sys.modules["tokenization_kimi"] = tok_module
-            exec(compile(source, tok_path, "exec"), tok_module.__dict__)  # noqa: S102
-            TikTokenTokenizer = tok_module.TikTokenTokenizer  # type: ignore[attr-defined]  # noqa: N806
-        else:
-            from tokenization_kimi import TikTokenTokenizer  # type: ignore[import-not-found]  # noqa: I001
-
-        hf_tokenizer: Any = TikTokenTokenizer.from_pretrained(model_path)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-
-        # Patch encode to use internal tiktoken model directly
-        # transformers 5.x has a bug in the encode->pad path for slow tokenizers
-        def _patched_encode(text: str, **_kwargs: object) -> list[int]:
-            # Pass allowed_special="all" to handle special tokens like <|im_user|>
-            return list(hf_tokenizer.model.encode(text, allowed_special="all"))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-
-        hf_tokenizer.encode = _patched_encode
-        return TokenizerWrapper(
-            hf_tokenizer,
-            eos_token_ids=eos_token_ids,
-            tool_call_start="<|tool_calls_section_begin|>",
-            tool_call_end="<|tool_calls_section_end|>",
-            tool_parser=_parse_kimi_tool_calls,
-        )
+    # e.g. Kimi uses a custom TikTokenTokenizer that transformers 5.x can't load via AutoTokenizer
+    tokenizer_loader = tokenizer_loader_for(model_id)
+    if tokenizer_loader is not None:
+        return tokenizer_loader.load(model_path, eos_token_ids)
 
     # We should really consider going back to mlx lm load to get tokenizer
     tokenizer = load_tokenizer(
@@ -483,36 +426,6 @@ def _patch_lossy_chat_template(template: str) -> str | None:
     return patched if n > 0 else None
 
 
-def _needs_dsml_encoding(task_params: TextGenerationTaskParams) -> bool:
-    return "deepseek-v3.2" in task_params.model.lower()
-
-
-def _needs_v4_encoding(task_params: TextGenerationTaskParams) -> bool:
-    return "deepseek-v4" in task_params.model.lower()
-
-
-def _v4_reasoning_effort(task_params: TextGenerationTaskParams) -> str | None:
-    effort = task_params.reasoning_effort
-    if effort == "xhigh":
-        return "max"
-    if effort == "high":
-        return "high"
-    return None
-
-
-def _strip_v4_thinking_markers(content: str) -> str:
-    """Remove `<think>…</think>` blocks and any stray `<think>`/`</think>` tags
-    from prior-turn assistant content.
-
-    The V4 encoder drops `reasoning_content` for older turns when
-    `drop_thinking=True`"""
-    block = re.compile(r"<think>.*?</think>", re.DOTALL)
-    if not content:
-        return content
-    cleaned = block.sub("", content)
-    return cleaned.replace("<think>", "").replace("</think>", "")
-
-
 def consolidate_system_messages(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -561,49 +474,9 @@ def render_chat_template(
         partial_assistant_content = cast(str, formatted_messages[-1].get("content", ""))
         formatted_messages = formatted_messages[:-1]
 
-    if _needs_dsml_encoding(task_params):
-        from exo.worker.engines.mlx.vendor.dsml_encoding import encode_messages
-
-        prompt = encode_messages(
-            messages=formatted_messages,
-            # Only use chat mode if enable thinking is explicitly Fakse.
-            thinking_mode="chat"
-            if task_params.enable_thinking is False
-            else "thinking",
-            tools=task_params.tools,
-        )
-        if partial_assistant_content:
-            prompt += partial_assistant_content
-        return prompt
-
-    if _needs_v4_encoding(task_params):
-        from exo.worker.engines.mlx.vendor.deepseek_v4_encoding import (
-            encode_messages as encode_messages_v4,
-        )
-
-        v4_messages = [dict(m) for m in formatted_messages]
-        for msg in v4_messages:
-            if msg.get("role") == "assistant":
-                content = msg.get("content")
-                if isinstance(content, str):
-                    msg["content"] = _strip_v4_thinking_markers(content)
-        if task_params.tools:
-            for msg in v4_messages:
-                if msg.get("role") in ("system", "developer"):
-                    msg["tools"] = task_params.tools
-                    break
-            else:
-                v4_messages.insert(
-                    0, {"role": "system", "content": "", "tools": task_params.tools}
-                )
-
-        prompt = encode_messages_v4(
-            messages=v4_messages,
-            thinking_mode="chat"
-            if task_params.enable_thinking is False
-            else "thinking",
-            reasoning_effort=_v4_reasoning_effort(task_params),
-        )
+    prompt_encoder = prompt_encoder_for(task_params)
+    if prompt_encoder is not None:
+        prompt = prompt_encoder.encode(formatted_messages, task_params)
         if partial_assistant_content:
             prompt += partial_assistant_content
         return prompt
@@ -611,13 +484,8 @@ def render_chat_template(
     for msg in formatted_messages:
         _normalize_tool_calls(msg)
 
-    # Put reasoning content in thinking block for GPT OSS
-    if "gpt-oss" in task_params.model.lower():
-        for msg in formatted_messages:
-            if msg.get("role") == "assistant" and "thinking" not in msg:
-                rc = msg.get("reasoning_content")
-                if isinstance(rc, str) and rc:
-                    msg["thinking"] = rc
+    for hook in template_messages_hooks_for(task_params):
+        hook.prepare(formatted_messages)
 
     extra_kwargs: dict[str, Any] = {}
     if task_params.enable_thinking is not None:
@@ -863,41 +731,6 @@ def mx_barrier(group: mx.distributed.Group | None):
             mx.array(1.0), group=group, stream=mx.default_stream(mx.Device(mx.cpu))
         )
     )
-
-
-def _parse_kimi_tool_calls(text: str):
-    import regex as re
-
-    # kimi has a fixed function naming scheme, with a json formatted arg
-    #   functions.multiply:0<|tool_call_argument_begin|>{"a": 2, "b": 3}
-    _func_name_regex = re.compile(
-        r"^\s*((?:functions\.)?(.+?):\d+)\s*<\|tool_call_argument_begin\|>", re.DOTALL
-    )
-    _func_arg_regex = re.compile(r"<\|tool_call_argument_begin\|>\s*(.*)\s*", re.DOTALL)
-    _tool_call_split_regex = re.compile(
-        r"<\|tool_call_begin\|>(.*?)<\|tool_call_end\|>", re.DOTALL
-    )
-
-    def _parse_single_tool(text: str) -> dict[str, Any]:
-        func_name_match = _func_name_regex.search(text)
-        if func_name_match is None:
-            raise ValueError("No tool call found.")
-        tool_call_id = func_name_match.group(1)  # e.g. "functions.get_weather:0"
-        func_name = func_name_match.group(2)  # e.g. "get_weather"
-
-        func_args_match = _func_arg_regex.search(text)
-        if func_args_match is None:
-            raise ValueError("No tool call arguments found.")
-        func_args = func_args_match.group(1)
-        arg_dct = json.loads(func_args)  # pyright: ignore[reportAny]
-
-        return dict(id=tool_call_id, name=func_name, arguments=arg_dct)  # pyright: ignore[reportAny]
-
-    tool_matches = _tool_call_split_regex.findall(text)
-    if tool_matches:
-        return [_parse_single_tool(match) for match in tool_matches]  # pyright: ignore[reportAny]
-    else:
-        return [_parse_single_tool(text)]
 
 
 def mx_all_gather_tasks(

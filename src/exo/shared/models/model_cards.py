@@ -31,6 +31,7 @@ from exo.shared.types.common import ModelId
 from exo.shared.types.memory import Memory
 from exo.shared.types.text_generation import ReasoningDialect
 from exo.utils.pydantic_ext import FrozenModel
+from exo.worker.engines.mlx.models.spec_registry import tensor_parallel_architectures
 
 # kinda ugly...
 # TODO: load search path from config.toml
@@ -169,6 +170,9 @@ class ModelCard(FrozenModel):
     tasks: list[ModelTask]
     components: list[ComponentInfo] | None = None
     family: str = ""
+    # config.json `model_type` of the checkpoint. The master looks up the model's family
+    # (placement rules) by it; see exo.worker.engines.mlx.models.
+    model_type: str | None = None
     quantization: str = ""
     base_model: str = ""
     capabilities: list[str] = []
@@ -288,24 +292,11 @@ class ConfigData(BaseModel):
 
     @property
     def supports_tensor(self) -> bool:
-        return self.architectures in [
-            ["Glm4MoeLiteForCausalLM"],
-            ["GlmMoeDsaForCausalLM"],
-            ["DeepseekV4ForCausalLM"],
-            ["DeepseekV32ForCausalLM"],
-            ["DeepseekV3ForCausalLM"],
-            ["Qwen3NextForCausalLM"],
-            ["Qwen3MoeForCausalLM"],
-            ["Qwen3_5MoeForConditionalGeneration"],
-            ["Qwen3_5ForConditionalGeneration"],
-            ["Qwen3VLForConditionalGeneration"],
-            ["MiniMaxM2ForCausalLM"],
-            ["LlamaForCausalLM"],
-            ["GptOssForCausalLM"],
-            ["Step3p5ForCausalLM"],
-            ["NemotronHForCausalLM"],
-            ["Gemma4ForConditionalGeneration"],
-        ]
+        return (
+            self.architectures is not None
+            and len(self.architectures) == 1
+            and self.architectures[0] in tensor_parallel_architectures()
+        )
 
     @model_validator(mode="before")
     @classmethod

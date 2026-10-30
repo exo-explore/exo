@@ -8,16 +8,16 @@ from exo.shared.types.worker.runner_response import (
     GenerationResponse,
     ToolCallResponse,
 )
-from exo.worker.engines.mlx.vendor.dsml_encoding import (
+from exo.worker.engines.mlx.models.deepseek_v3.dsml_encoding import (
     DSML_TOKEN,
     THINKING_END,
     THINKING_START,
     TOOL_CALLS_END,
     TOOL_CALLS_START,
 )
+from exo.worker.engines.mlx.models.deepseek_v3.parser import parse_deepseek_v32
 from exo.worker.runner.llm_inference.model_output_parsers import (
     count_reasoning_tokens,
-    parse_deepseek_v32,
     parse_thinking_models,
     parse_tool_calls,
 )

@@ -99,7 +99,7 @@ def main():
     )
     args = parser.parse_args()
 
-    toml_files = sorted(CARDS_DIR.glob("*.toml"))
+    toml_files = sorted(CARDS_DIR.rglob("*.toml"))
     if not toml_files:
         print(f"No TOML files found in {CARDS_DIR}", file=sys.stderr)
         sys.exit(1)

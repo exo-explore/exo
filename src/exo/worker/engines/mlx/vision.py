@@ -27,6 +27,7 @@ from exo.shared.models.model_cards import VisionCardConfig
 from exo.shared.types.common import ModelId
 from exo.shared.types.text_generation import Base64Image, TextGenerationTaskParams
 from exo.worker.engines.mlx.cache import encode_prompt
+from exo.worker.engines.mlx.models.spec_registry import mlx_vlm_model_type_aliases
 from exo.worker.engines.mlx.types import Model
 from exo.worker.engines.mlx.utils_mlx import (
     fix_unmatched_think_end_tokens,
@@ -36,10 +37,7 @@ from exo.worker.runner.bootstrap import logger
 
 _video_processor_patched = False
 
-_MLX_VLM_MODEL_TYPE_ALIASES: dict[str, str] = {
-    "kimi_k25": "kimi_vl",
-    "kimi_k26": "kimi_vl",
-}
+_MLX_VLM_MODEL_TYPE_ALIASES: dict[str, str] = mlx_vlm_model_type_aliases()
 
 
 def _torch_tensor_to_mx(

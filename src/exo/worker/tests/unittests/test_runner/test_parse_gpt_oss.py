@@ -10,9 +10,9 @@ from exo.shared.types.worker.runner_response import (
     GenerationResponse,
     ToolCallResponse,
 )
+from exo.worker.engines.mlx.models.gpt_oss.parser import parse_gpt_oss
 from exo.worker.runner.llm_inference.model_output_parsers import (
     count_reasoning_tokens,
-    parse_gpt_oss,
 )
 
 # Token IDs from mlx-community/gpt-oss-20b-MXFP4-Q8 tokenizer.

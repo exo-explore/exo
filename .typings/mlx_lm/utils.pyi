@@ -20,14 +20,13 @@ def compute_bits_per_weight(model): ...
 def hf_repo_to_path(hf_repo):  # -> Path:
     ...
 def load_config(model_path: Path) -> dict: ...
+def _get_classes(config: dict[str, Any]) -> Tuple[Type[nn.Module], type]: ...
 def load_model(
     model_path: Path,
     lazy: bool = False,
     strict: bool = True,
     model_config: dict[str, Any] = {},
-    get_model_classes: Callable[
-        [dict[str, Any]], Tuple[Type[nn.Module], Type[ModelArgs]]
-    ] = ...,
+    get_model_classes: Callable[[dict[str, Any]], Tuple[Type[nn.Module], type]] = ...,
 ) -> Tuple[nn.Module, dict[str, Any]]:
     """
     Load and initialize the model from a given path.
