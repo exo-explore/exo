@@ -138,7 +138,14 @@ let
             '';
             autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
           });
-        } // lib.optionalAttrs cudaSupport {
+        } // lib.optionalAttrs (isLinux && !cudaSupport) (
+          # The lock gives Linux torch's CUDA build, so its NVIDIA wheels are in the
+          # closure even without CUDA. Nothing loads them on a CPU build: leave their
+          # CUDA and RDMA libraries unresolved rather than failing auto-patchelf.
+          lib.mapAttrs
+            (_: pkg: pkg.overrideAttrs (_: { autoPatchelfIgnoreMissingDeps = true; }))
+            (lib.filterAttrs (name: _: lib.hasPrefix "nvidia-" name) prev)
+        ) // lib.optionalAttrs cudaSupport {
           "${libmlx_source}" = prev."${libmlx_source}".overrideAttrs (old: {
             nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.autoAddDriverRunpath ];
             buildInputs = old.buildInputs ++ cudaLibs;
