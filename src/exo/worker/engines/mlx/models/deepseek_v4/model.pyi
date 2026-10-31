@@ -1,7 +1,7 @@
 """Type stubs for the vendored DeepSeek V4 model (model.py next to this file)."""
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -48,14 +48,99 @@ class ModelArgs(BaseModelArgs):
     topk_method: str = "noaux_tc"
     norm_topk_prob: bool = True
     routed_scaling_factor: float = 1.5
+    quantization_config: Optional[Dict[str, Any]] = None
+    @property
+    def fp8_block_weights(self) -> bool: ...
 
 # exo fixes (see the header of model.py)
 _SDPA_MAX_SCORES: int
 
 def _pow2_ceil(x: mx.array) -> mx.array: ...
 def _round_e2m1(v: mx.array) -> mx.array: ...
+def _block_round(x: mx.array, block: int, fp4: bool) -> mx.array: ...
 def _fp8_kv_sim(kv: mx.array, rd: int) -> mx.array: ...
 def _fp4_indexer_sim(x: mx.array) -> mx.array: ...
+
+# exo perf (see the sections marked "exo perf" in model.py)
+_FP8_DEQUANT_MIN_ROWS: int
+_PREFILL_Q_BLOCK: int
+_PREFILL_PER_QUERY_KEYS: bool
+_INDEXER_MAX_SCORES: int
+_HC_MIX_MAX_ROWS: int
+_block_round_kernel: Optional[Callable[..., list[mx.array]]]
+_hc_mix_kernel: Optional[Callable[..., list[mx.array]]]
+_hc_post_kernel: Optional[Callable[..., list[mx.array]]]
+_indexer_score_kernel: Optional[Callable[..., list[mx.array]]]
+_DECODE_ATTENTION_KERNELS: bool
+
+def _decode_attention(
+    q: mx.array,
+    window_kv: mx.array,
+    pool: Optional[mx.array],
+    idx: Optional[mx.array],
+    scale: float,
+    sinks: mx.array,
+    window_valid: Optional[mx.array] = None,
+    pool_lengths: Optional[List[int]] = None,
+) -> Optional[mx.array]: ...
+def _decode_padding_mask(
+    batch: int,
+    window_valid: Optional[mx.array],
+    window_len: int,
+    pool_lengths: Optional[List[int]],
+    compressed_len: int,
+    topk: Optional[mx.array],
+) -> Optional[mx.array]: ...
+
+class Fp8BlockLinear(nn.QuantizedLinear):
+    def __init__(
+        self, input_dims: int, output_dims: int, bias: bool = False
+    ) -> None: ...
+    def dense_weight(self, dtype: mx.Dtype) -> mx.array: ...
+    def __call__(self, x: mx.array) -> mx.array: ...
+
+def _ue8m0_bytes(name: str, scale: mx.array) -> mx.array: ...
+def _fp8_block_to_mxfp8(
+    weight: mx.array, scale: mx.array
+) -> tuple[mx.array, mx.array]: ...
+def _fp8_kv_sim_ops(kv: mx.array, rd: int) -> mx.array: ...
+def _block_round_fused(
+    x: mx.array,
+    block: int,
+    fp4: bool,
+    rounded: int,
+    out_dtype: mx.Dtype,
+    via_bf16: bool = False,
+) -> mx.array: ...
+def _hadamard(n: int) -> mx.array: ...
+def _attn_qkv_partial_rope(
+    q: mx.array, kv: mx.array, offset: int | mx.array, rd: int, freqs: mx.array
+) -> tuple[mx.array, mx.array]: ...
+def _attn_inv_rope_flatten(
+    o: mx.array, offset: int | mx.array, rd: int, freqs: mx.array, flat_dim: int
+) -> mx.array: ...
+def scaled_dot_product_attention(
+    queries: mx.array,
+    keys: mx.array,
+    values: mx.array,
+    cache: Optional[Any],
+    scale: float,
+    mask: Optional[mx.array],
+    sinks: Optional[mx.array] = None,
+) -> mx.array: ...
+def _fp4_rotate_round(x: mx.array, hadamard: mx.array) -> mx.array: ...
+def _hc_expand_ops(
+    f_out: mx.array, residual: mx.array, post: mx.array, comb: mx.array
+) -> mx.array: ...
+def hc_sinkhorn_collapse(
+    mixes: mx.array,
+    scale: mx.array,
+    base: mx.array,
+    x: mx.array,
+    hc_mult: int,
+    sinkhorn_iters: int,
+    eps: float | mx.array,
+) -> tuple[mx.array, mx.array, mx.array]: ...
 
 class DeepseekV4RoPE(nn.Module):
     dims: int
@@ -73,11 +158,15 @@ class DeepseekV4RoPE(nn.Module):
         offset: int = 0,
         inverse: bool = False,
     ) -> mx.array: ...
+    def head_freqs(self, head_dim: int) -> mx.array: ...
 
 class HyperConnection(nn.Module):
     dim: int
     hc_mult: int
     norm_eps: float
+    fn: mx.array
+    base: mx.array
+    scale: mx.array
 
     def __init__(
         self,
@@ -87,6 +176,10 @@ class HyperConnection(nn.Module):
         sinkhorn_iters: int,
         hc_eps: float,
     ) -> None: ...
+    def hc_pre(self, x: mx.array) -> tuple[mx.array, mx.array, mx.array]: ...
+    def hc_post(
+        self, f_out: mx.array, residual: mx.array, post: mx.array, comb: mx.array
+    ) -> mx.array: ...
 
 class HyperHead(nn.Module):
     dim: int
@@ -210,6 +303,7 @@ class V4Attention(nn.Module):
     indexer: Indexer
 
     def __init__(self, args: ModelArgs, layer_id: int) -> None: ...
+    def _grouped_output_projection(self, out: mx.array) -> mx.array: ...
     def __call__(
         self,
         x: mx.array,
@@ -227,6 +321,7 @@ class DeepseekV4MLP(nn.Module):
         hidden_size: int,
         intermediate_size: int,
         swiglu_limit: float = 0.0,
+        args: Optional[ModelArgs] = None,
     ) -> None: ...
     def __call__(self, x: mx.array) -> mx.array: ...
 
