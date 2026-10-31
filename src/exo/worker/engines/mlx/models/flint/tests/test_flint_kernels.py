@@ -555,3 +555,50 @@ def test_fused_activation_model_logits_equal_the_unfused_models() -> None:
     expected = _run(reference, prompt, 6, reference.make_cache)
     for a, b in zip(got, expected, strict=True):
         assert _identical(a, b)
+
+
+@needs_metal
+@pytest.mark.parametrize("tokens", [1, 2, 9, 10, 11, 12, 170, 171, 172])
+def test_stacked_expert_gather_at_flints_kernel_thresholds(tokens: int) -> None:
+    """Flint's expert count and top-k (256, 6): mlx-lm sorts from 64 rows (11 tokens) and MLX
+    switches to the sorted-rhs gather at rows / experts >= 4 (171 tokens). Stacking gate and
+    up keeps 256 experts, so every path gives the same bits as two gathers."""
+    experts, rows, dims, top_k = 256, 64, 512, 6
+
+    def quantized(seed: int) -> tuple[mx.array, mx.array, mx.array]:
+        w = mx.random.normal((experts, rows, dims), key=mx.random.key(seed)) * 0.02
+        weight, scales, biases = mx.quantize(
+            w.astype(mx.bfloat16), group_size=64, bits=4
+        )
+        assert biases is not None
+        return weight, scales, biases
+
+    gate, up = quantized(60), quantized(61)
+    stack = tuple(
+        mx.concatenate([g, u], axis=-2) for g, u in zip(gate, up, strict=True)
+    )
+    x = _bf16((tokens, 1, 1, dims), 62 + tokens)
+    indices = mx.random.randint(0, experts, (tokens, top_k), key=mx.random.key(tokens))
+    indices = indices.astype(mx.uint32)
+    sort = indices.size >= 64
+    if sort:
+        order = mx.argsort(indices.flatten())
+        x = x.flatten(0, -3)[order // top_k]
+        indices = indices.flatten()[order]
+    else:
+        x = mx.expand_dims(x.reshape(tokens, 1, dims), (-2, -3))
+    both = _gather_experts(x, stack, indices, 4, sort)
+    assert _identical(both[..., :rows], _gather_experts(x, gate, indices, 4, sort))
+    assert _identical(both[..., rows:], _gather_experts(x, up, indices, 4, sort))
+
+
+@needs_metal
+@pytest.mark.parametrize("rows", list(range(1, 10)))
+def test_stacked_qkv_projection_for_every_small_row_count(rows: int) -> None:
+    """1 to 9 rows cover MLX's matrix-vector kernels for one row and for several (another
+    kernel from 2 rows on M3/M4-class GPUs) and the switch to running each part alone."""
+    parts = [nn.QuantizedLinear(2048, n, bias=False) for n in (4096, 512, 512)]
+    stacked = StackedQuantizedLinear(list[nn.Module](parts))
+    x = _bf16((1, rows, 2048), 70 + rows)
+    for part, out in zip(parts, stacked.split(x), strict=True):
+        assert _identical(out, part(x))
