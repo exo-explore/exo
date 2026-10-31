@@ -11,7 +11,6 @@ from mlx_lm.generate import (
     maybe_quantize_kv_cache,
     stream_generate,
 )
-from mlx_lm.sample_utils import make_logits_processors, make_sampler
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.api.types import (
@@ -49,6 +48,11 @@ from exo.worker.engines.mlx.constants import (
     MAX_TOKENS,
 )
 from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
+from exo.worker.engines.mlx.sampling import (
+    RecentTokensProcessor,
+    make_logits_processors,
+    make_sampler,
+)
 from exo.worker.engines.mlx.sharding.pipeline import (
     PipelineFirstLayer,
     PipelineLastLayer,
@@ -472,7 +476,8 @@ def ban_token_ids(token_ids: list[int]) -> Callable[[mx.array, mx.array], mx.arr
             logits[..., tid] = -1e9
         return logits
 
-    return proc
+    # It doesn't read the history.
+    return RecentTokensProcessor(proc, window=0)
 
 
 def eos_ids_from_tokenizer(tokenizer: TokenizerWrapper) -> list[int]:
