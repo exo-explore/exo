@@ -67,7 +67,14 @@ def _rope() -> RoPE:
 
 @pytest.mark.parametrize(
     "length,previous,compressed,start",
-    [(1, 128, 1024, 3000), (6, 128, 1024, 777), (1, 20, 0, 20), (40, 128, 512, 100)],
+    [
+        (1, 128, 1024, 3000),
+        (6, 128, 1024, 777),
+        (1, 20, 0, 20),
+        (16, 128, 1024, 500),
+        (17, 128, 1024, 500),
+        (40, 128, 512, 100),
+    ],
 )
 def test_attention_with_rope_matches_the_ops(
     length: int, previous: int, compressed: int, start: int
@@ -264,3 +271,148 @@ def test_kernels_off_fall_back_to_the_ops() -> None:
     weight = mx.ones((8, 256), dtype=mx.bfloat16)
     logits = kernels.head_logits(mx.ones((1, 256), dtype=mx.bfloat16), weight)
     assert logits.dtype == mx.float32 and float(logits[0, 0]) == 256.0
+
+
+@pytest.mark.parametrize("batch", [1, 2, 3, 4, 5, 8, 9, 16])
+def test_kernels_give_each_row_the_same_bits_at_any_row_count(batch: int) -> None:
+    """MLX picks some kernels by row count, so prefill chunk length or decode batch size can
+    change results. The fused kernels must not add such switches: within the row counts each
+    one takes, every row's output equals the one-row call's bit for bit."""
+    mx.random.seed(5)
+
+    def rows(value: mx.array) -> mx.array:
+        return mx.broadcast_to(value, (batch, *value.shape[1:]))
+
+    def same_rows(got: mx.array | None, want: mx.array | None) -> bool:
+        assert got is not None and want is not None
+        return bool(mx.array_equal(got, mx.broadcast_to(want, got.shape)))
+
+    rope = _rope()
+    weight = (mx.random.normal((3000, 1024)) * 0.02).astype(mx.bfloat16)
+    x = mx.random.normal((1, 1, 1024)).astype(mx.bfloat16)
+    if batch <= 8:
+        assert same_rows(
+            kernels.head_logits(rows(x), weight), kernels.head_logits(x, weight)
+        )
+
+    logits = mx.random.normal((1, 384)) * 3
+    bias = mx.random.normal((384,)) * 0.1
+
+    def route(value: mx.array) -> tuple[mx.array, mx.array]:
+        routed = kernels.route(
+            value, bias, top_k=6, gate_temp=1.0, norm_topk_prob=True, route_scale=1.5
+        )
+        assert routed is not None
+        return routed
+
+    for got, want in zip(route(rows(logits)), route(logits), strict=True):
+        assert same_rows(got, want)
+
+    activation = DeepseekV41SwiGLU(10.0)
+    up = (mx.random.normal((1, 2048)) * 8).astype(mx.bfloat16)
+    gate = (mx.random.normal((1, 2048)) * 8).astype(mx.bfloat16)
+    assert same_rows(activation(rows(up), rows(gate)), activation(up, gate))
+
+    routed_rows = mx.random.normal((1, 6, 1024)).astype(mx.bfloat16)
+    weights = mx.random.uniform(shape=(1, 6))
+    shared = mx.random.normal((1, 1024)).astype(mx.bfloat16)
+    assert same_rows(
+        kernels.moe_combine(
+            rows(routed_rows), rows(weights), rows(shared), mx.bfloat16
+        ),
+        kernels.moe_combine(routed_rows, weights, shared, mx.bfloat16),
+    )
+
+    norm_weight = (mx.random.normal((512,)) * 0.1 + 1).astype(mx.bfloat16)
+    kv = (mx.random.normal((1, 1, 512)) * 5).astype(mx.bfloat16)
+
+    def epilogue(value: mx.array) -> mx.array | None:
+        return kernels.kv_epilogue(
+            value,
+            norm_weight,
+            eps=1e-20,
+            periods=rope.periods,
+            rope_dim=64,
+            start_pos=777,
+        )
+
+    assert same_rows(epilogue(rows(kv)), epilogue(kv))
+
+    heads, dim = 16, 512
+    q = (mx.random.normal((1, 1, heads, dim)) * 2).astype(mx.bfloat16)
+    window = (mx.random.normal((1, 128, dim)) * 3).astype(mx.bfloat16)
+    window_idx = mx.arange(128, dtype=mx.int32).reshape(1, 1, 128)
+    compressed = mx.random.normal((1, 1024, dim)).astype(mx.bfloat16)
+    compressed_idx = mx.random.randint(-1, 1024, (1, 1, 256)).astype(mx.int32)
+    sinks = mx.random.normal((heads,))
+
+    def attention(count: int) -> mx.array | None:
+        def widen(value: mx.array) -> mx.array:
+            return mx.broadcast_to(value, (count, *value.shape[1:]))
+
+        return kernels.attention_with_rope(
+            widen(q),
+            widen(window),
+            widen(window_idx),
+            widen(compressed),
+            widen(compressed_idx),
+            sinks=sinks,
+            scale=1.0 / math.sqrt(dim),
+            periods=rope.periods,
+            rope_dim=64,
+            start_pos=3000,
+        )
+
+    assert same_rows(attention(batch), attention(1))
+
+    args = ModelArgs(hidden_size=1024, hc_mult=4)
+    hc = HyperConnection(args)
+    hc.fn = mx.random.normal(hc.fn.shape) * 0.02
+    hc.base = mx.random.normal(hc.base.shape) * 0.5
+    hc.scale = mx.random.uniform(shape=(3,)) + 0.5
+    streams = (mx.random.normal((1, 1, 4, 1024)) * 4).astype(mx.bfloat16)
+    h = (mx.random.normal((1, 1, 1024)) * 2).astype(mx.bfloat16)
+    post = mx.random.uniform(shape=(1, 1, 4))
+    comb = mx.softmax(mx.random.normal((1, 1, 4, 4)), axis=-1)
+    pre = mx.softmax(mx.random.normal((1, 1, 4)), axis=-1)
+
+    def boundary(count: int) -> tuple[mx.array, ...]:
+        def widen(value: mx.array) -> mx.array:
+            return mx.broadcast_to(value, (count, *value.shape[1:]))
+
+        assert kernels.hc_fusable(widen(streams))
+        new, partials = kernels.hc_partials(
+            widen(streams), hc.fn, (widen(h), widen(post), widen(comb))
+        )
+        return (
+            new,
+            *kernels.hc_finish(
+                partials,
+                new,
+                widen(pre),
+                scale=hc.scale,
+                base=hc.base,
+                norm_weight=mx.ones((1024,), dtype=mx.bfloat16),
+                norm_eps=1e-20,
+                hc_eps=args.hc_eps,
+                iters=args.hc_sinkhorn_iters,
+            ),
+        )
+
+    for got, want in zip(boundary(batch), boundary(1), strict=True):
+        assert same_rows(got, want)
+
+
+def test_fused_paths_hand_over_to_the_ops_at_their_row_limits() -> None:
+    """The head kernel takes up to 8 rows, attention and the hyper-connection boundary up to
+    16; one row more and the plain ops run."""
+    rows_16 = mx.zeros((1, 16, 4, 1024), dtype=mx.bfloat16)
+    rows_17 = mx.zeros((1, 17, 4, 1024), dtype=mx.bfloat16)
+    assert kernels.hc_fusable(rows_16)
+    assert not kernels.hc_fusable(rows_17)
+    mx.random.seed(6)
+    weight = (mx.random.normal((3000, 1024)) * 0.02).astype(mx.bfloat16)
+    for count in (8, 9):
+        x = mx.random.normal((1, count, 1024)).astype(mx.bfloat16)
+        reference = x.astype(mx.float32) @ weight.astype(mx.float32).T
+        assert _rel(kernels.head_logits(x, weight), reference) < 1e-6
