@@ -1,0 +1,305 @@
+"""DeepSeek V4's MLX model on a tiny random configuration whose indexer top-k binds after 32
+tokens: one-shot prefill, exo's chunked prefill and one-token decode give the same logits
+(which needs the indexer's RoPE along positions and its causal top-k), the split attention
+path equals the unsplit one, rows of different lengths batched together give what each row
+gives alone, and the reference's rounding helpers. Real-weight comparisons with DeepSeek's
+reference implementation are in the PR's report."""
+
+from collections.abc import Iterator
+from typing import cast
+
+import mlx.core as mx
+import numpy as np
+import pytest
+
+from exo.worker.engines.mlx.cache import (
+    CacheSnapshot,
+    KVPrefixCache,
+    cache_length,
+    snapshot_ssm_states,
+)
+from exo.worker.engines.mlx.models.deepseek_v4 import model as dsv4
+from exo.worker.engines.mlx.models.deepseek_v4.model import (
+    DeepseekV4Cache,
+    Model,
+    ModelArgs,
+)
+from exo.worker.engines.mlx.types import Model as ExoModel
+
+PROMPT_TOKENS = 160
+
+
+def _tiny_model() -> Model:
+    mx.random.seed(0)
+    args = ModelArgs(
+        vocab_size=256,
+        hidden_size=128,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        q_lora_rank=64,
+        o_lora_rank=32,
+        o_groups=2,
+        head_dim=128,
+        qk_rope_head_dim=64,
+        sliding_window=16,
+        # window-only, compressed with the indexer (ratio 4), heavily compressed, indexer
+        compress_ratios=[0, 4, 128, 4],
+        index_n_heads=4,
+        index_head_dim=64,
+        index_topk=8,
+        moe_intermediate_size=64,
+        n_routed_experts=4,
+        num_experts_per_tok=2,
+        num_hash_layers=1,
+        num_nextn_predict_layers=0,
+        max_position_embeddings=4096,
+    )
+    model = Model(args)
+    mx.eval(model.parameters())
+    return model
+
+
+def _prompt() -> mx.array:
+    rng = np.random.default_rng(0)
+    return mx.array(rng.integers(0, 256, size=(1, PROMPT_TOKENS)).astype(np.int32))
+
+
+def _logits(model: Model, tokens: mx.array, step: int) -> np.ndarray:
+    """Next-token log-probs at every position, feeding the prompt `step` tokens at a time."""
+    cache = model.make_cache()
+    out: list[mx.array] = []
+    for start in range(0, tokens.shape[1], step):
+        logits = model(tokens[:, start : start + step], cache=cache).astype(mx.float32)
+        out.append(logits - mx.logsumexp(logits, axis=-1, keepdims=True))
+        mx.eval(out[-1])
+    return np.array(mx.concatenate(out, axis=1)[0])
+
+
+def _no_kv_rounding(kv: mx.array, _rope_dims: int) -> mx.array:
+    return kv
+
+
+def _no_indexer_rounding(x: mx.array) -> mx.array:
+    return x
+
+
+@pytest.fixture(scope="module")
+def tiny_model() -> Iterator[Model]:
+    """The model with the reference's FP8 / FP4 roundings off: they are discontinuous, so
+    the 1e-7 differences between the decode and prefill kernels can flip a rounding and the
+    comparisons below would measure that noise instead of the cache and indexer logic."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(dsv4, "_fp8_kv_sim", _no_kv_rounding)
+        patch.setattr(dsv4, "_fp4_indexer_sim", _no_indexer_rounding)
+        yield _tiny_model()
+
+
+@pytest.fixture(scope="module")
+def one_shot(tiny_model: Model) -> np.ndarray:
+    return _logits(tiny_model, _prompt(), PROMPT_TOKENS)
+
+
+@pytest.mark.parametrize("step", [1, 48])
+def test_chunked_prefill_and_decode_match_one_shot(
+    tiny_model: Model, one_shot: np.ndarray, step: int
+) -> None:
+    """Past 4 * index_topk = 32 tokens the indexer selects rows, so this only holds when its
+    query RoPE follows positions (the same in every step) and a multi-token step can't pick
+    rows that complete after the query. Without those fixes the log-probs differ by up to
+    1.3 nats from position 3 on."""
+    stepped = _logits(tiny_model, _prompt(), step)
+    np.testing.assert_allclose(stepped, one_shot, atol=1e-4)
+
+
+def test_split_attention_matches_unsplit(
+    tiny_model: Model, one_shot: np.ndarray, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 4 heads x up to 160 queries x ~60 keys: a limit of 2**10 scores forces small slices.
+    monkeypatch.setattr(dsv4, "_SDPA_MAX_SCORES", 2**10)
+    split = _logits(tiny_model, _prompt(), PROMPT_TOKENS)
+    np.testing.assert_allclose(split, one_shot, atol=1e-4)
+
+
+def test_pow2_ceil_is_exact() -> None:
+    x = mx.array([1.0, 1.5, 3.0, 0.75, 2.0**-20, 448.0], dtype=mx.float32)
+    expected = [1.0, 2.0, 4.0, 1.0, 2.0**-20, 512.0]
+    assert np.array(dsv4._pow2_ceil(x)).tolist() == expected  # pyright: ignore[reportPrivateUsage]
+
+
+def test_e2m1_rounds_to_nearest_with_ties_to_even() -> None:
+    values = [0.25, 0.3, 0.75, 1.25, 1.75, 2.5, 3.5, 5.0, 5.5, -0.75, -6.0]
+    expected = [0.0, 0.5, 1.0, 1.0, 2.0, 2.0, 4.0, 4.0, 6.0, -1.0, -6.0]
+    rounded = dsv4._round_e2m1(mx.array(values, dtype=mx.float32))  # pyright: ignore[reportPrivateUsage]
+    assert np.array(rounded).tolist() == expected
+
+
+def test_fp8_kv_rounding_keeps_the_rope_dims() -> None:
+    mx.random.seed(1)
+    kv = mx.random.normal((2, 3, 192))
+    rounded = dsv4._fp8_kv_sim(kv, 64)  # pyright: ignore[reportPrivateUsage]
+    assert mx.array_equal(rounded[..., -64:], kv[..., -64:])
+    rel = mx.abs(rounded[..., :-64] - kv[..., :-64]) / mx.abs(kv[..., :-64])
+    # e4m3 keeps 3 mantissa bits: at most 2**-4 relative error away from tiny values
+    assert float(mx.max(mx.where(mx.abs(kv[..., :-64]) > 0.1, rel, 0.0))) <= 2**-4
+
+
+def test_prefix_cache_partial_hit_keeps_only_the_shared_prefix(
+    tiny_model: Model,
+) -> None:
+    """A new prompt sharing the first 48 tokens of a cached one restores the cache at 48
+    tokens (V4's cache can't trim, so from a snapshot), and continuing from there gives
+    what prefilling the new prompt from scratch gives. The cache used to keep all of the
+    cached prompt, so the new prompt's tokens followed the old prompt's."""
+    rng = np.random.default_rng(1)
+    first = rng.integers(0, 256, size=96).astype(np.int32)
+    second = first.copy()
+    second[48:] = rng.integers(0, 256, size=48)
+
+    # exo's prefill: a snapshot of every non-trimmable cache after each chunk
+    cache = tiny_model.make_cache()
+    snapshots: list[CacheSnapshot] = []
+    for start in range(0, 96, 16):
+        mx.eval(tiny_model(mx.array(first[None, start : start + 16]), cache=cache))
+        snapshots.append(snapshot_ssm_states(cache))
+    prefix_cache = KVPrefixCache(None)
+    prefix_cache.add_kv_cache(mx.array(first), cache, snapshots)
+
+    restored, remaining, index, exact = prefix_cache.get_kv_cache(
+        cast(ExoModel, cast(object, tiny_model)), mx.array(second)
+    )
+    assert index == 0 and not exact
+    assert remaining.shape[0] == 48
+    assert cache_length(restored) == 48
+
+    continued = tiny_model(remaining[None], cache=list(restored))[0, -1]
+    fresh = tiny_model(mx.array(second[None]), cache=tiny_model.make_cache())[0, -1]
+    np.testing.assert_allclose(
+        np.array(continued.astype(mx.float32)),
+        np.array(fresh.astype(mx.float32)),
+        atol=1e-4,
+    )
+
+
+# Shorter and longer than the 16-token window; 0 to 37 compressed rows in the ratio-4 layers
+# (the indexer picks 8), and one row in the ratio-128 layer only for the longest.
+BATCH_LENGTHS = (2, 5, 14, 23, 41, 70, 150)
+DECODE_STEPS = 8
+
+
+def _log_probs(logits: mx.array) -> np.ndarray:
+    logits = logits.astype(mx.float32)
+    return np.array(logits - mx.logsumexp(logits, axis=-1, keepdims=True))
+
+
+def _prefilled(model: Model, tokens: np.ndarray) -> list[DeepseekV4Cache]:
+    cache = [c for c in model.make_cache() if isinstance(c, DeepseekV4Cache)]
+    assert len(cache) == len(model.layers)
+    mx.eval(model(mx.array(tokens[None]), cache=cache))
+    return cache
+
+
+def _merged(caches: list[list[DeepseekV4Cache]]) -> list[DeepseekV4Cache]:
+    return [
+        DeepseekV4Cache.merge([cache[layer] for cache in caches])
+        for layer in range(len(caches[0]))
+    ]
+
+
+def _extend(batch: list[DeepseekV4Cache], other: list[DeepseekV4Cache]) -> None:
+    for mine, theirs in zip(batch, other, strict=True):
+        mine.extend(theirs)
+
+
+def _alone(model: Model, prompt: np.ndarray, steps: list[np.ndarray]) -> np.ndarray:
+    """Log-probs after each step (one or more tokens) of one row run by itself."""
+    cache = _prefilled(model, prompt)
+    return np.stack(
+        [_log_probs(model(mx.array(step[None]), cache=cache)[0, -1]) for step in steps]
+    )
+
+
+@pytest.mark.parametrize("join", ["merge", "extend"])
+def test_batched_rows_of_different_lengths_match_each_row_alone(
+    tiny_model: Model, join: str
+) -> None:
+    """mlx-lm's batch generator merges the caches of prompts of different lengths (left-
+    padded window, right-padded compressor carry and pools), extends a running batch with
+    them, and right-pads the next multi-token step. Each row must still see only its own
+    tokens: the padded window slots and compressed rows masked in one-token steps, each row's
+    own last window kept for the overlapping compressor, and every row's carry length kept
+    through merge / extend. Before the fixes rows differed from running alone by up to 2
+    nats."""
+    rng = np.random.default_rng(2)
+    prompts = [rng.integers(0, 256, size=n).astype(np.int32) for n in BATCH_LENGTHS]
+    first = [
+        rng.integers(0, 256, size=1 + i % 3).astype(np.int32)
+        for i in range(len(prompts))
+    ]
+    steps = rng.integers(0, 256, size=(len(prompts), DECODE_STEPS, 1)).astype(np.int32)
+    alone = [
+        _alone(tiny_model, prompt, [first[i], *steps[i]])
+        for i, prompt in enumerate(prompts)
+    ]
+
+    caches = [_prefilled(tiny_model, prompt) for prompt in prompts]
+    if join == "merge":
+        batch = _merged(caches)
+    else:
+        batch = _merged(caches[:3])
+        _extend(batch, _merged(caches[3:]))
+    lengths = [len(tokens) for tokens in first]
+    width = max(lengths)
+    padded = np.zeros((len(prompts), width), dtype=np.int32)
+    for i, tokens in enumerate(first):
+        padded[i, : len(tokens)] = tokens
+    for cache in batch:
+        cache.prepare(lengths=lengths, right_padding=[width - n for n in lengths])
+    logits = tiny_model(mx.array(padded), cache=batch)
+    for cache in batch:
+        cache.finalize()
+    batched = [[_log_probs(logits[i, n - 1 : n])] for i, n in enumerate(lengths)]
+    for t in range(DECODE_STEPS):
+        step = _log_probs(tiny_model(mx.array(steps[:, t]), cache=batch)[:, -1])
+        for i, row in enumerate(batched):
+            row.append(step[i : i + 1])
+
+    for i, row in enumerate(batched):
+        np.testing.assert_allclose(np.concatenate(row), alone[i], atol=1e-4)
+
+
+def test_requests_joining_and_leaving_a_running_batch_match_each_row_alone(
+    tiny_model: Model,
+) -> None:
+    """A request decodes alone (its compressor carry in the fixed decode buffer), the others
+    join it, then one leaves: every row matches running alone."""
+    rng = np.random.default_rng(3)
+    prompts = [rng.integers(0, 256, size=n).astype(np.int32) for n in BATCH_LENGTHS]
+    tokens = rng.integers(0, 256, size=(len(prompts), 16, 1)).astype(np.int32)
+    fed = [0] * len(prompts)
+    batched: list[list[np.ndarray]] = [[] for _ in prompts]
+
+    def step(cache: list[DeepseekV4Cache], rows: list[int]) -> None:
+        inputs = np.stack([tokens[i, fed[i]] for i in rows])
+        out = _log_probs(tiny_model(mx.array(inputs), cache=cache)[:, -1])
+        for j, i in enumerate(rows):
+            batched[i].append(out[j : j + 1])
+            fed[i] += 1
+
+    running = _prefilled(tiny_model, prompts[0])
+    for _ in range(5):
+        step(running, [0])
+    _extend(running, _merged([_prefilled(tiny_model, p) for p in prompts[1:]]))
+    everyone = list(range(len(prompts)))
+    for _ in range(6):
+        step(running, everyone)
+    stay = [i for i in everyone if i != 2]
+    for cache in running:
+        cache.filter(mx.array(stay))
+    for _ in range(4):
+        step(running, stay)
+
+    for i, prompt in enumerate(prompts):
+        own = [tokens[i, t] for t in range(fed[i])]
+        np.testing.assert_allclose(
+            np.concatenate(batched[i]), _alone(tiny_model, prompt, own), atol=1e-4
+        )

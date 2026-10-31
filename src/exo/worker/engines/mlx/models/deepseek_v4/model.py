@@ -14,7 +14,25 @@
 #     are absolute ("mlx_lm.models.base", ...);
 #   - the AutoConfig registration of a stand-in "deepseek_v4" config runs only when
 #     transformers has no deepseek_v4 config (transformers >= 5.8 has one; replacing it
-#     breaks loading the tokenizer).
+#     breaks loading the tokenizer);
+#   - fixes that make it match DeepSeek's official reference implementation
+#     (inference/model.py in deepseek-ai/DeepSeek-V4-Flash-0731 at 7872f01b), each
+#     marked in place:
+#       - Indexer: RoPE on the query runs along the sequence axis (it ran along the
+#         heads), and in multi-token steps the top-k sees only compressed rows that
+#         are complete at each query's position (it could pick future rows);
+#       - the reference's FP8 rounding of the non-RoPE KV dims and FP4 rounding (after
+#         a Hadamard rotation) of the indexer's query and compressed keys, which the
+#         model was trained with (_fp8_kv_sim, _fp4_indexer_sim);
+#   - a work-around for an MLX bug: scaled_dot_product_attention with sinks returns
+#     wrong values for head_dim 256/512 once batch * heads * queries * keys passes
+#     2**31, so V4Attention splits the queries of large prefill steps (_SDPA_MAX_SCORES);
+#   - fixes for batching rows of different lengths (merged / extended caches), each
+#     marked in place: one-token steps mask the padded window slots and compressed rows
+#     (_decode_padding_mask), multi-token steps the padded window slots; the overlapping
+#     compressor keeps each row's own last window (_carry_last_window); merge / extend /
+#     extract keep every row's carry and pool length, also for the fixed decode buffer
+#     (_buffer_row_lengths, _set_row_lengths), and a missing overlap gate is -inf.
 # Everything else below is the file as it was at that commit. exo loads it for
 # config model_type "deepseek_v4" through exo.worker.engines.mlx.models.get_model_classes.
 # Delete this copy once upstream mlx-lm ships a deepseek_v4 that exo can use.
@@ -671,6 +689,13 @@ def _filter_lengths(lengths, batch_indices):
     return [int(lengths[idx]) for idx in batch_indices]
 
 
+def _missing_state_fill(name: str) -> float:
+    """exo fix: the value that stands for a row's missing state when caches are batched.
+    A row that has not emitted a window yet has no overlap carry; its gate must be -inf
+    (no weight), like the compressor's own default, not 0."""
+    return float("-inf") if name == "prev_gate" else 0.0
+
+
 class _CompressorBranch:
     """Per-state-key (compressor or indexer) state held by DeepseekV4Cache.
 
@@ -708,6 +733,49 @@ class _CompressorBranch:
         # buffer_count tracks the number of valid leading positions.
         self.buffer_count = 0
         self._new_pool_lengths = None
+
+
+def _buffer_row_lengths(branch: _CompressorBranch, batch: int) -> List[int]:
+    """Valid carry tokens per row of ``branch.buffer_kv``. exo fix: a uniform branch holds
+    ``buffer_count`` of them, also when decode keeps the carry in a fixed ``[B, ratio]``
+    buffer (its length is then not the count)."""
+    if branch.buffer_lengths is not None:
+        return _as_lengths_list(branch.buffer_lengths, batch)
+    if branch.buffer_kv is None:
+        return [0] * batch
+    return [branch.buffer_count] * batch
+
+
+def _pool_row_lengths(branch: _CompressorBranch, batch: int) -> List[int]:
+    if branch.pool_lengths is not None:
+        return _as_lengths_list(branch.pool_lengths, batch)
+    return [0 if branch.pool is None else branch.pool.shape[1]] * batch
+
+
+def _set_row_lengths(
+    branch: _CompressorBranch, buffer_lengths: List[int], pool_lengths: List[int]
+) -> None:
+    """Record per-row lengths after batching states; when every row has the same length the
+    branch goes back to the uniform state (buffers cut to that length, ``buffer_count`` set)."""
+    n = max(buffer_lengths, default=0)
+    if all(b == n for b in buffer_lengths):
+        branch.buffer_lengths = None
+        branch.buffer_count = n
+        if n == 0 or branch.buffer_kv is None or branch.buffer_gate is None:
+            branch.buffer_kv = None
+            branch.buffer_gate = None
+        else:
+            branch.buffer_kv = branch.buffer_kv[:, :n]
+            branch.buffer_gate = branch.buffer_gate[:, :n]
+    else:
+        branch.buffer_lengths = list(buffer_lengths)
+    n = max(pool_lengths, default=0)
+    if all(p == n for p in pool_lengths):
+        branch.pool_lengths = None
+        if branch.pool is not None:
+            branch.pool = branch.pool[:, :n] if n else None
+    else:
+        branch.pool_lengths = list(pool_lengths)
 
 
 class DeepseekV4Cache:
@@ -943,30 +1011,22 @@ class DeepseekV4Cache:
 
         for key, b_self in self._branches.items():
             b_other = other._branches[key]
+            buffer_lengths = _buffer_row_lengths(b_self, a_batch) + _buffer_row_lengths(
+                b_other, b_batch
+            )
+            pool_lengths = _pool_row_lengths(b_self, a_batch) + _pool_row_lengths(
+                b_other, b_batch
+            )
             for name in ("buffer_kv", "buffer_gate", "prev_kv", "prev_gate", "pool"):
                 merged = self._concat_batch_state(
                     getattr(b_self, name),
                     getattr(b_other, name),
                     a_batch,
                     b_batch,
+                    _missing_state_fill(name),
                 )
                 setattr(b_self, name, merged)
-            b_self.buffer_lengths = self._concat_lengths(
-                b_self.buffer_lengths,
-                b_other.buffer_lengths,
-                b_self.buffer_kv,
-                b_other.buffer_kv,
-                a_batch,
-                b_batch,
-            )
-            b_self.pool_lengths = self._concat_lengths(
-                b_self.pool_lengths,
-                b_other.pool_lengths,
-                b_self.pool,
-                b_other.pool,
-                a_batch,
-                b_batch,
-            )
+            _set_row_lengths(b_self, buffer_lengths, pool_lengths)
 
     def extract(self, idx):
         cache = DeepseekV4Cache(self.local.max_size)
@@ -975,19 +1035,17 @@ class DeepseekV4Cache:
             if hasattr(self.local, "extract")
             else self._extract_local(self.local, idx)
         )
+        batch = self._cache_batch_size(self.local)
         for key, src in self._branches.items():
             dst = cache._branches[key]
             for name in ("buffer_kv", "buffer_gate", "prev_kv", "prev_gate", "pool"):
                 v = getattr(src, name)
                 setattr(dst, name, None if v is None else mx.contiguous(v[idx : idx + 1]))
-            for name in ("buffer_lengths", "pool_lengths"):
-                lengths = getattr(src, name)
-                if lengths is None:
-                    setattr(dst, name, None)
-                else:
-                    if isinstance(lengths, mx.array):
-                        lengths = lengths.tolist()
-                    setattr(dst, name, [int(lengths[idx])])
+            _set_row_lengths(
+                dst,
+                [_buffer_row_lengths(src, batch)[idx]],
+                [_pool_row_lengths(src, batch)[idx]],
+            )
         return cache
 
     @classmethod
@@ -1002,14 +1060,25 @@ class DeepseekV4Cache:
             dst = out._branches[key]
             for name in ("buffer_kv", "buffer_gate", "prev_kv", "prev_gate", "pool"):
                 tensors = [getattr(c._branches[key], name) for c in caches]
-                setattr(dst, name, cls._merge_batch_state(tensors))
-            dst.buffer_lengths = cls._merge_lengths(
-                [c._branches[key].buffer_lengths for c in caches],
-                [c._branches[key].buffer_kv for c in caches],
-            )
-            dst.pool_lengths = cls._merge_lengths(
-                [c._branches[key].pool_lengths for c in caches],
-                [c._branches[key].pool for c in caches],
+                setattr(
+                    dst, name, cls._merge_batch_state(tensors, _missing_state_fill(name))
+                )
+            _set_row_lengths(
+                dst,
+                [
+                    n
+                    for c in caches
+                    for n in _buffer_row_lengths(
+                        c._branches[key], cls._cache_batch_size(c.local)
+                    )
+                ],
+                [
+                    n
+                    for c in caches
+                    for n in _pool_row_lengths(
+                        c._branches[key], cls._cache_batch_size(c.local)
+                    )
+                ],
             )
         return out
 
@@ -1288,13 +1357,13 @@ class DeepseekV4Cache:
         return out
 
     @staticmethod
-    def _concat_batch_state(a, b, a_batch, b_batch):
+    def _concat_batch_state(a, b, a_batch, b_batch, fill: float = 0.0):
         if a is None and b is None:
             return None
         if a is None:
-            a = mx.zeros((a_batch,) + b.shape[1:], dtype=b.dtype)
+            a = mx.full((a_batch,) + b.shape[1:], fill, dtype=b.dtype)
         if b is None:
-            b = mx.zeros((b_batch,) + a.shape[1:], dtype=a.dtype)
+            b = mx.full((b_batch,) + a.shape[1:], fill, dtype=a.dtype)
         if a.shape[2:] != b.shape[2:]:
             raise ValueError("DeepseekV4Cache extend: state tail shape mismatch")
         if a.shape[1] != b.shape[1]:
@@ -1310,32 +1379,7 @@ class DeepseekV4Cache:
         return mx.concatenate([a, b], axis=0)
 
     @staticmethod
-    def _full_lengths(lengths, value, batch_size):
-        if lengths is not None:
-            if isinstance(lengths, mx.array):
-                lengths = lengths.tolist()
-            return [int(x) for x in lengths]
-        length = 0 if value is None else value.shape[1]
-        return [length] * batch_size
-
-    @classmethod
-    def _concat_lengths(cls, a_lengths, b_lengths, a_value, b_value, a_batch, b_batch):
-        a = cls._full_lengths(a_lengths, a_value, a_batch)
-        b = cls._full_lengths(b_lengths, b_value, b_batch)
-        merged = a + b
-        m = max(merged, default=0)
-        return None if all(x == m for x in merged) else merged
-
-    @classmethod
-    def _merge_lengths(cls, lengths, values):
-        per_batch = [
-            cls._full_lengths(l, v, 1)[0] for l, v in zip(lengths, values)
-        ]
-        m = max(per_batch, default=0)
-        return None if all(x == m for x in per_batch) else per_batch
-
-    @staticmethod
-    def _merge_batch_state(values):
+    def _merge_batch_state(values, fill: float = 0.0):
         present = [v for v in values if v is not None]
         if not present:
             return None
@@ -1347,7 +1391,7 @@ class DeepseekV4Cache:
         merged = []
         for v in values:
             if v is None:
-                merged.append(mx.zeros((1, seq_len, *shape[2:]), dtype=dtype))
+                merged.append(mx.full((1, seq_len, *shape[2:]), fill, dtype=dtype))
             else:
                 if v.shape[1] != seq_len:
                     pad = mx.zeros((v.shape[0], seq_len, *v.shape[2:]), dtype=v.dtype)
@@ -1479,6 +1523,31 @@ def _compressor_norm_strided_rope(c, norm_w, norm_eps, offset, rd, scale, freqs)
         scale=scale, offset=offset, freqs=freqs,
     )
     return mx.concatenate([c[..., :-rd], rotated], axis=-1)
+
+
+def _carry_last_window(
+    branch: "_CompressorBranch", kv_win: mx.array, score_win: mx.array
+) -> None:
+    """Keep each row's last emitted window ``[B, ratio, coff*d]`` for the next window's
+    overlap. exo fix: in a batch whose rows have different lengths
+    (``branch._new_pool_lengths`` set by ``accumulate_windows``), a row emits fewer windows
+    than ``kv_win`` holds, or none: its carry is its own last window, or stays as it was."""
+    counts = branch._new_pool_lengths
+    if counts is None:
+        branch.prev_kv = kv_win[:, -1, :, :]
+        branch.prev_gate = score_win[:, -1, :, :]
+        return
+    last = mx.array([max(n - 1, 0) for n in counts], dtype=mx.int32)[:, None, None, None]
+    emitted = mx.array([n > 0 for n in counts])[:, None, None]
+    new_kv = mx.take_along_axis(kv_win, last, axis=1)[:, 0]
+    new_gate = mx.take_along_axis(score_win, last, axis=1)[:, 0]
+    old_kv = branch.prev_kv
+    old_gate = branch.prev_gate
+    if old_kv is None or old_gate is None:
+        old_kv = mx.zeros_like(new_kv)
+        old_gate = mx.full(new_gate.shape, float("-inf"), dtype=new_gate.dtype)
+    branch.prev_kv = mx.where(emitted, new_kv, old_kv)
+    branch.prev_gate = mx.where(emitted, new_gate, old_gate)
 
 
 class Compressor(nn.Module):
@@ -1660,8 +1729,7 @@ class Compressor(nn.Module):
             state_kv = mx.concatenate([prev_kv, cur_kv], axis=1)
             state_score = mx.concatenate([prev_gate, buf_score_with_ape], axis=1)
             new_pooled = _overlap_emit(state_kv, state_score, ratio)[:, None, :]
-            branch.prev_kv = cur_kv
-            branch.prev_gate = buf_score_with_ape
+            _carry_last_window(branch, kv_win, score_win)
         elif self.overlap:
             prev_kv = branch.prev_kv
             prev_score = branch.prev_gate
@@ -1671,8 +1739,7 @@ class Compressor(nn.Module):
                 score_trans.astype(mx.float32), axis=2, precise=True
             ).astype(kv_trans.dtype)
             new_pooled = (kv_trans * weights).sum(axis=2)
-            branch.prev_kv = kv_win[:, -1, :, :]
-            branch.prev_gate = score_win[:, -1, :, :]
+            _carry_last_window(branch, kv_win, score_win)
         else:
             weights = mx.softmax(
                 score_win.astype(mx.float32), axis=2, precise=True
@@ -1695,6 +1762,11 @@ class Compressor(nn.Module):
                 float(ratio),
                 self.rope.freqs,
             )
+        # exo fix: the reference's FP4 (indexer) / FP8 (attention) rounding of new rows
+        if key == _K_IDX:
+            new_pooled = _fp4_indexer_sim(new_pooled)
+        else:
+            new_pooled = _fp8_kv_sim(new_pooled, self.rope_head_dim)
         return cache.update_pool(new_pooled, key)
 
     def _overlap_transform_kv_runtime(
@@ -1735,6 +1807,62 @@ class Compressor(nn.Module):
         if prev_score is not None:
             out[:, 0, :R, :] = prev_score[:, :, :d]
         return out
+
+
+# --------------------------------------------------------------------------- #
+# exo fix: reference QAT simulation (FP8 KV, FP4 indexer)                     #
+# --------------------------------------------------------------------------- #
+# The reference rounds the non-RoPE KV dims to FP8 (e4m3, one power-of-two
+# scale per 64 values) and the indexer q / compressed k to FP4 (e2m1, one
+# power-of-two scale per 32 values, after a Hadamard rotation). The model was
+# trained with these roundings, so reproduce them (values stay bf16).
+
+
+def _pow2_ceil(x: mx.array) -> mx.array:
+    """Exact 2**ceil(log2(x)) for positive float32 x (exponent bits)."""
+    bits = x.astype(mx.float32).view(mx.int32)
+    exponent = mx.bitwise_and(mx.right_shift(bits, 23), 0xFF)
+    mantissa = mx.bitwise_and(bits, (1 << 23) - 1)
+    e = exponent - 127 + (mantissa != 0).astype(mx.int32)
+    return mx.left_shift(e + 127, 23).view(mx.float32)
+
+
+def _round_e2m1(v: mx.array) -> mx.array:
+    """Round to the nearest FP4 (e2m1) value, ties to even; |v| <= 6."""
+    a = mx.abs(v)
+    q = mx.where(a <= 0.25, 0.0, mx.where(a < 0.75, 0.5, mx.where(
+        a <= 1.25, 1.0, mx.where(a < 1.75, 1.5, mx.where(
+            a <= 2.5, 2.0, mx.where(a < 3.5, 3.0, mx.where(a <= 5.0, 4.0, 6.0)))))))
+    return mx.where(v < 0, -q, q)
+
+
+def _block_round(x: mx.array, block: int, fp4: bool) -> mx.array:
+    qmax, amin = (6.0, 6.0 * 2.0**-126) if fp4 else (448.0, 1e-4)
+    shape, dtype = x.shape, x.dtype
+    xf = x.astype(mx.float32).reshape(*shape[:-1], shape[-1] // block, block)
+    amax = mx.maximum(mx.max(mx.abs(xf), axis=-1, keepdims=True), amin)
+    s = _pow2_ceil(amax * (1.0 / qmax))
+    y = mx.clip(xf / s, -qmax, qmax)
+    y = _round_e2m1(y) if fp4 else mx.from_fp8(mx.to_fp8(y), dtype=mx.float32)
+    return (y * s).reshape(shape).astype(dtype)
+
+
+def _fp8_kv_sim(kv: mx.array, rd: int) -> mx.array:
+    return mx.concatenate([_block_round(kv[..., :-rd], 64, False), kv[..., -rd:]], axis=-1)
+
+
+_HADAMARD: Dict[int, mx.array] = {}
+
+
+def _fp4_indexer_sim(x: mx.array) -> mx.array:
+    n = x.shape[-1]
+    if n not in _HADAMARD:
+        h = mx.array([[1.0]])
+        while h.shape[0] < n:
+            h = mx.concatenate([mx.concatenate([h, h], 1), mx.concatenate([h, -h], 1)], 0)
+        _HADAMARD[n] = h * (n**-0.5)
+    rotated = (x.astype(mx.float32) @ _HADAMARD[n].T).astype(x.dtype)
+    return _block_round(rotated, 32, True)
 
 
 # --------------------------------------------------------------------------- #
@@ -1799,10 +1927,15 @@ class Indexer(nn.Module):
         if idx_kv is None or idx_kv.shape[1] == 0:
             return None
 
+        # exo fix: RoPE positions run along the sequence axis. mx.fast.rope takes them
+        # from axis -2, so rotate q as [B, n_heads, S, head_dim].
         q = self.wq_b(qr).reshape(B, S, self.n_heads, self.head_dim)
+        q = q.transpose(0, 2, 1, 3)
         q = mx.concatenate(
             [q[..., :-rd], self.rope(q[..., -rd:], offset=offset)], axis=-1
         )
+        # exo fix: Hadamard rotation and FP4 rounding of the query, like the reference
+        q = _fp4_indexer_sim(q.transpose(0, 2, 1, 3))
         per_head_weights = self.weights_proj(x) * (
             self.softmax_scale * (self.n_heads ** -0.5)
         )
@@ -1822,6 +1955,15 @@ class Indexer(nn.Module):
             )
             score = mx.where(valid, score, mx.array(-1e30, dtype=score.dtype))
 
+        # exo fix: in multi-token steps (prefill), rows that complete later in the step are
+        # not visible to earlier queries. Exclude them before top-k, like the
+        # reference, so each query keeps index_topk rows it can attend to.
+        if S > 1:
+            visible = _compressed_visibility(
+                B, S, offset, idx_kv.shape[1], self.compress_ratio
+            )[:, 0]
+            score = mx.where(visible, score, mx.array(-math.inf, dtype=score.dtype))
+
         k = min(self.index_topk, idx_kv.shape[1])
         return mx.argpartition(-score, kth=k - 1, axis=-1)[..., :k].astype(
             mx.int32
@@ -1831,6 +1973,10 @@ class Indexer(nn.Module):
 # --------------------------------------------------------------------------- #
 # Attention                                                                   #
 # --------------------------------------------------------------------------- #
+
+# exo fix: the most attention scores (batch * heads * queries * keys) one sinks SDPA
+# call computes; larger prefill steps are split by queries (see V4Attention.__call__).
+_SDPA_MAX_SCORES = 2**30
 
 
 def _build_window_mask(
@@ -1847,9 +1993,12 @@ def _build_window_mask(
         end = off + S
         cache_k = mx.arange(window_len, dtype=mx.int32)
         raw_pos_at_k = end[:, None] - window_len + cache_k[None, :]
+        # exo fix: a row shorter than the others is left-padded; its padding slots get
+        # negative positions and hold no token.
         win_visible = (
             (raw_pos_at_k[:, None, :] <= q_pos[:, :, None])
             & (raw_pos_at_k[:, None, :] > q_pos[:, :, None] - window)
+            & (raw_pos_at_k[:, None, :] >= 0)
         )
     else:
         q_pos = mx.broadcast_to(
@@ -1862,6 +2011,42 @@ def _build_window_mask(
             & (raw_pos_at_k[None, None, :] > q_pos[:, :, None] - window)
         )
     return win_visible[:, None, :, :]
+
+
+def _decode_padding_mask(
+    B: int,
+    window_valid: Optional[mx.array],
+    window_len: int,
+    pool_lengths,
+    compressed_len: int,
+    topk: Optional[mx.array],
+) -> Optional[mx.array]:
+    """exo fix: for a one-token step of a batch whose rows have different lengths, the
+    ``[B, 1, 1, keys]`` mask of the slots that hold that row's tokens: the window cache's
+    valid slots (``window_valid``, from BatchRotatingKVCache.make_mask) and the compressed
+    rows below the row's pool length (all of them, or the gathered ``topk`` ones). None when
+    every row is full length."""
+    if window_valid is None and pool_lengths is None:
+        return None
+    if window_valid is None:
+        window_valid = mx.ones((B, 1, 1, window_len), dtype=mx.bool_)
+    else:
+        window_valid = mx.broadcast_to(window_valid, (B, 1, 1, window_len))
+    if compressed_len == 0:
+        return window_valid
+    if pool_lengths is None:
+        n = compressed_len if topk is None else topk.shape[-1]
+        pool_valid = mx.ones((B, 1, 1, n), dtype=mx.bool_)
+    else:
+        lengths = mx.array(_as_lengths_list(pool_lengths, B), dtype=mx.int32)
+        lengths = lengths[:, None, None, None]
+        rows = (
+            mx.arange(compressed_len, dtype=mx.int32)[None, None, None, :]
+            if topk is None
+            else topk.astype(mx.int32)[:, None, :, :]
+        )
+        pool_valid = rows < lengths
+    return mx.concatenate([window_valid, pool_valid], axis=-1)
 
 
 def _compressed_visibility(
@@ -2145,8 +2330,20 @@ class V4Attention(nn.Module):
         if isinstance(offset, mx.array):
             offset = offset + 0
 
+        # exo fix: rows of a batch with different lengths (merged caches) are left-padded
+        # in the window cache and right-padded in the compressor pools. A one-token step
+        # must not attend to those slots; the window cache knows which are valid before
+        # this step's update.
+        window_valid = (
+            win_cache.make_mask(1)
+            if S == 1 and isinstance(win_cache, BatchRotatingKVCache)
+            else None
+        )
+
         # Fused: partial-RoPE on q + kv in one compiled call.
         q, kv = _attn_qkv_partial_rope(q, kv, offset, rd, self.rope.freqs)
+        # exo fix: FP8 rounding of the non-RoPE KV dims, like the reference
+        kv = _fp8_kv_sim(kv, rd)
 
         if self.compress_ratio:
             if v4_cache is None:
@@ -2201,16 +2398,23 @@ class V4Attention(nn.Module):
         else:
             kv_all = window_kv
 
-        # Decode (S=1): every token in the window cache is valid past context
-        # and we're not doing causal masking (only one query), so skip the
-        # window mask entirely. For the gather path the Indexer already
-        # returns only valid indices (no -1 padding), so no compressed mask
-        # either.
+        # Decode (S=1): one query, so no causal mask; every pool row is in the past (rows
+        # are emitted only after a full window of raw tokens). Only when the batch's rows
+        # have different lengths are some slots padding, which the mask excludes.
         if S == 1:
-            # Pool rows are emitted only after a full window of raw tokens
-            # has been processed, so at any decode step every pool row is in
-            # the past — no compressed-visibility mask needed.
-            mask = None
+            pool_lengths = (
+                v4_cache.pooled_lengths(_K_COMP)
+                if v4_cache is not None and compressed_len > 0
+                else None
+            )
+            mask = _decode_padding_mask(
+                B,
+                window_valid,
+                window_len,
+                pool_lengths,
+                compressed_len,
+                indexer_topk if use_gather else None,
+            )
         else:
             win_mask = _build_window_mask(B, S, offset, self.window, window_len)
             if compressed_len > 0:
@@ -2228,11 +2432,33 @@ class V4Attention(nn.Module):
                 mask = win_mask
 
         kv_all_4d = kv_all[:, None, :, :]
-        o = scaled_dot_product_attention(
-            q, kv_all_4d, kv_all_4d,
-            cache=None, scale=self.scale, mask=mask,
-            sinks=self._sink_for(q.dtype),
+        sinks = self._sink_for(q.dtype)
+        # exo fix: mx.fast.scaled_dot_product_attention with sinks returns wrong
+        # values for head_dim 256/512 once n_heads * L_q * L_kv passes 2**31 (seen
+        # in MLX 0.32.3 and 0.32.4): a 4096-token prefill chunk crosses it in the
+        # CSA layers after ~16k tokens of context. Split the queries (counting the
+        # batch too, to stay clear of the limit when prompts are batched).
+        max_q = max(
+            1, _SDPA_MAX_SCORES // (B * q.shape[1] * kv_all_4d.shape[2])
         )
+        if S <= max_q:
+            o = scaled_dot_product_attention(
+                q, kv_all_4d, kv_all_4d,
+                cache=None, scale=self.scale, mask=mask, sinks=sinks,
+            )
+        else:
+            o = mx.concatenate(
+                [
+                    scaled_dot_product_attention(
+                        q[:, :, s0 : s0 + max_q], kv_all_4d, kv_all_4d,
+                        cache=None, scale=self.scale,
+                        mask=None if mask is None else mask[:, :, s0 : s0 + max_q],
+                        sinks=sinks,
+                    )
+                    for s0 in range(0, S, max_q)
+                ],
+                axis=2,
+            )
 
         # Fused: inverse-RoPE on the trailing rd dims + transpose-and-reshape
         # to [B, S, n_heads*head_dim] for wo_a.

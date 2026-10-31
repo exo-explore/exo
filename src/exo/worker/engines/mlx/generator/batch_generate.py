@@ -41,6 +41,7 @@ from exo.worker.engines.mlx.generator.generate import (
     prefill,
 )
 from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
+from exo.worker.engines.mlx.models.registry import keeps_think_tags, model_type_of
 from exo.worker.engines.mlx.patches.opt_batch_gen import (
     set_needs_topk,
     take_ready_topk,
@@ -129,9 +130,10 @@ class ExoBatchGenerator:
         on_generation_token: Callable[[], None] | None = None,
     ) -> int:
         all_prompt_tokens = encode_prompt(self.tokenizer, prompt)
-        all_prompt_tokens = fix_unmatched_think_end_tokens(
-            all_prompt_tokens, self.tokenizer
-        )
+        if not keeps_think_tags(task_params, model_type_of(self.model)):
+            all_prompt_tokens = fix_unmatched_think_end_tokens(
+                all_prompt_tokens, self.tokenizer
+            )
 
         vision: VisionResult | None = None
         media_regions: list[MediaRegion] = []

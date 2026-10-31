@@ -94,3 +94,57 @@ def test_gemma_4_pipeline_parallelism_stays_on_one_node() -> None:
     ):
         _place(card, Sharding.Pipeline, min_nodes=2)
     assert _place(card, Sharding.Tensor, min_nodes=2) == 2
+
+
+def _place_tensor_on_ring(card: ModelCard, nodes: int) -> int:
+    ids = [NodeId() for _ in range(nodes)]
+    topology = Topology()
+    for node in ids:
+        topology.add_node(node)
+    for index, node in enumerate(ids):
+        neighbour = ids[(index + 1) % nodes]
+        for port, (source, sink) in enumerate(((node, neighbour), (neighbour, node))):
+            topology.add_connection(
+                Connection(
+                    source=source,
+                    sink=sink,
+                    edge=create_socket_connection(2 * index + port + 1),
+                )
+            )
+    command = PlaceInstance(
+        command_id=CommandId(),
+        model_card=card,
+        sharding=Sharding.Tensor,
+        instance_meta=InstanceMeta.MlxRing,
+        min_nodes=nodes,
+    )
+    placement = place_instance(
+        command,
+        topology,
+        {},
+        {n: create_node_memory(_TB) for n in ids},
+        {n: create_node_network() for n in ids},
+        {n: [Backend.MlxMetal] for n in ids},
+    )
+    (instance,) = placement.values()
+    return len(instance.shard_assignments.node_to_runner)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "deepseek-ai--DeepSeek-V4-Pro-0813",
+        "mlx-community--DeepSeek-V4-Pro",
+    ],
+)
+def test_deepseek_v4_pro_tensor_parallelism_needs_whole_head_groups(
+    name: str,
+) -> None:
+    """V4 shards every output group's 8 heads evenly, so 7 nodes can't hold V4-Pro even
+    though its hidden size (7168) divides by 7."""
+    card = _card("deepseek_v4", name)
+    assert card.hidden_size % 7 == 0
+    with pytest.raises(ValueError, match="No tensor sharding found"):
+        _place_tensor_on_ring(card, 7)
+    assert _place_tensor_on_ring(card, 8) == 8
+    assert _place_tensor_on_ring(card, 4) == 4

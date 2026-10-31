@@ -102,12 +102,48 @@ def get_model_classes(config: dict[str, Any]) -> tuple[type[nn.Module], type]:
     return mlx_lm_get_classes(config)
 
 
-def prompt_encoder_for(task_params: TextGenerationTaskParams) -> PromptEncoder | None:
+def model_type_of(model: nn.Module) -> str | None:
+    """The config.json model_type a loaded model was built from (mlx-lm models keep it)."""
+    model_type: object = getattr(model, "model_type", None)
+    return model_type if isinstance(model_type, str) else None
+
+
+def prompt_encoder_for(
+    task_params: TextGenerationTaskParams, model_type: str | None = None
+) -> PromptEncoder | None:
+    """The prompt encoder for the request's model. An encoder that lists model_types is
+    picked by the loaded model's type when that is known; the others (and every encoder,
+    when the type isn't known) by their applies_to on the request."""
     for family in FAMILIES:
         encoder = family.prompt_encoder
-        if encoder is not None and encoder.applies_to(task_params):
+        if encoder is None:
+            continue
+        if encoder.model_types and model_type is not None:
+            if model_type in encoder.model_types:
+                return encoder
+        elif encoder.applies_to(task_params):
             return encoder
     return None
+
+
+def keeps_think_tags(
+    task_params: TextGenerationTaskParams, model_type: str | None = None
+) -> bool:
+    """Whether the request's prompt keeps its think tags exactly as rendered."""
+    encoder = prompt_encoder_for(task_params, model_type)
+    return encoder is not None and encoder.exact_think_tags
+
+
+def model_type_keeps_think_tags(model_type: str | None) -> bool:
+    """Whether prompts for a loaded model of this type keep their think tags exactly as
+    rendered, for callers that have the prompt's token ids but not the request (the
+    disaggregated prefill server). Only encoders that list model_types can say."""
+    return model_type is not None and any(
+        encoder is not None
+        and model_type in encoder.model_types
+        and encoder.exact_think_tags
+        for encoder in (family.prompt_encoder for family in FAMILIES)
+    )
 
 
 def template_messages_hooks_for(

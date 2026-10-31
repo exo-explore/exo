@@ -36,6 +36,7 @@ from exo.worker.engines.mlx.generator.generate import (
     mlx_generate,
     warmup_inference,
 )
+from exo.worker.engines.mlx.models.registry import model_type_of
 from exo.worker.engines.mlx.types import Model
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
@@ -225,7 +226,9 @@ class SequentialGenerator(Engine):
         else:
             output_generator = apply_all_parsers(
                 queue.gen(),
-                apply_chat_template(self.tokenizer, task.task_params),
+                apply_chat_template(
+                    self.tokenizer, task.task_params, model_type_of(self.model)
+                ),
                 self.tool_parser,
                 self.tokenizer,
                 type(self.model),
@@ -249,7 +252,9 @@ class SequentialGenerator(Engine):
 
     def _build_generator(self, task: TextGeneration) -> Generator[GenerationResponse]:
         _check_for_debug_prompts(task.task_params)
-        prompt = apply_chat_template(self.tokenizer, task.task_params)
+        prompt = apply_chat_template(
+            self.tokenizer, task.task_params, model_type_of(self.model)
+        )
 
         def on_prefill_progress(processed: int, total: int) -> None:
             if self.device_rank == 0:
@@ -424,7 +429,9 @@ class BatchGenerator(Engine):
             else:
                 output_generator = apply_all_parsers(
                     queue.gen(),
-                    apply_chat_template(self.tokenizer, task.task_params),
+                    apply_chat_template(
+                        self.tokenizer, task.task_params, model_type_of(self.model)
+                    ),
                     self.tool_parser,
                     self.tokenizer,
                     type(self.model),
@@ -520,7 +527,9 @@ class BatchGenerator(Engine):
 
     def _start_task(self, task: TextGeneration) -> int:
         _check_for_debug_prompts(task.task_params)
-        prompt = apply_chat_template(self.tokenizer, task.task_params)
+        prompt = apply_chat_template(
+            self.tokenizer, task.task_params, model_type_of(self.model)
+        )
 
         def on_prefill_progress(processed: int, total: int) -> None:
             if self.device_rank == 0:
