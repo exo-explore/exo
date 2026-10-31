@@ -287,8 +287,10 @@ def fix_qwen4_exp_pipeline_shard(
     end_layer: int,
 ) -> None:
     """Point the attention and linear-attention masks at this stage's own layers (None
-    when the stage has no layer of that kind)."""
+    when the stage has no layer of that kind), and mark the stage's last layer, whose
+    pipeline wrapper evaluates the stage's output."""
     assert isinstance(inner_model_instance, Qwen4ExpInnerModel)
+    inner_model_instance.stage_output_layer = len(layers) - 1
     kinds = [cast(bool, getattr(layer, "is_linear")) for layer in layers]  # noqa: B009
     inner_model_instance.fa_idx = next(
         (i for i, linear in enumerate(kinds) if not linear), None
