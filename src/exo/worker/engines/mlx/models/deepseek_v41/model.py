@@ -1482,11 +1482,14 @@ class DecoderLayer(nn.Module):
         shared: SharedState,
         partials: mx.array | None = None,
         next_hc: "HyperConnection | None" = None,
+        fused_expand: bool = False,
         submit_before_host_reads: bool = False,
     ) -> tuple[mx.array, mx.array, mx.array | None]:
         """Returns the streams, the pre mix for the next layer's input and, on the fused
         path, that layer's mix partials (when next_hc, its attention hyper-connection, is
-        given: the expand at the end of this layer computes them)."""
+        given: the expand at the end of this layer computes them). fused_expand: without
+        next_hc, still expand with the fused kernel (a pipeline stage's last layer, so the
+        next stage gets the streams one device computes)."""
         if self.engram is not None:
             if not self.engram.embed.on_device and submit_before_host_reads:
                 # The host reads below need this step's tokens. Start the layers before
@@ -1505,6 +1508,7 @@ class DecoderLayer(nn.Module):
                 shared=shared,
                 partials=partials,
                 next_hc=next_hc,
+                fused_expand=fused_expand,
             )
         # The mix a sublayer computes is used by the next one.
         attn_pre, attn_post, attn_comb = self.attn_hc.mixes(streams)
@@ -1550,6 +1554,7 @@ class DecoderLayer(nn.Module):
         shared: SharedState,
         partials: mx.array | None,
         next_hc: "HyperConnection | None",
+        fused_expand: bool = False,
     ) -> tuple[mx.array, mx.array, mx.array | None]:
         """forward with each sublayer boundary (expand, the next mixes, collapse and norm)
         in two kernels."""
@@ -1568,6 +1573,13 @@ class DecoderLayer(nn.Module):
             self.ffn_hc, partials, streams, attn_pre, self.post_attention_layernorm
         )
         h = self.mlp(h)
+        if next_hc is None and fused_expand:
+            # The expand doesn't depend on the matvec weights, and its partials are
+            # dropped: the next stage's first layer computes them from these streams.
+            streams, _ = kernels.hc_partials(
+                streams, self.ffn_hc.fn, (h, ffn_post, ffn_comb)
+            )
+            return streams, ffn_pre, None
         if next_hc is None:
             return _expand(h, streams, ffn_post, ffn_comb), ffn_pre, None
         streams, partials = kernels.hc_partials(
@@ -2102,6 +2114,12 @@ class TextModel(nn.Module):
                 next_hc=following.attn_hc
                 if following is not None and following.engram is None
                 else None,
+                # A stage's last layer expands as that layer does on one device, where
+                # the next layer (not an engram layer) follows it.
+                fused_expand=following is None
+                and stage is not None
+                and stage.next_rank is not None
+                and layer.layer_idx + 1 not in self.args.engram_layer_ids,
                 # Not under tensor parallelism: a rank's GPU must not wait in a
                 # collective while the other rank still reads rows.
                 submit_before_host_reads=self.tensor_group is None,

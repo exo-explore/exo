@@ -9,11 +9,14 @@ from typing import cast
 
 import mlx.core as mx
 import pytest
+from mlx.utils import tree_flatten
 
 from exo.worker.engines.mlx.models.deepseek_v41 import kernels
 from exo.worker.engines.mlx.models.deepseek_v41.model import (
     DeepseekV41SwiGLU,
     HyperConnection,
+    LayerCache,
+    Model,
     ModelArgs,
     RoPE,
     _apply_rope,  # pyright: ignore[reportPrivateUsage]
@@ -416,3 +419,83 @@ def test_fused_paths_hand_over_to_the_ops_at_their_row_limits() -> None:
         x = mx.random.normal((1, count, 1024)).astype(mx.bfloat16)
         reference = x.astype(mx.float32) @ weight.astype(mx.float32).T
         assert _rel(kernels.head_logits(x, weight), reference) < 1e-6
+
+
+def test_a_pipeline_seam_expands_as_one_device_does() -> None:
+    """On one device a layer's fused expand hands the next layer its mix partials. At a
+    pipeline seam the stage's last layer expands with the same kernel and drops them, and
+    the next stage's first layer computes them from the streams: bit-identical."""
+    args = ModelArgs(
+        vocab_size=256,
+        hidden_size=1024,
+        num_hidden_layers=2,
+        num_attention_heads=8,
+        head_dim=512,
+        q_lora_rank=128,
+        qk_rope_head_dim=64,
+        o_groups=8,
+        o_lora_rank=64,
+        moe_intermediate_size=64,
+        n_routed_experts=8,
+        num_experts_per_tok=2,
+        sliding_window=8,
+        compress_ratios=(0, 0),
+        load_draft=False,
+    )
+    # a seed where the plain expand rounds some elements differently from the kernel's
+    mx.random.seed(0)
+    model = Model(args)
+    keep_float32 = model.cast_predicate
+    leaves = cast(list[tuple[str, mx.array]], tree_flatten(model.parameters()))
+    updates: list[tuple[str, mx.array]] = []
+    for name, value in leaves:
+        if name.endswith(("norm.weight", "layernorm.weight", "q_weight", "k_weight")):
+            weight = mx.ones(value.shape)
+        elif name.endswith("hc.scale"):
+            weight = mx.random.uniform(shape=value.shape) + 0.5
+        else:
+            weight = mx.random.normal(value.shape) * 0.02
+        updates.append(
+            (name, weight.astype(mx.bfloat16) if keep_float32(name) else weight)
+        )
+    model.load_weights(updates)
+    first, second = model.model.layers[0], model.model.layers[1]
+    assert first is not None and second is not None
+    # 16 rows (the most the fused path takes), so the two expands' roundings would differ
+    streams = (mx.random.normal((16, 1, 4, 1024)) * 8).astype(mx.bfloat16)
+    pre_mix = mx.softmax(mx.random.normal((16, 1, 4)), axis=-1)
+    window_idx = mx.broadcast_to(
+        _window_indices(previous=0, length=1, window=8), (16, 1, 1)
+    )
+    inputs = mx.arange(16).reshape(16, 1)
+    assert kernels.hc_fusable(streams)
+
+    def run(seam: bool) -> tuple[mx.array, mx.array]:
+        caches = [LayerCache(8), LayerCache(8)]
+        state, pre, partials = first.forward(
+            streams,
+            pre_mix,
+            inputs=inputs,
+            start_pos=0,
+            window_idx=window_idx,
+            cache=caches[0],
+            shared={},
+            next_hc=None if seam else second.attn_hc,
+            fused_expand=seam,
+        )
+        assert (partials is None) == seam
+        state, pre, _ = second.forward(
+            state,
+            pre,
+            inputs=inputs,
+            start_pos=0,
+            window_idx=window_idx,
+            cache=caches[1],
+            shared={},
+            partials=partials,
+        )
+        return state, pre
+
+    one_device, seam = run(False), run(True)
+    for got, want in zip(seam, one_device, strict=True):
+        assert bool(mx.array_equal(got, want))
