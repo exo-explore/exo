@@ -35,6 +35,11 @@ Local changes against the reference
   from ``first_k_dense_replace`` (transformers: one dense layer; the official config sets
   ``first_k_dense_replace`` to 1).
 - Only the ``default`` rotary embedding is implemented: that is what the checkpoints use.
+- On Metal, the layers run a fused path (``kernels.py``, ``fused.py``) that computes the same
+  values as the code above, bit for bit, in fewer kernels: the residual add with the next
+  RMSNorm, the query and key norms with RoPE, the router's selection, the MoE's combination,
+  the experts' gate and up projections in one gather and SwiGLU inside the 4-bit down
+  projection. Elsewhere the code above runs as written.
 """
 
 import math
@@ -53,6 +58,16 @@ from mlx_lm.models.base import (
 )
 from mlx_lm.models.cache import KVCache
 from mlx_lm.models.switch_layers import SwitchGLU
+
+from exo.worker.engines.mlx.models.hy_v3 import kernels
+from exo.worker.engines.mlx.models.hy_v3.fused import (
+    ExpertStack,
+    StackedProjection,
+    arrays,
+    gather,
+    gather_uses_matrix_vector,
+    quantized_affine,
+)
 
 __all__ = [
     "Attention",
@@ -150,6 +165,54 @@ class Attention(nn.Module):
         mask: mx.array | str | None = None,
         cache: KVCache | None = None,
     ) -> mx.array:
+        if not self._fusable(x):
+            return self._reference(x, mask, cache)
+        batch, length, _ = x.shape
+        head_dim = self.head_dim
+        q, k, v = self.q_proj(x), self.k_proj(x), self.v_proj(x)
+        queries, keys, values = kernels.qk_norm_rope(
+            q,
+            k,
+            v,
+            q_weight=self.q_norm.weight,
+            k_weight=self.k_norm.weight,
+            eps=self.q_norm.eps,
+            # -1 heads: tensor parallelism leaves each rank a slice of the heads.
+            n_heads=q.shape[-1] // head_dim,
+            n_kv_heads=k.shape[-1] // head_dim,
+            offset=cache.offset if cache is not None else 0,
+            rope_base=self.rope.base,
+        )
+        if cache is not None:
+            keys, values = cache.update_and_fetch(keys, values)
+        output = scaled_dot_product_attention(
+            queries,
+            keys,
+            values,
+            cache=cache,
+            scale=self.scale,
+            mask=cast(mx.array | None, mask),
+        )
+        output = output.transpose(0, 2, 1, 3).reshape(batch, length, -1)
+        return self.o_proj(output)
+
+    def _fusable(self, x: mx.array) -> bool:
+        """The fused query/key kernel computes what the layer's norms and RoPE do."""
+        return (
+            self.q_norm.eps == self.k_norm.eps
+            and not self.rope.traditional
+            and self.rope.scale == 1.0
+            and self.rope.dims == self.head_dim
+            and self.k_norm.weight.dtype == self.q_norm.weight.dtype
+            and kernels.qk_norm_rope_fusable(x, self.q_norm.weight, self.head_dim)
+        )
+
+    def _reference(
+        self,
+        x: mx.array,
+        mask: mx.array | str | None,
+        cache: KVCache | None,
+    ) -> mx.array:
         batch, length, _ = x.shape
         # -1 heads: tensor parallelism leaves each rank a slice of the heads.
         queries = self.q_proj(x).reshape(batch, length, -1, self.head_dim)
@@ -190,7 +253,39 @@ class MLP(nn.Module):
         self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=bias)
 
     def __call__(self, x: mx.array) -> mx.array:
-        return self.down_proj(swiglu(self.gate_proj(x), self.up_proj(x)))
+        stack = self._gate_up() if kernels.fused_kernels_available() else None
+        gate_up = stack(x) if stack is not None else None
+        if stack is None or gate_up is None:
+            return self.down_proj(swiglu(self.gate_proj(x), self.up_proj(x)))
+        # The exact class: a sharded down projection all-reduces in its own call.
+        down = cast(nn.Module, self.down_proj)
+        if (
+            x.size == x.shape[-1]
+            and type(down) is nn.QuantizedLinear
+            and quantized_affine(down)
+            and kernels.swiglu_down_fusable(
+                gate_up,
+                arrays(down),
+                cast(int, getattr(down, "group_size")),  # noqa: B009
+                cast(int, getattr(down, "bits")),  # noqa: B009
+            )
+        ):
+            # One row: MLX's down projection is the matrix-vector kernel swiglu_down
+            # reproduces, so the activation runs inside it. (A sharded down projection,
+            # which all-reduces, is another class and keeps its own call.)
+            out = kernels.swiglu_down(gate_up, arrays(down))
+            return out.reshape(*x.shape[:-1], out.shape[-1])
+        split = stack.bounds[1]
+        return down(swiglu(gate_up[..., :split], gate_up[..., split:]))
+
+    def _gate_up(self) -> StackedProjection | None:
+        """gate and up stacked at the first call, if their quantization allows it."""
+        if "_gate_up_stack" not in self.__dict__:
+            stack = StackedProjection.build([self.gate_proj, self.up_proj])
+            object.__setattr__(self, "_gate_up_stack", stack)
+            # The separate weights are freed: return them to the system, not MLX's cache.
+            mx.clear_cache()
+        return cast(StackedProjection | None, self.__dict__["_gate_up_stack"])
 
 
 @mx.compile
@@ -227,6 +322,66 @@ class Router(nn.Module):
             self.expert_bias,
             self.top_k,
             self.scaling_factor,
+        )
+
+    def route_fused(
+        self, x: mx.array, x_float32: mx.array | None
+    ) -> tuple[mx.array, mx.array] | None:
+        """``route`` through the fused kernel, on float32 weights converted once (exact).
+        None where the kernel doesn't apply."""
+        logits = self._float32_logits(
+            x.astype(mx.float32) if x_float32 is None else x_float32
+        )
+        if logits is None or not kernels.route_fusable(logits, self.top_k):
+            return None
+        bias, scaling = self._float32_constants()
+        return kernels.route(logits, bias, self.top_k, scaling)
+
+    def _float32_logits(self, x_float32: mx.array) -> mx.array | None:
+        """``float32_router_logits`` with the float32 weights (or scales and biases) kept
+        from the first call instead of converted at every call: the same values, the same
+        matmul."""
+        if "_float32_weights" not in self.__dict__:
+            gate = self.gate
+            weights: tuple[mx.array, ...] | None = None
+            if isinstance(gate, nn.QuantizedLinear):
+                if quantized_affine(gate):
+                    weight, scales, biases = arrays(gate)
+                    weights = (
+                        weight,
+                        scales.astype(mx.float32),
+                        biases.astype(mx.float32),
+                    )
+            elif type(gate) is nn.Linear and "bias" not in gate:
+                weights = (gate.weight.astype(mx.float32).T,)
+            if weights is not None:
+                mx.eval(*weights)
+            object.__setattr__(self, "_float32_weights", weights)
+        weights = cast(tuple[mx.array, ...] | None, self.__dict__["_float32_weights"])
+        if weights is None:
+            return None
+        if len(weights) == 1:
+            return x_float32 @ weights[0]
+        gate: nn.Module = self.gate
+        return mx.quantized_matmul(
+            x_float32,
+            weights[0],
+            weights[1],
+            weights[2],
+            transpose=True,
+            group_size=cast(int, getattr(gate, "group_size")),  # noqa: B009
+            bits=cast(int, getattr(gate, "bits")),  # noqa: B009
+            mode="affine",
+        )
+
+    def _float32_constants(self) -> tuple[mx.array, mx.array]:
+        if "_float32_constants_value" not in self.__dict__:
+            bias = self.expert_bias.astype(mx.float32)
+            scaling = mx.array(self.scaling_factor, dtype=mx.float32)
+            mx.eval(bias, scaling)
+            object.__setattr__(self, "_float32_constants_value", (bias, scaling))
+        return cast(
+            tuple[mx.array, mx.array], self.__dict__["_float32_constants_value"]
         )
 
 
@@ -283,7 +438,60 @@ class MoE(nn.Module):
         )
         self.fp32_combine = args.enable_moe_fp32_combine
 
-    def __call__(self, x: mx.array) -> mx.array:
+    def __call__(
+        self,
+        x: mx.array,
+        x_float32: mx.array | None = None,
+        residual: mx.array | None = None,
+    ) -> mx.array:
+        """The block's output, plus ``residual`` when given (the decoder layer passes its
+        residual stream when the block is not sharded). ``x_float32`` is
+        ``x.astype(float32)`` when the caller has it."""
+        parts = self._fused_parts(x, x_float32)
+        if parts is None:
+            out = self._reference(x)
+            return out if residual is None else residual + out
+        y, weights, shared = parts
+        return kernels.moe_combine(
+            y, weights, shared, residual, float32_combine=self.fp32_combine
+        )
+
+    def with_next_norm(
+        self,
+        x: mx.array,
+        x_float32: mx.array | None,
+        residual: mx.array,
+        next_norm: nn.RMSNorm,
+    ) -> tuple[mx.array, mx.array]:
+        """``residual + self(x)`` and the next layer's input norm of it, in one kernel."""
+        parts = self._fused_parts(x, x_float32)
+        if parts is None:
+            out = residual + self._reference(x)
+            return out, next_norm(out)
+        y, weights, shared = parts
+        return kernels.moe_combine_norm(
+            y,
+            weights,
+            shared,
+            residual,
+            next_norm.weight,
+            next_norm.eps,
+            float32_combine=self.fp32_combine,
+        )
+
+    def _fused_parts(
+        self, x: mx.array, x_float32: mx.array | None
+    ) -> tuple[mx.array, mx.array, mx.array] | None:
+        """The experts' outputs, their weights and the shared expert's output, through the
+        fused path; None where it doesn't apply."""
+        stack = self._stack() if kernels.fused_kernels_available() else None
+        if stack is None:
+            return None
+        routing = self.router.route_fused(x, x_float32)
+        indices, weights = routing if routing is not None else self.router.route(x)
+        return self._experts(x, indices, stack), weights, self.shared_mlp(x)
+
+    def _reference(self, x: mx.array) -> mx.array:
         indices, weights = self.router.route(x)
         experts = self.switch_mlp(x, indices)
         routed = (experts * weights[..., None]).sum(axis=-2)
@@ -291,6 +499,59 @@ class MoE(nn.Module):
         if self.fp32_combine:
             return (routed + shared.astype(mx.float32)).astype(x.dtype)
         return routed.astype(x.dtype) + shared
+
+    def _stack(self) -> ExpertStack | None:
+        """The experts' gate and up projections stacked at the first call."""
+        if "_expert_stack" not in self.__dict__:
+            glu = self.switch_mlp
+            object.__setattr__(
+                self, "_expert_stack", ExpertStack.build(glu.gate_proj, glu.up_proj)
+            )
+            # The separate weights are freed: return them to the system, not MLX's cache
+            # (over 79 layers it would hold as much as the stacks).
+            mx.clear_cache()
+        return cast(ExpertStack | None, self.__dict__["_expert_stack"])
+
+    def _experts(self, x: mx.array, indices: mx.array, stack: ExpertStack) -> mx.array:
+        """``self.switch_mlp(x, indices)`` (mlx-lm's ``SwitchGLU``) with gate and up in one
+        gather. From 64 index pairs it sorts them by expert, as mlx-lm does."""
+        down = self.switch_mlp.down_proj
+        x = mx.expand_dims(x, (-2, -3))
+        sort = indices.size >= 64
+        rows = indices
+        inverse: mx.array | None = None
+        if sort:
+            # mlx-lm's _gather_sort
+            top_k = indices.shape[-1]
+            flat = indices.flatten()
+            order = mx.argsort(flat)
+            inverse = mx.argsort(order)
+            x = x.flatten(0, -3)[order // top_k]
+            rows = flat[order]
+        both = gather(x, stack.gate_up, stack.group_size, stack.bits, rows, sort)
+        if quantized_affine(down):
+            down_arrays = arrays(down)
+            down_group_size = cast(int, down.group_size)
+            down_bits = cast(int, down.bits)
+            if gather_uses_matrix_vector(
+                indices.size, down_arrays[0].shape[0], sort
+            ) and kernels.swiglu_down_fusable(
+                both, down_arrays, down_group_size, down_bits
+            ):
+                # The down gather multiplies one row per token-expert pair with MLX's
+                # matrix-vector kernel, which swiglu_down reproduces with the activation
+                # inside.
+                out = kernels.swiglu_down(both, down_arrays, rows)
+                if inverse is not None:
+                    out = out[inverse]
+                return out.reshape(*indices.shape, out.shape[-1])
+        split = stack.intermediate
+        hidden = swiglu(both[..., :split], both[..., split:])
+        out = cast(mx.array, down(hidden, rows, sorted_indices=sort))
+        if inverse is not None:
+            # mlx-lm's _scatter_unsort
+            out = mx.unflatten(out[inverse], 0, indices.shape)
+        return out.squeeze(-2)
 
 
 class DecoderLayer(nn.Module):
@@ -313,8 +574,61 @@ class DecoderLayer(nn.Module):
         mask: mx.array | str | None = None,
         cache: KVCache | None = None,
     ) -> mx.array:
-        h = x + self.self_attn(self.input_layernorm(x), mask, cache)
-        return h + self.mlp(self.post_attention_layernorm(h))
+        normed_input = self._take_handed(x)
+        if normed_input is None:
+            normed_input = self.input_layernorm(x)
+        attention = self.self_attn(normed_input, mask, cache)
+        norm = self.post_attention_layernorm
+        mlp = self.mlp
+        following = cast("DecoderLayer | None", self.__dict__.get("_next_layer"))
+        # Tensor parallelism wraps the MoE to all-reduce its output: then add here.
+        if isinstance(mlp, MoE):
+            h, normed, normed_float32 = kernels.add_rms_norm(
+                x, attention, norm.weight, norm.eps, float32_copy=True
+            )
+            if following is None:
+                return mlp(normed, x_float32=normed_float32, residual=h)
+            out, next_normed = mlp.with_next_norm(
+                normed, normed_float32, h, following.input_layernorm
+            )
+            following.hand(out, next_normed)
+            return out
+        h, normed, _ = kernels.add_rms_norm(x, attention, norm.weight, norm.eps)
+        if following is None:
+            return h + mlp(normed)
+        next_norm = following.input_layernorm
+        out, next_normed, _ = kernels.add_rms_norm(
+            h, mlp(normed), next_norm.weight, next_norm.eps
+        )
+        following.hand(out, next_normed)
+        return out
+
+    def link(self, following: "DecoderLayer | None") -> None:
+        """The layer called next on this rank, which then takes its input norm from this
+        layer's last kernel."""
+        object.__setattr__(self, "_next_layer", following)
+
+    def hand(self, x: mx.array, normed: mx.array) -> None:
+        """``normed`` is ``self.input_layernorm(x)``, for the call whose input is ``x``."""
+        object.__setattr__(self, "_handed", (x, normed))
+
+    def _take_handed(self, x: mx.array) -> mx.array | None:
+        handed = cast("tuple[mx.array, mx.array] | None", self.__dict__.get("_handed"))
+        if handed is None:
+            return None
+        object.__setattr__(self, "_handed", None)
+        return handed[1] if handed[0] is x else None
+
+
+def _decoder_layer(layer: nn.Module) -> DecoderLayer | None:
+    """The decoder layer, also inside a pipeline wrapper."""
+    inner = layer
+    while not isinstance(inner, DecoderLayer):
+        wrapped = cast(nn.Module | None, getattr(inner, "original_layer", None))
+        if wrapped is None or wrapped is inner:
+            return None
+        inner = wrapped
+    return inner
 
 
 class HYV3Model(nn.Module):
@@ -339,6 +653,12 @@ class HYV3Model(nn.Module):
             cache if cache is not None else [None] * len(self.layers)
         )
         mask = create_attention_mask(h, layer_caches[0])
+        # Each layer hands the next one on this rank its input norm (see DecoderLayer).
+        fused = kernels.fused_kernels_available()
+        inner = [_decoder_layer(layer) for layer in self.layers]
+        for layer, following in zip(inner, [*inner[1:], None], strict=True):
+            if layer is not None:
+                layer.link(following if fused else None)
         for layer, layer_cache in zip(self.layers, layer_caches, strict=True):
             h = layer(h, mask, layer_cache)
         return self.norm(h)
