@@ -19,6 +19,7 @@ from exo.worker.engines.mlx.sharding.pipeline import (
     get_inner_model,
     get_layers,
     patch_pipeline_model,
+    receive_can_be_deferred,
 )
 from exo.worker.engines.mlx.sharding.tensor import patch_tensor_model
 from exo.worker.runner.bootstrap import logger
@@ -51,7 +52,12 @@ def pipeline_auto_parallel(
         mx.clear_cache()
         yield ModelLoadingResponse(layers_loaded=i, total=total)
 
-    layers[0] = PipelineFirstLayer(layers[0], device_rank, group=group)
+    layers[0] = PipelineFirstLayer(
+        layers[0],
+        device_rank,
+        group=group,
+        defer_receive=receive_can_be_deferred(model),
+    )
     layers[-1] = PipelineLastLayer(
         layers[-1],
         device_rank,

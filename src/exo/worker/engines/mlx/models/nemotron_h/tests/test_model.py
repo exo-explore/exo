@@ -3,6 +3,7 @@
 from typing import Any, cast
 
 import mlx.core as mx
+import pytest
 from mlx_lm.models.nemotron_h import Model as MlxLmModel
 from mlx_lm.models.nemotron_h import ModelArgs as MlxLmModelArgs
 from mlx_lm.models.nemotron_h import (
@@ -34,7 +35,9 @@ def test_every_moe_layer_routes_in_float32() -> None:
     assert all(isinstance(moe.gate, Float32RouterGate) for moe in moe_layers)
 
 
-def test_router_logits_are_computed_in_float32() -> None:
+@pytest.mark.parametrize("device", [mx.gpu, mx.cpu])
+def test_router_logits_are_computed_in_float32(device: mx.Device) -> None:
+    # On the GPU the selection runs as a kernel, on the CPU as mlx-lm's ops.
     mx.random.seed(3)
     args = ModelArgs.from_dict(CONFIG)
     gate = Float32RouterGate(args)
@@ -46,7 +49,13 @@ def test_router_logits_are_computed_in_float32() -> None:
     )
     x = mx.random.normal((16, args.hidden_size)).astype(mx.bfloat16)
 
-    indices, scores = gate(x)
+    with mx.stream(mx.default_stream(device)):
+        mx.set_default_device(device)
+        try:
+            indices, scores = gate(x)
+            mx.eval(indices, scores)
+        finally:
+            mx.set_default_device(mx.gpu)
 
     expected_indices, expected_scores = group_expert_select(
         x.astype(mx.float32) @ gate.weight.astype(mx.float32).T,
@@ -57,8 +66,19 @@ def test_router_logits_are_computed_in_float32() -> None:
         gate.routed_scaling_factor,
         gate.norm_topk_prob,
     )
-    assert mx.array_equal(indices, expected_indices)
-    assert mx.array_equal(scores, expected_scores)
+    # The same experts with the same scores; their order within a row is free.
+    order = mx.argsort(indices, axis=-1)
+    expected_order = mx.argsort(expected_indices, axis=-1)
+    assert mx.array_equal(
+        mx.take_along_axis(indices, order, axis=-1),
+        mx.take_along_axis(expected_indices, expected_order, axis=-1),
+    )
+    assert mx.allclose(
+        mx.take_along_axis(scores, order, axis=-1),
+        mx.take_along_axis(expected_scores, expected_order, axis=-1),
+        rtol=1e-5,
+        atol=0,
+    )
 
 
 def test_mamba_mixers_run_in_float32_between_in_proj_and_out_proj() -> None:

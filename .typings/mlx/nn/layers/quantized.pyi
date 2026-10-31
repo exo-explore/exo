@@ -106,6 +106,13 @@ class QuantizedLinear(Module):
         mode (str): The quantization method to use (see
            :func:`mlx.core.quantize`). Default: ``"affine"``.
     """
+
+    weight: mx.array
+    scales: mx.array
+    group_size: int
+    bits: int
+    mode: str
+
     def __init__(
         self,
         input_dims: int,
