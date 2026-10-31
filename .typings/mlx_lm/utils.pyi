@@ -7,8 +7,6 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple, Type, Union
 
 import mlx.nn as nn
-from transformers.utils.auto_docstring import ModelArgs
-
 from .tokenizer_utils import TokenizerWrapper
 
 if os.getenv("MLXLM_USE_MODELSCOPE", "False").lower() == "true": ...
@@ -20,13 +18,18 @@ def compute_bits_per_weight(model): ...
 def hf_repo_to_path(hf_repo):  # -> Path:
     ...
 def load_config(model_path: Path) -> dict: ...
-def _get_classes(config: dict[str, Any]) -> Tuple[Type[nn.Module], type]: ...
+def _get_classes(config: dict[str, Any]) -> Tuple[Type[nn.Module], type]:
+    """
+    Retrieve the model and model args classes based on the configuration.
+    """
+
 def load_model(
     model_path: Path,
     lazy: bool = False,
     strict: bool = True,
-    model_config: dict[str, Any] = {},
+    model_config: Optional[dict[str, Any]] = None,
     get_model_classes: Callable[[dict[str, Any]], Tuple[Type[nn.Module], type]] = ...,
+    trust_remote_code: bool = False,
 ) -> Tuple[nn.Module, dict[str, Any]]:
     """
     Load and initialize the model from a given path.

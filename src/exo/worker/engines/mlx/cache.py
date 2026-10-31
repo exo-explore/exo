@@ -14,15 +14,15 @@ from mlx_lm.models.cache import (
     QuantizedKVCache,
     RotatingKVCache,
 )
-from mlx_lm.models.deepseek_v4 import (
-    DeepseekV4Cache,
-)
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.memory import Memory
 from exo.worker.engines.mlx.cache_copy import copy_rotating_kv_cache, detached_copy
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
 from exo.worker.engines.mlx.models.deepseek_v4.cache import copy_deepseek_v4_cache
+from exo.worker.engines.mlx.models.deepseek_v4.model import (
+    DeepseekV4Cache,
+)
 from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.runner.bootstrap import logger
 
@@ -75,14 +75,14 @@ class CacheSnapshot:
 
 def _copy_arrays_cache(ac: ArraysCache) -> ArraysCache:
     entries: list[mx.array | None] = []
-    for entry in ac.cache:  # type: ignore[reportUnknownMemberType]
+    for entry in ac.cache:
         if entry is None:
             entries.append(None)
             continue
         assert isinstance(entry, mx.array)
         entries.append(detached_copy(entry))
     copy = ArraysCache(len(entries))
-    copy.cache = entries  # type: ignore[reportUnknownMemberType]
+    copy.cache = entries
     return copy
 
 
@@ -426,6 +426,17 @@ def _entry_nbytes(cache: KVCacheType, snapshots: list[CacheSnapshot] | None) -> 
     return total
 
 
+def _clear_non_trimmable(c: ArraysCache | RotatingKVCache) -> None:
+    """Empty a cache that cannot be trimmed, keeping its configuration."""
+    if isinstance(c, ArraysCache):
+        c.cache = [None] * len(c.cache)
+    else:
+        c.keys = None
+        c.values = None
+        c.offset = 0
+        c._idx = 0
+
+
 def trim_cache(
     cache: KVCacheType,
     num_tokens: int,
@@ -441,18 +452,12 @@ def trim_cache(
                 if restored is not None:
                     cache[i] = restored  # type: ignore
             elif isinstance(c, (ArraysCache, RotatingKVCache)):
-                c.state = [None] * len(c.state)
-                if isinstance(c, RotatingKVCache):
-                    c.offset = 0
-                    c._idx = 0
+                _clear_non_trimmable(c)
             else:
                 # CacheList without a snapshot — zero each inner cache's state
                 for inner in c:  # type: ignore[reportUnknownVariableType]
                     if isinstance(inner, (ArraysCache, RotatingKVCache)):
-                        inner.state = [None] * len(inner.state)
-                        if isinstance(inner, RotatingKVCache):
-                            inner.offset = 0
-                            inner._idx = 0
+                        _clear_non_trimmable(inner)
         else:
             c.trim(num_tokens)
 

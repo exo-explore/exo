@@ -4,14 +4,14 @@ from copy import deepcopy
 
 import mlx.core as mx
 from mlx_lm.models.cache import RotatingKVCache
-from mlx_lm.models.deepseek_v4 import (
-    DeepseekV4Cache,
-)
-from mlx_lm.models.deepseek_v4 import (
-    _CompressorBranch as CompressorBranch,  # type: ignore
-)
 
 from exo.worker.engines.mlx.cache_copy import copy_rotating_kv_cache, detached_copy
+from exo.worker.engines.mlx.models.deepseek_v4.model import (
+    DeepseekV4Cache,
+)
+from exo.worker.engines.mlx.models.deepseek_v4.model import (
+    _CompressorBranch as CompressorBranch,  # type: ignore
+)
 
 
 def _detached_copy_or_none(a: mx.array | None) -> mx.array | None:

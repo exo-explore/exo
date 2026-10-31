@@ -65,7 +65,17 @@ class PipelineLastLayer(CustomMlxLayer):
             x, *args, **kwargs
         ).arguments.get("cache", None)
 
-        output: mx.array = self.original_layer(x, *args, **kwargs)
+        result = cast(object, self.original_layer(x, *args, **kwargs))
+        # GLM MoE DSA layers return (hidden state, indexer top-k). Only the hidden
+        # state goes to the next rank: its layers start without top-k, as in mlx-lm's
+        # own pipeline.
+        extra: tuple[object, ...] = ()
+        if isinstance(result, tuple):
+            hidden, *rest = cast(tuple[object, ...], result)
+            output = cast(mx.array, hidden)
+            extra = tuple(rest)
+        else:
+            output = cast(mx.array, result)
 
         # Eval layer output to materialize it before send — this splits the graph
         # so the send is isolated and the receiving rank's recv can complete.
@@ -96,6 +106,8 @@ class PipelineLastLayer(CustomMlxLayer):
             ]
             mx.eval(output)
 
+        if extra:
+            return cast(mx.array, cast(object, (output, *extra)))
         return output
 
 

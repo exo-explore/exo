@@ -5,7 +5,7 @@ import tempfile
 import time
 from collections.abc import Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 if TYPE_CHECKING:
     from exo.worker.engines.mlx.vision import VisionProcessor
@@ -452,6 +452,53 @@ def consolidate_system_messages(
     return formatted_messages
 
 
+class _ChatTemplateRenderer(Protocol):
+    def apply_chat_template(
+        self,
+        conversation: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None,
+        add_generation_prompt: bool,
+        tokenize: bool,
+        return_dict: bool,
+        **kwargs: bool | str,
+    ) -> str: ...
+
+
+def _render_leaving_thinking_unset(
+    tokenizer: TokenizerWrapper,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+    template_kwargs: dict[str, bool | str],
+) -> str:
+    """Render a request that does not say whether to think.
+
+    mlx-lm's TokenizerWrapper then sets the template's own thinking switch to whether
+    the tokenizer has thinking tokens. A template whose switch is `thinking` (DeepSeek
+    V3.1) defaults to not thinking, so that turns thinking on. exo only ever defaulted
+    `enable_thinking`, so call the Hugging Face tokenizer as the wrapper would, with
+    that default alone, and let such a template keep its own default.
+    """
+    if cast(object, getattr(tokenizer, "_chat_template", None)) is not None:
+        # The wrapper renders with a template function of its own
+        return tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            tools=tools,
+            **template_kwargs,
+        )
+    renderer = cast(_ChatTemplateRenderer, cast(object, tokenizer._tokenizer))
+    return renderer.apply_chat_template(
+        messages,
+        tools=tools,
+        add_generation_prompt=True,
+        tokenize=False,
+        return_dict=False,
+        **{"enable_thinking": tokenizer.has_thinking, **template_kwargs},
+    )
+
+
 def render_chat_template(
     tokenizer: TokenizerWrapper,
     messages: list[dict[str, Any]],
@@ -506,14 +553,22 @@ def render_chat_template(
                     "Patched lossy chat template (removed inner_type length guard)"
                 )
 
-    prompt: str = tokenizer.apply_chat_template(
-        formatted_messages,
-        tokenize=False,
-        add_generation_prompt=True,
-        tools=task_params.tools,
+    template_kwargs: dict[str, bool | str] = {
         **({"chat_template": patched_template} if patched_template is not None else {}),
         **extra_kwargs,
-    )
+    }
+    if task_params.enable_thinking is None:
+        prompt = _render_leaving_thinking_unset(
+            tokenizer, formatted_messages, task_params.tools, template_kwargs
+        )
+    else:
+        prompt = tokenizer.apply_chat_template(
+            formatted_messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            tools=task_params.tools,
+            **template_kwargs,
+        )
 
     if task_params.tools and _schemas_lost_in_prompt(prompt, task_params.tools):
         logger.warning("Chat template lost nested tool schemas even after patching")
