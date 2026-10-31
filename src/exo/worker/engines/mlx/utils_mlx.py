@@ -817,6 +817,40 @@ def set_wired_limit_for_model(model_size: Memory):
         )
     mx.set_wired_limit(max_rec_size.in_bytes)
     logger.info(f"Wired limit set to {max_rec_size}.")
+    memory_limit = memory_limit_for_working_set(
+        max_rec_size, os.environ.get(MEMORY_LIMIT_ENV)
+    )
+    if memory_limit is not None:
+        previous = Memory.from_bytes(mx.set_memory_limit(memory_limit.in_bytes))
+        logger.info(f"MLX memory limit set to {memory_limit} (was {previous}).")
+
+
+# How far below the GPU's recommended working set MLX's memory limit sits. Measured on a
+# 96 GB Mac Studio (M3 Ultra) near its 83.5 GB working set: 1 GB still let an 8k-token
+# prefill fail, 2 GB did not and cost +0.3% prefill there (4 GB: +4.5%); away from the limit
+# it costs nothing.
+MEMORY_LIMIT_MARGIN = Memory.from_gb(2)
+MEMORY_LIMIT_ENV = "EXO_MLX_MEMORY_LIMIT_GB"
+
+
+def memory_limit_for_working_set(
+    working_set: Memory, override: str | None
+) -> Memory | None:
+    """The MLX memory limit for a runner: just under the GPU's recommended working set.
+
+    MLX's default limit is min(1.5 x working set, 0.95 x RAM), which is above the working
+    set (97.9 GB against 83.5 GB on a 96 GB Mac Studio). The limit is what makes an eval
+    wait for in-flight GPU work before encoding more; above the working set, a prefill
+    chunk can queue enough intermediates to fail its command buffer with "Insufficient
+    Memory" when the weights already fill most of the working set.
+
+    EXO_MLX_MEMORY_LIMIT_GB overrides it: a size in GB, or 0 to keep MLX's default.
+    Returns None to keep MLX's default.
+    """
+    if override is not None and override.strip() != "":
+        gigabytes = float(override)
+        return None if gigabytes <= 0 else Memory.from_gb(gigabytes)
+    return working_set - MEMORY_LIMIT_MARGIN
 
 
 def mlx_cleanup(
