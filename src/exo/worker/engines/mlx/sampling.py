@@ -1,6 +1,7 @@
 """exo's sampler and logits processors: mlx-lm's, with the same results for less work per token.
 
-Sampler: mlx-lm's sampler chain, with its top-k computed by an exact radix selection.
+Sampler: mlx-lm's sampler chain, with its top-k computed by an exact radix selection and the
+sort inside its top-p by a radix sort.
 
 mlx-lm's ``apply_top_k`` finds the k best log-probs with ``mx.argpartition``, which MLX's GPU
 backend runs as a full merge sort of the vocabulary, and then scatters -inf over all the other
@@ -18,6 +19,12 @@ same.
 The kernels need a Metal GPU and float32 log-probs (exo's batch step normalises in float32). In
 any other case, or for a top-k above ``_MAX_TOP_K`` or not below the vocabulary size, mlx-lm's
 ``apply_top_k`` runs, with its own errors for invalid values.
+
+Top-p: ``apply_top_p`` sorts the log-probs with ``mx.sort`` (MLX's multi-block merge sort), sums
+the sorted probabilities with a cumulative sum and cuts where the mass above a token reaches top_p
+of the total. The cut depends on the float32 sums in the sorted order, so only a full sort keeps it
+exact: ``sorted_top_p`` runs the same operations on the output of a radix sort, which sorts the
+same values (see radix_sort.py), and gives the same filtered log-probs bit for bit.
 
 Logits processors: mlx-lm's repetition, presence and frequency penalties, without the ones that
 can't change the logits (a repetition penalty of 1.0 multiplies or divides them by 1.0), and
@@ -44,6 +51,8 @@ from mlx_lm.sample_utils import (
     make_sampler as mlx_make_sampler,
 )
 
+from exo.worker.engines.mlx.radix_sort import can_sort_rows, sort_rows
+
 Sampler = Callable[[mx.array], mx.array]
 LogitsProcessor = Callable[[mx.array, mx.array], mx.array]
 
@@ -54,6 +63,8 @@ _CHUNK_THREADS: Final = 256
 _MAX_TOP_K: Final = 1024
 _SELECT_THREADS: Final = 1024
 _MASK_THREADS: Final = 256
+# Below this many tokens MLX sorts a row in one threadgroup, faster than the radix sort.
+_MIN_SORTED_TOP_P: Final = 4096
 # mlx-lm's presence_context_size and frequency_context_size defaults.
 _MLX_PENALTY_CONTEXT: Final = 20
 
@@ -395,6 +406,27 @@ def select_top_k(logprobs: mx.array, top_k: int) -> mx.array:
     return out
 
 
+@mx.compile
+def _top_p_cut(logprobs: mx.array, sorted_logprobs: mx.array, top_p: float) -> mx.array:
+    # mlx_lm.sample_utils.apply_top_p after its sort, operation for operation.
+    sorted_probs = mx.exp(sorted_logprobs.astype(mx.float32))
+    mass_above = mx.cumsum(sorted_probs, axis=-1, reverse=True, inclusive=False)
+    total_mass = mass_above[..., :1] + sorted_probs[..., :1]
+    num_dropped = (mass_above >= top_p * total_mass).sum(axis=-1, keepdims=True)
+    threshold = mx.take_along_axis(sorted_logprobs, num_dropped, axis=-1)
+    return mx.where(logprobs < threshold, -float("inf"), logprobs)
+
+
+def sorted_top_p(logprobs: mx.array, top_p: float) -> mx.array:
+    """apply_top_p(logprobs, top_p), bit for bit, with the radix sort in place of mx.sort, for
+    [rows, vocab] float32 log-probs when can_sort_rows(logprobs).
+
+    The sorted log-probs differ from mx.sort's at most in the order of -0.0 and 0.0 and in NaN
+    bit patterns. Neither changes the result: exp(-0.0) == exp(0.0), x < -0.0 exactly when
+    x < 0.0, and NaN compares false whatever its bits."""
+    return _top_p_cut(logprobs, sort_rows(logprobs), top_p)
+
+
 def make_sampler(
     temp: float = 0.0,
     top_p: float = 0.0,
@@ -403,18 +435,22 @@ def make_sampler(
 ) -> Sampler:
     """mlx_lm.sample_utils.make_sampler(temp, top_p, min_p, top_k=top_k): the same chain in
     the same order, with select_top_k in place of apply_top_k where it applies."""
-    if temp == 0 or top_k <= 0:
+    if temp == 0 or (top_k <= 0 and not 0 < top_p < 1.0):
         return mlx_make_sampler(temp=temp, top_p=top_p, min_p=min_p, top_k=top_k)
 
     def sampler(logprobs: mx.array) -> mx.array:
         if 0 < top_p < 1.0:
-            logprobs = apply_top_p(logprobs, top_p)
+            if can_sort_rows(logprobs) and logprobs.shape[-1] > _MIN_SORTED_TOP_P:
+                logprobs = sorted_top_p(logprobs, top_p)
+            else:
+                logprobs = apply_top_p(logprobs, top_p)
         if min_p != 0.0:
             logprobs = apply_min_p(logprobs, min_p, 1)
-        if can_select_top_k(logprobs, top_k):
-            logprobs = select_top_k(logprobs, top_k)
-        else:
-            logprobs = apply_top_k(logprobs, top_k)
+        if top_k > 0:
+            if can_select_top_k(logprobs, top_k):
+                logprobs = select_top_k(logprobs, top_k)
+            else:
+                logprobs = apply_top_k(logprobs, top_k)
         return categorical_sampling(logprobs, temp)
 
     return sampler

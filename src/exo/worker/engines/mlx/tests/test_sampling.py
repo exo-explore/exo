@@ -7,11 +7,12 @@ from collections.abc import Callable
 import mlx.core as mx
 import pytest
 from mlx_lm.models.cache import BatchKVCache
-from mlx_lm.sample_utils import apply_top_k
+from mlx_lm.sample_utils import apply_top_k, apply_top_p
 from mlx_lm.sample_utils import make_logits_processors as mlx_make_logits_processors
 from mlx_lm.sample_utils import make_sampler as mlx_make_sampler
 
 from exo.worker.engines.mlx.patches.opt_batch_gen import apply_batch_gen_patch
+from exo.worker.engines.mlx.radix_sort import can_sort_rows, sort_rows
 from exo.worker.engines.mlx.sampling import (
     RecentTokensProcessor,
     can_select_top_k,
@@ -20,6 +21,7 @@ from exo.worker.engines.mlx.sampling import (
     make_sampler,
     recent_tokens,
     select_top_k,
+    sorted_top_p,
 )
 
 metal = pytest.mark.skipif(not mx.metal.is_available(), reason="Metal kernels")
@@ -74,6 +76,33 @@ def test_select_top_k_is_apply_top_k_bit_for_bit(vocab: int, top_k: int) -> None
         assert can_select_top_k(x, top_k)
         expected = apply_top_k(x, top_k)
         assert mx.array_equal(bits(select_top_k(x, top_k)), bits(expected)).item()
+
+
+@metal
+@pytest.mark.parametrize("vocab", [1, 33, 4095, 4096, 4097, 151936, 248320])
+def test_sort_rows_sorts_like_mx_sort(vocab: int) -> None:
+    inputs = [bf16_logprobs(rows, vocab, seed) for seed, rows in enumerate([1, 3])]
+    inputs.append(mx.random.normal((2, vocab), key=mx.random.key(5)) * 1e30)
+    inputs.extend(special_rows(vocab) if vocab > 12 else [])
+    for x in inputs:
+        assert can_sort_rows(x)
+        # equal values: -0.0 and 0.0 may swap places between themselves, NaN keeps its place
+        assert mx.array_equal(sort_rows(x), mx.sort(x, axis=-1), equal_nan=True).item()
+
+
+@metal
+@pytest.mark.parametrize("vocab", [4097, 151936, 248320])
+@pytest.mark.parametrize("top_p", [0.1, 0.8, 0.9, 0.95, 0.999])
+def test_sorted_top_p_is_apply_top_p_bit_for_bit(vocab: int, top_p: float) -> None:
+    inputs = [
+        bf16_logprobs(rows, vocab, seed, 1.0 + seed)
+        for seed, rows in enumerate([1, 3, 1])
+    ]
+    inputs.append(mx.random.normal((2, vocab), key=mx.random.key(9)) * 5.0)
+    inputs.extend(special_rows(vocab))
+    for x in inputs:
+        expected = apply_top_p(x, top_p)
+        assert mx.array_equal(bits(sorted_top_p(x, top_p)), bits(expected)).item()
 
 
 def test_select_top_k_only_where_the_kernels_apply() -> None:
