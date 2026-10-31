@@ -69,6 +69,7 @@ from exo.worker.engines.mlx.auto_parallel import (
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
+from exo.worker.engines.mlx.qwen3_5_decode import prepare_qwen3_5_decode
 from exo.worker.engines.mlx.types import Model
 from exo.worker.runner.bootstrap import logger
 
@@ -191,6 +192,7 @@ def load_mlx_items(
                 "Model architecture doesn't support layer-by-layer progress tracking",
             )
         mx.eval(model)
+        prepare_qwen3_5_decode(model)
         end_time = time.perf_counter()
         logger.info(f"Time taken to load model: {(end_time - start_time):.2f}s")
         tokenizer = get_tokenizer(model_path, bound_instance.bound_shard)
@@ -281,6 +283,7 @@ def shard_and_load(
 
     # TODO: Do we need this?
     mx.eval(model)
+    prepare_qwen3_5_decode(model)
 
     logger.debug("SHARDED")
     logger.debug(model)

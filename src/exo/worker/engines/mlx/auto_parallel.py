@@ -478,7 +478,7 @@ def tensor_auto_parallel(
 
     all_to_sharded_linear_in_place = partial(
         shard_inplace,
-        sharding=_all_to_sharded,  # type: ignore
+        sharding=_all_to_sharded,
         group=group,
     )
 
@@ -493,7 +493,7 @@ def tensor_auto_parallel(
 
     sharded_to_all_linear_in_place = partial(
         shard_inplace,
-        sharding=_sharded_to_all,  # type: ignore
+        sharding=_sharded_to_all,
         group=group,
     )
 
