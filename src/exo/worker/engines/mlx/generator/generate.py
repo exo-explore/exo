@@ -160,6 +160,22 @@ def _has_pipeline_communication_layer(model: Model):
     return False
 
 
+def pipeline_prefill_chunk_size(prefill_step_size: int, world_size: int) -> int:
+    """The chunk size pipeline_parallel_prefill splits a prompt into."""
+    return prefill_step_size // min(4, world_size)
+
+
+def uses_pipeline_prefill(
+    prompt_length: int, prefill_step_size: int, world_size: int
+) -> bool:
+    """Whether a pipeline prefills a prompt of `prompt_length` tokens (the whole prompt,
+    including the last token that prefill() leaves for the first decode step) in
+    overlapping chunks: from two of its chunks on, when there is something to overlap."""
+    return prompt_length >= 2 * pipeline_prefill_chunk_size(
+        prefill_step_size, world_size
+    )
+
+
 def pipeline_parallel_prefill(
     model: Model,
     prompt: mx.array,
@@ -191,7 +207,7 @@ def pipeline_parallel_prefill(
     This function is designed to match mlx_lm's stream_generate exactly in terms of
     side effects (given the same prefill step size)
     """
-    prefill_step_size = prefill_step_size // min(4, group.size())
+    prefill_step_size = pipeline_prefill_chunk_size(prefill_step_size, group.size())
 
     quantize_cache_fn: Callable[..., None] = functools.partial(
         maybe_quantize_kv_cache,
@@ -336,7 +352,12 @@ def prefill(
     prefill_step_size = 4096
 
     try:
-        if is_pipeline and num_tokens >= prefill_step_size:
+        # prompt_tokens leaves out the prompt's last token, so count it.
+        if (
+            is_pipeline
+            and group is not None
+            and uses_pipeline_prefill(num_tokens + 1, prefill_step_size, group.size())
+        ):
             set_pipeline_queue_sends(model, queue_sends=True)
             assert group is not None, "Pipeline prefill requires a distributed group"
             pipeline_parallel_prefill(
