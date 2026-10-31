@@ -1,6 +1,7 @@
 import os
 import resource
 import traceback
+from collections.abc import MutableMapping
 from dataclasses import dataclass
 from typing import Self, cast
 
@@ -57,6 +58,22 @@ def use_fast_synch(instance: Instance, override: str | None) -> bool:
     return isinstance(instance, MlxJacclInstance)
 
 
+def use_full_precision_float32(environ: MutableMapping[str, str]) -> None:
+    """Make MLX compute float32 matmuls in full float32.
+
+    On GPUs with matrix-multiplication units (Apple M5-generation GPUs), MLX by default
+    runs float32 matmul, quantized matmul, grouped matmul, convolution and attention at
+    reduced (TF32-like) precision: the results stay float32, but differ from a
+    full-precision reference far more than float32 rounding explains (MLX's docs,
+    docs/src/usage/precision.rst). exo runs float32 matmuls only where a model needs
+    float32, such as routers and hyper-connection mixing, so it keeps them exact.
+    bf16 and fp16 matmuls are unaffected.
+
+    MLX reads MLX_ENABLE_TF32 once, at its first such matmul, so this runs before the
+    runner loads anything. A value set by the user (MLX_ENABLE_TF32=1) is kept."""
+    environ.setdefault("MLX_ENABLE_TF32", "0")
+
+
 def entrypoint(
     bound_instance: BoundInstance,
     event_sender: MpSender[Event | RunnerTerminationError],
@@ -76,6 +93,9 @@ def entrypoint(
     os.environ["MLX_METAL_FAST_SYNCH"] = "1" if fast_synch else "0"
 
     logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
+
+    use_full_precision_float32(os.environ)
+    logger.info(f"MLX_ENABLE_TF32: {os.environ['MLX_ENABLE_TF32']}")
 
     # Import main after setting global logger - this lets us just import logger from this module
     try:

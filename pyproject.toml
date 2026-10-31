@@ -249,6 +249,8 @@ extend-select = ["I", "N", "B", "A", "PIE", "SIM"]
 pythonpath = "."
 asyncio_mode = "auto"
 markers = ["slow: marks tests as slow (deselected by default)"]
-env = ["EXO_TESTS=1"]
+# MLX_ENABLE_TF32=0 as in the runners (exo.worker.runner.bootstrap): float32 matmuls in
+# full float32 on GPUs with matrix units, where MLX otherwise reduces their precision
+env = ["EXO_TESTS=1", "D:MLX_ENABLE_TF32=0"]
 addopts = "-m 'not slow' --ignore=tests --ignore=tmp"
 filterwarnings = ["ignore:builtin type Swig:DeprecationWarning"]
