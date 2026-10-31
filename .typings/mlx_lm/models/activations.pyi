@@ -6,8 +6,7 @@ import mlx.core as mx
 import mlx.nn as nn
 from functools import partial
 
-@partial(mx.compile, shapeless=True)
-def swiglu(gate, x): ...
+def swiglu(gate: mx.array, x: mx.array) -> mx.array: ...
 @partial(mx.compile, shapeless=True)
 def xielu(x, alpha_p, alpha_n, beta, eps):  # -> array:
     ...

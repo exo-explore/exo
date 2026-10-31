@@ -30,6 +30,7 @@ from exo.worker.engines.mlx.models.qwen3.spec import SPEC
 def _attach_ngram_table(model: nn.Module, model_path: Path) -> None:
     assert isinstance(model, Qwen4ExpModel)
     model.attach_ngram_table(model_path)
+    model.pack_for_inference()
 
 
 FAMILY = ModelFamily(
