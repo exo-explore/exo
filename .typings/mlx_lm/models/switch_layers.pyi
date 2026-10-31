@@ -8,6 +8,12 @@ import mlx.core as mx
 import mlx.nn as nn
 
 class QuantizedSwitchLinear(nn.Module):
+    group_size: int
+    bits: int
+    mode: str
+    weight: mx.array
+    scales: mx.array
+    biases: mx.array | None
     def __init__(
         self,
         input_dims: int,
