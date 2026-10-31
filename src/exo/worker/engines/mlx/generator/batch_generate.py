@@ -12,7 +12,7 @@ from mlx_lm.generate import (
     generation_stream,
 )
 from mlx_lm.models.cache import RotatingKVCache
-from mlx_lm.sample_utils import make_logits_processors, make_sampler
+from mlx_lm.sample_utils import make_sampler
 from mlx_lm.tokenizer_utils import StreamingDetokenizer, TokenizerWrapper
 
 from exo.api.types import (
@@ -38,6 +38,7 @@ from exo.worker.engines.mlx.generator.generate import (
     eos_ids_from_tokenizer,
     extract_top_logprobs,
     patch_embed_tokens,
+    penalty_processors,
     prefill,
 )
 from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
@@ -283,15 +284,12 @@ class ExoBatchGenerator:
 
         last_tokens = prompt_tokens[-2:]
 
-        logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = (
-            make_logits_processors(
-                repetition_penalty=task_params.repetition_penalty,
-                repetition_context_size=task_params.repetition_context_size
-                if task_params.repetition_context_size is not None
-                else 20,
-                presence_penalty=task_params.presence_penalty,
-                frequency_penalty=task_params.frequency_penalty,
-            )
+        logits_processors = penalty_processors(
+            prompt=cast(list[int], all_prompt_tokens.tolist()),
+            repetition_penalty=task_params.repetition_penalty,
+            repetition_context_size=task_params.repetition_context_size,
+            presence_penalty=task_params.presence_penalty,
+            frequency_penalty=task_params.frequency_penalty,
         )
         if is_bench:
             # Only sample length eos tokens
