@@ -39,6 +39,7 @@ import json
 import math
 import re
 import struct
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
@@ -1944,9 +1945,9 @@ class TextModel(nn.Module):
         self._stage: PipelineStage | None = None
         # Set by Model.shard for tensor parallelism.
         self.tensor_group: mx.distributed.Group | None = None
-        # Whether an engram layer of this rank reads its table on the host (set by
-        # Model.load_engram).
-        self.host_engram = False
+        # When the previous forward pass started (monotonic seconds), to tell when the
+        # GPU has been idle.
+        self._last_forward = -math.inf
         # The draft head's inputs: the streams at the input of these layers, averaged
         # over the hyper-connection copies (set by Model when it has a draft head).
         self.target_layer_ids: tuple[int, ...] = ()
@@ -2051,6 +2052,9 @@ class TextModel(nn.Module):
     def __call__(
         self, inputs: mx.array, cache: list[LayerCache] | None = None
     ) -> mx.array:
+        now = time.monotonic()
+        after_idle = now - self._last_forward > _IDLE_S
+        self._last_forward = now
         h = self.embed_tokens(inputs)
         batch, length, _ = h.shape
         layers = self.pipeline_layers
@@ -2105,11 +2109,17 @@ class TextModel(nn.Module):
 
         if targets and len(targets) == len(self.target_layer_ids):
             self.target_hidden = mx.concatenate(targets, axis=-1)
-        if self.tensor_group is not None and self.host_engram:
-            # The host engram reads above (made while the graph is built) can take seconds
-            # on one rank and not on another, e.g. when its page cache is cold. Let every
-            # rank finish them before any starts the graph: otherwise its GPU sits in the
-            # first all-reduce that long, and Metal times the command buffer out.
+        if self.tensor_group is not None:
+            # Some work before the graph can take seconds on one rank and not on another:
+            # the host engram reads above (made while the graph is built), e.g. when the
+            # page cache is cold, and after the GPU has been idle, macOS re-wiring MLX's
+            # buffers, which the first GPU command pays for (seconds at a few hundred GB).
+            # Let every rank finish both before any starts the graph: otherwise its GPU
+            # sits in the first all-reduce that long, and Metal times the command buffer
+            # out. The re-wire is a local GPU command, so each rank decides on its own;
+            # the barrier is a collective, so every rank meets there on every pass.
+            if after_idle:
+                mx.eval(mx.zeros((1,)) + 1)
             mx.eval(
                 mx.distributed.all_sum(
                     mx.array(1.0),
@@ -2190,6 +2200,9 @@ def _repack(weight: mx.array, scale: mx.array) -> tuple[mx.array, mx.array]:
 
 # GPU memory left free for activations, caches and prefill temporaries when deciding
 # whether an engram table goes on the GPU.
+# macOS drops the wired residency of GPU buffers after about 2 s of GPU idle; a gap
+# between forward passes longer than this may have to re-wire first.
+_IDLE_S = 1.0
 _ENGRAM_DEVICE_RESERVE = 48 * 1024**3
 
 
@@ -2328,7 +2341,6 @@ class Model(nn.Module):
                     f"layers.{layer_id}.engram.embed.weight",
                     f"layers.{layer_id}.engram.embed.scale",
                 )
-        self.model.host_engram = any(not e.embed.on_device for e in engrams)
         for engram in engrams:
             hasher = NgramHasher(
                 layout,
