@@ -269,8 +269,9 @@ def test_sanitize_maps_the_released_names() -> None:
         "model.layers.2.self_attn.compressor.kv_norm.weight",
         "model.layers.2.self_attn.indexer.k_proj.weight",
     }
-    # the head is float32; a 32x32 fp8 block scale becomes one scale per row
-    assert clean["lm_head.weight"].dtype == mx.float32
+    # the head stays bf16 as stored (the logits are float32 products and sums); a 32x32
+    # fp8 block scale becomes one scale per row
+    assert clean["lm_head.weight"].dtype == mx.bfloat16
     assert clean["model.layers.1.engram.wkv.scales"].shape == (64, 2)
     assert clean["model.layers.1.engram.wkv.weight"].shape == (64, 16)
 

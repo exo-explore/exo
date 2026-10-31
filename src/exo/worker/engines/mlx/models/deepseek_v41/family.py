@@ -10,6 +10,7 @@ from exo.worker.engines.mlx.models.deepseek_v41.sharding import (
     pipeline_parallel,
 )
 from exo.worker.engines.mlx.models.deepseek_v41.spec import SPEC
+from exo.worker.engines.mlx.models.deepseek_v41.speculative import token_generator
 from exo.worker.engines.mlx.models.family import (
     Architecture,
     ModelClasses,
@@ -38,6 +39,7 @@ FAMILY = ModelFamily(
             post_load=_load_engram,
             # Its per-layer cache can't be merged into or split from a batch yet.
             batched_generation=False,
+            token_generator=token_generator,
         ),
     ),
     model_classes=(
