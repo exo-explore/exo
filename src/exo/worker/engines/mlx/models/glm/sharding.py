@@ -227,4 +227,12 @@ class Glm5NextShardingStrategy(TensorParallelShardingStrategy):
             mx.eval(layer)
             mx.clear_cache()
             yield ModelLoadingResponse(layers_loaded=i, total=total)
+        # The lm_head (bf16, 1.27 GB for GLM-5.3-Flash) is read in full at every decode
+        # step: split the vocabulary across ranks and gather the logits.
+        if not model.args.tie_word_embeddings and model.args.vocab_size % self.N == 0:
+            model.shard_vocabulary(
+                self.all_to_sharded_linear(model.lm_head), self.group
+            )
+            mx.eval(model.lm_head.parameters())
+            mx.clear_cache()
         return model
