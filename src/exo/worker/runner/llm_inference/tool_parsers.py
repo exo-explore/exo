@@ -16,7 +16,16 @@ class ToolParser:
     def parse(
         self, text: str, tools: list[dict[str, Any]] | None
     ) -> list[ToolCallItem] | None:
-        parsed = self._inner_parser(text)
+        parsed: list[ToolCallItem] | None = None
+        if tools is not None and "<function=" in text:
+            parsed = _parse_xml_with_schema(
+                text.strip()
+                .removeprefix(self.start_parsing)
+                .removesuffix(self.end_parsing),
+                tools,
+            )
+        if parsed is None:
+            parsed = self._inner_parser(text)
         if parsed is None:
             return None
         if tools is not None:
@@ -244,6 +253,77 @@ def _parse_xml_lenient(text: str) -> dict[str, Any] | None:
     if not arguments:
         return None
     return {"name": name, "arguments": arguments}
+
+
+_xml_function_open_regex = re.compile(r"<function=([^>\n]+)>")
+_xml_parameter_close_regex = re.compile(r"\n?</param[a-z]*>\s*$")
+
+
+def _parse_xml_with_schema(
+    text: str, tools: list[dict[str, Any]]
+) -> list[ToolCallItem] | None:
+    """Parse a Qwen3-Coder style call by splitting on the tool's own parameter names.
+
+    The strict mlx_lm parser pairs each `<parameter=` with the first
+    `</parameter>` after it, so a dropped close tag loses that parameter or folds
+    the next one into it, and a value that itself contains `</parameter>` (an
+    edit to a prompt or XML file) is cut short and can apply a wrong edit. Here a
+    value runs until the next opening tag for one of the tool's parameters, and
+    only the close tag at its very end is removed.
+    """
+    function_matches = list(_xml_function_open_regex.finditer(text))
+    if len(function_matches) != 1:
+        return None
+    name = function_matches[0].group(1).strip()
+    body = text[function_matches[0].end() :]
+    function_close = body.rfind("</function>")
+    if function_close != -1:
+        body = body[:function_close]
+    if body.strip().startswith("{"):
+        return None
+
+    parameter_names: list[str] = []
+    for tool in tools:
+        function = tool.get("function")
+        if isinstance(function, dict) and function.get("name") == name:  # pyright: ignore[reportUnknownMemberType]
+            parameters = function.get("parameters")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            if isinstance(parameters, dict):
+                properties = parameters.get("properties")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                if isinstance(properties, dict):
+                    parameter_names = [
+                        key
+                        for key in properties  # pyright: ignore[reportUnknownVariableType]
+                        if isinstance(key, str)
+                    ]
+    if not parameter_names:
+        return None
+
+    names_pattern = "|".join(
+        re.escape(parameter_name)
+        for parameter_name in sorted(parameter_names, key=len, reverse=True)
+    )
+    opening_tags = list(
+        re.finditer(rf'<parameter(?:=|\s+name=)"?({names_pattern})"?>', body)
+    )
+    if not opening_tags:
+        return None
+
+    arguments: dict[str, str] = {}
+    for index, opening_tag in enumerate(opening_tags):
+        value_end = (
+            opening_tags[index + 1].start()
+            if index + 1 < len(opening_tags)
+            else len(body)
+        )
+        value = body[opening_tag.end() : value_end]
+        closed_value = _xml_parameter_close_regex.sub("", value, count=1)
+        if closed_value == value:
+            # No close tag: the newline before the next tag is not part of the value
+            closed_value = value.rstrip(" \t").removesuffix("\n")
+        arguments[opening_tag.group(1)] = closed_value.removeprefix("\n")
+    return [
+        ToolCallItem.model_validate({"name": name, "arguments": json.dumps(arguments)})
+    ]
 
 
 def make_mlx_parser(

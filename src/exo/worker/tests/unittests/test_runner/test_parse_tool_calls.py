@@ -342,3 +342,80 @@ class TestEmptyArgumentsForRequiredParameters:
         parsed = self._parser().parse(text, tools=self._tools)
         assert parsed is not None
         assert json.loads(parsed[0].arguments) == {"path": "/a.py", "content": "x = 1"}
+
+
+class TestQwenToolCallsSplitOnSchemaParameters:
+    """With the tool schema known, a value runs to the next opening tag for one of
+    the tool's parameters, so missing or extra close tags cannot drop or merge
+    parameters."""
+
+    _tools: list[dict[str, Any]] = [
+        {
+            "type": "function",
+            "function": {
+                "name": "edit",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "filePath": {"type": "string"},
+                        "oldString": {"type": "string"},
+                        "newString": {"type": "string"},
+                        "replaceAll": {"type": "boolean"},
+                    },
+                    "required": ["filePath", "oldString", "newString"],
+                },
+            },
+        }
+    ]
+
+    def _parse(self, body: str) -> dict[str, Any]:
+        from mlx_lm.tool_parsers.qwen3_coder import parse_tool_call
+
+        parser = make_mlx_parser("<tool_call>", "</tool_call>", parse_tool_call)
+        parsed = parser.parse(f"<tool_call>{body}</tool_call>", tools=self._tools)
+        assert parsed is not None
+        arguments: dict[str, Any] = json.loads(parsed[0].arguments)  # pyright: ignore[reportAny]
+        return arguments
+
+    def test_well_formed_call_keeps_indentation_and_types(self):
+        assert self._parse(
+            "\n<function=edit>\n<parameter=filePath>\n/a.py\n</parameter>\n<parameter=oldString>\n    x = 1\n\n</parameter>\n<parameter=newString>\n    x = 2\n\n</parameter>\n<parameter=replaceAll>\ntrue\n</parameter>\n</function>\n"
+        ) == {
+            "filePath": "/a.py",
+            "oldString": "    x = 1\n",
+            "newString": "    x = 2\n",
+            "replaceAll": True,
+        }
+
+    def test_last_parameter_unclosed(self):
+        assert self._parse(
+            "\n<function=edit>\n<parameter=filePath>\n/a.py\n</parameter>\n<parameter=oldString>\nx = 1\n</parameter>\n<parameter=newString>\nx = 2\n</function>\n"
+        ) == {"filePath": "/a.py", "oldString": "x = 1", "newString": "x = 2"}
+
+    def test_middle_parameter_unclosed(self):
+        assert self._parse(
+            "\n<function=edit>\n<parameter=filePath>\n/a.py\n</parameter>\n<parameter=oldString>\nx = 1\n<parameter=newString>\nx = 2\n</parameter>\n</function>\n"
+        ) == {"filePath": "/a.py", "oldString": "x = 1", "newString": "x = 2"}
+
+    def test_value_containing_a_close_tag(self):
+        assert self._parse(
+            "\n<function=edit>\n<parameter=filePath>\n/a.md\n</parameter>\n<parameter=oldString>\nwrite `</parameter>` tags\n</parameter>\n<parameter=newString>\nclose with `</parameter>`\n</parameter>\n</function>\n"
+        ) == {
+            "filePath": "/a.md",
+            "oldString": "write `</parameter>` tags",
+            "newString": "close with `</parameter>`",
+        }
+
+    def test_misspelled_close_tag(self):
+        assert self._parse(
+            "\n<function=edit>\n<parameter=filePath>\n/a.py\n</parameter>\n<parameter=oldString>\nx = 1\n</parameter>\n<parameter=newString>\nx = 2\n</parameters>\n</function>\n"
+        ) == {"filePath": "/a.py", "oldString": "x = 1", "newString": "x = 2"}
+
+    def test_tag_for_an_unknown_parameter_stays_in_the_value(self):
+        assert self._parse(
+            "\n<function=edit>\n<parameter=filePath>\n/a.py\n</parameter>\n<parameter=oldString>\n<parameter=foo>bar</parameter>\n</parameter>\n<parameter=newString>\nok\n</parameter>\n</function>\n"
+        ) == {
+            "filePath": "/a.py",
+            "oldString": "<parameter=foo>bar</parameter>",
+            "newString": "ok",
+        }
