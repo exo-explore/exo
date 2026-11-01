@@ -11,7 +11,8 @@ from mlx_lm.models.cache import (
     QuantizedKVCache,
     RotatingKVCache,
 )
-from mlx_lm.models.deepseek_v4 import DeepseekV4Cache
+
+from exo.worker.engines.mlx.models.deepseek_v4.model import DeepseekV4Cache
 
 # This list contains one cache entry per transformer layer
 KVCacheType = Sequence[
