@@ -46,6 +46,8 @@ _MAIN_TENSOR_ARCHITECTURES = [
     ["FlintForCausalLM"],
     # Changed on purpose: Laguna is new.
     ["LagunaForCausalLM"],
+    # Changed on purpose: Inkling is new.
+    ["InklingForConditionalGeneration"],
 ]
 
 _MAIN_MLX_VLM_MODEL_TYPE_ALIASES: dict[str, str] = {
@@ -86,6 +88,9 @@ def _main_eos_token_ids(model_id: str) -> list[int] | None:
     # Changed on purpose: Laguna is new.
     elif "/laguna-" in model_id_lower:
         return [2, 24]
+    # Changed on purpose: Inkling is new.
+    elif "inkling" in model_id_lower:
+        return [200006]
     return None
 
 
@@ -115,7 +120,7 @@ _CARDS = [card for _, card in _CARD_FILES]
 
 
 def test_there_are_builtin_cards() -> None:
-    assert len(_CARDS) == 143
+    assert len(_CARDS) == 145
 
 
 @pytest.mark.parametrize(
@@ -207,6 +212,7 @@ _EOS_FRAGMENTS = [
     "llama",
     "flint",
     "laguna",
+    "inkling",
 ]
 # Every card's id, plus ids that combine two families' rules, to check their precedence.
 _EOS_MODEL_IDS = (

@@ -1,0 +1,20 @@
+model_id = "mlx-community/Inkling-Small-mlx-4bit"
+n_layers = 42
+hidden_size = 4096
+num_key_value_heads = 8
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "inkling"
+model_type = "inkling_mm_model"
+# Routed and shared experts and the dense MLPs 4-bit (affine, group 64); attention,
+# router, embeddings and LM head bf16.
+quantization = "4bit"
+base_model = "Inkling Small"
+# Text only: exo doesn't load the image and audio encoders.
+capabilities = ["text", "thinking", "thinking_toggle", "code"]
+# The template sends reasoning_content back for every earlier assistant turn.
+reasoning_dialect = "post_last_user"
+context_length = 1048576
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
+[storage_size]
+in_bytes = 153435815360
