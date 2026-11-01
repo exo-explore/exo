@@ -62,6 +62,14 @@ let
             touch $siteDir/py.typed
           '';
         };
+        # mlx-lm takes its version from git with setuptools-scm, which writes
+        # mlx_lm/_version.py. Without setuptools-scm it installs as 0.0.0 without that
+        # file, and `import mlx_lm` fails. Its source in the nix store has no .git, so
+        # give setuptools-scm the locked version.
+        mlx-lm = prev.mlx-lm.overrideAttrs (old: {
+          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ final.resolveBuildSystem { setuptools-scm = [ ]; };
+          SETUPTOOLS_SCM_PRETEND_VERSION = old.version;
+        });
       };
       buildSystemsOverlay = final: prev:
         lib.optionalAttrs isDarwin

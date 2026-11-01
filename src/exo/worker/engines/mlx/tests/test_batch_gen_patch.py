@@ -40,8 +40,9 @@ def test_linear_attention_caches_do_not_grow_a_graph_while_decoding() -> None:
     batch = SimpleNamespace(
         model=LinearAttentionModel(),
         prompt_cache=caches,
-        logits_processors=None,
-        samplers=None,
+        # mlx-lm gives every sequence a sampler and a (possibly empty) processor list
+        logits_processors=[(), ()],
+        samplers=[greedy, greedy],
         fallback_sampler=greedy,
         uids=[0, 1],
         tokens=[[], []],

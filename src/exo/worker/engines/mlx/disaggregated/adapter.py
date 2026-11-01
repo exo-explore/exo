@@ -9,7 +9,6 @@ from mlx_lm.models.cache import (
     QuantizedKVCache,
     RotatingKVCache,
 )
-from mlx_lm.models.deepseek_v4 import DeepseekV4Cache
 
 from exo.worker.disaggregated.protocol import (
     DType,
@@ -21,6 +20,7 @@ from exo.worker.disaggregated.protocol import (
     write_header,
     write_kv_chunk,
 )
+from exo.worker.engines.mlx.models.deepseek_v4.model import DeepseekV4Cache
 from exo.worker.engines.mlx.types import KVCacheType
 from exo.worker.runner.bootstrap import logger
 
@@ -139,7 +139,7 @@ def send_mlx_kv_cache(
                 tokens_sent = num_tokens
             case ArraysCache():
                 blobs: list[TensorBlob] = []
-                for a in c.state:
+                for a in c.cache:
                     if a is None:
                         continue
                     with mx.stream(mx.Device(mx.cpu)):
@@ -205,7 +205,7 @@ def inject_rotating_kv_chunk(
 
 
 def inject_arrays_cache(cache: ArraysCache, blobs: list[TensorBlob]) -> None:
-    cache.state = [blob_to_mlx(b) for b in blobs]
+    cache.cache = [blob_to_mlx(b) for b in blobs]
 
 
 def write_cache_to_wire(

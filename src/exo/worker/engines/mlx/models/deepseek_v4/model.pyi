@@ -1,14 +1,13 @@
-"""Type stubs for mlx_lm.models.deepseek_v4"""
+"""Type stubs for the vendored DeepSeek V4 model (model.py next to this file)."""
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import mlx.core as mx
 import mlx.nn as nn
-
-from .base import BaseModelArgs
-from .cache import ArraysCache, RotatingKVCache
-from .switch_layers import SwitchGLU
+from mlx_lm.models.base import BaseModelArgs
+from mlx_lm.models.cache import RotatingKVCache
+from mlx_lm.models.switch_layers import SwitchGLU
 
 @dataclass
 class ModelArgs(BaseModelArgs):
@@ -109,7 +108,7 @@ class Compressor(nn.Module):
         self,
         x: mx.array,
         cache: "DeepseekV4Cache",
-        offset: Any,
+        offset: int | mx.array,
         key: str = ...,
     ) -> mx.array: ...
 
@@ -218,7 +217,7 @@ class MoEGate(nn.Module):
     weight: mx.array
 
     def __init__(self, args: ModelArgs, layer_id: int) -> None: ...
-    def __call__(
+    def __call__(  # pyright: ignore[reportIncompatibleMethodOverride]
         self, x: mx.array, input_ids: mx.array
     ) -> tuple[mx.array, mx.array]: ...
 

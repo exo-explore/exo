@@ -110,7 +110,11 @@
               nixpkgs-fmt.enable = true;
               ruff-format = {
                 enable = true;
-                excludes = [ "rust/exo_rs/exo_rs.pyi" ];
+                excludes = [
+                  "rust/exo_rs/exo_rs.pyi"
+                  # vendored verbatim, see its header
+                  "src/exo/worker/engines/mlx/models/deepseek_v4/model.py"
+                ];
               };
               rustfmt = {
                 enable = true;

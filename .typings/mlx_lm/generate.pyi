@@ -249,40 +249,24 @@ class BatchStats:
     generation_time: float = ...
     peak_memory: float = ...
 
-class SequenceStateMachine:
-    """A state machine that uses one Aho-Corasick trie per state to efficiently
-    track state across a generated sequence.
+class StopSequences:
+    """An immutable Aho-Corasick automaton over stop sequences.
 
-    The transitions are provided as state -> [(sequence, new_state)].
-
-    Example:
-
-        sm = SequenceStateMachine(
-            transitions={
-                "normal": [
-                    (think_start_tokens, "reasoning"),
-                    (tool_start_tokens, "tool"),
-                    (eos, None),
-                ],
-                "reasoning": [
-                    (think_end_tokens, "normal"),
-                    (eos, None),
-                ],
-                "tool": [
-                    (tool_end_tokens, None),
-                    (eos, None)
-                ],
-            },
-            initial="normal"
-        )
+    Any matched sequence signals stop. A :class:`StopSequences.Matcher` holds
+    one stream's position in it.
     """
-    def __init__(self, transitions=..., initial=...) -> None: ...
-    def __deepcopy__(self, memo):  # -> SequenceStateMachine:
-        ...
-    def make_state(self):  # -> tuple[str, Any, dict[Any, Any]]:
-        ...
-    @staticmethod
-    def match(state, x):  # -> tuple[tuple[Any, Any | None, Any], Any | None, Any]:
+    class Matcher:
+        """A position in a :class:`StopSequences` automaton."""
+        def __init__(self, root: dict[Any, Any]) -> None: ...
+        def advance(self, token: int) -> bool:
+            """Consume one token. Returns whether a stop sequence completed."""
+            ...
+
+    def __init__(
+        self, stop_sequences: Optional[Sequence[Sequence[int]]] = ...
+    ) -> None: ...
+    def matcher(self) -> StopSequences.Matcher:
+        """A fresh matcher at the start of this automaton."""
         ...
 
 class PromptProcessingBatch:
@@ -312,7 +296,7 @@ class PromptProcessingBatch:
         logits_processors: Optional[
             List[List[Callable[[mx.array, mx.array], mx.array]]]
         ] = ...,
-        state_machines: Optional[List[SequenceStateMachine]] = ...,
+        stop_sequences: Optional[List[StopSequences]] = ...,
         max_tokens: Optional[List[int]] = ...,
     ) -> None: ...
     def __len__(self):  # -> int:
@@ -367,8 +351,6 @@ class GenerationBatch:
         token: int
         logprobs: mx.array
         finish_reason: Optional[str]
-        current_state: Optional[str]
-        match_sequence: Optional[List[int]]
         prompt_cache: Optional[List[Any]]
         all_tokens: Optional[List[int]]
         ...
@@ -377,10 +359,10 @@ class GenerationBatch:
     uids: List[int]
     prompt_cache: List[Any]
     tokens: List[List[int]]
-    samplers: Optional[List[Callable[[mx.array], mx.array]]]
+    samplers: List[Callable[[mx.array], mx.array]]
     fallback_sampler: Callable[[mx.array], mx.array]
-    logits_processors: Optional[List[List[Callable[[mx.array, mx.array], mx.array]]]]
-    state_machines: List[SequenceStateMachine]
+    logits_processors: List[Sequence[Callable[[mx.array, mx.array], mx.array]]]
+    stop_sequences: List[StopSequences]
     max_tokens: List[int]
     _current_tokens: Optional[mx.array]
     _current_logprobs: mx.array | List[mx.array]
@@ -388,7 +370,7 @@ class GenerationBatch:
     _next_logprobs: mx.array | List[mx.array]
     _token_context: List[Any]
     _num_tokens: List[int]
-    _matcher_states: List[Any]
+    _matchers: List[StopSequences.Matcher]
 
     def __init__(
         self,
@@ -402,7 +384,7 @@ class GenerationBatch:
         logits_processors: Optional[
             List[List[Callable[[mx.array, mx.array], mx.array]]]
         ],
-        state_machines: List[SequenceStateMachine],
+        stop_sequences: List[StopSequences],
         max_tokens: List[int],
     ) -> None: ...
     def __len__(self) -> int: ...
@@ -447,19 +429,22 @@ class BatchGenerator:
         completion_batch_size: int = ...,
         prefill_batch_size: int = ...,
         prefill_step_size: int = ...,
+        max_kv_size: Optional[int] = ...,
+        stream: Optional[mx.Stream] = ...,
     ) -> None: ...
+    @property
+    def stream(self) -> mx.Stream: ...
     def close(self) -> None: ...
     def __del__(self):  # -> None:
         ...
     @contextlib.contextmanager
-    def stats(self, stats=...):  # -> Generator[Any | BatchStats, Any, None]:
+    def stats(self) -> Generator[BatchStats, None, None]:
+        """The work this generator does while the block runs."""
         ...
     _unprocessed_sequences: deque[tuple[Any, ...]]
     _prompt_batch: PromptProcessingBatch
     _generation_batch: GenerationBatch
     _currently_processing: list[Any]
-    _gen_tokens_counter: int
-    _steps_counter: int
     def _next(
         self,
     ) -> tuple[
@@ -475,7 +460,7 @@ class BatchGenerator:
         logits_processors: Optional[
             List[List[Callable[[mx.array, mx.array], mx.array]]]
         ] = ...,
-        state_machines: Optional[List[SequenceStateMachine]] = ...,
+        stop_sequences: Optional[List[StopSequences]] = ...,
     ) -> List[int]: ...
     def insert_segments(
         self,
@@ -487,7 +472,7 @@ class BatchGenerator:
         logits_processors: Optional[
             List[List[Callable[[mx.array, mx.array], mx.array]]]
         ] = ...,
-        state_machines: Optional[List[SequenceStateMachine]] = ...,
+        stop_sequences: Optional[List[StopSequences]] = ...,
     ) -> List[int]: ...
     def extract_cache(self, uids: List[int]) -> dict[int, Any]: ...
     def remove(

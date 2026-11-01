@@ -83,7 +83,7 @@ exo-rs = { workspace = true }
 mlx = [
   { git = "https://github.com/ml-explore/mlx.git", rev = "36969c094354086e15d2a327a9c50feb20b9cf11", marker = "sys_platform == 'darwin'" },
 ]
-mlx-lm = { git = "https://github.com/rltakashige/mlx-lm", branch = "leo/deepseek-v4" }
+mlx-lm = { git = "https://github.com/ml-explore/mlx-lm", rev = "6b572ab1b531dd8fd2d13f6f36a89c2eccda18ea" }
 mflux = { git = "https://github.com/evanev7/mflux", branch = "exo2" }
 torch = [
   { index = "pytorch-cpu", marker = "sys_platform == 'linux' and extra == 'mlx-cpu' and extra != 'mlx-cuda13' and extra != 'mlx-cuda12'" },
@@ -230,7 +230,13 @@ torchaudio = ["torch"]
 ###
 
 [tool.ruff]
-extend-exclude = [".typings/**", "rust/exo_rs/**", "bench/vendor/**"]
+extend-exclude = [
+  ".typings/**",
+  "rust/exo_rs/**",
+  "bench/vendor/**",
+  # vendored verbatim, see its header
+  "src/exo/worker/engines/mlx/models/deepseek_v4/model.py",
+]
 
 [tool.ruff.lint]
 extend-select = ["I", "N", "B", "A", "PIE", "SIM"]
