@@ -1,6 +1,7 @@
+import threading
 import time
 from collections.abc import Callable
-from typing import cast
+from typing import cast, final
 
 import mlx.core as mx
 from mlx_lm.models.cache import ArraysCache, KVCache, RotatingKVCache
@@ -9,6 +10,7 @@ from exo.worker.disaggregated.protocol import Header, KVChunk
 from exo.worker.disaggregated.server import PrefillRequest
 from exo.worker.engines.mlx.cache import CacheSnapshot, snapshot_ssm_states
 from exo.worker.engines.mlx.disaggregated.client import (
+    PrefillResult,
     ingest_into_mlx_cache,
     remote_prefill_fetch,
 )
@@ -70,3 +72,70 @@ def remote_prefill(
         f"inject={(t_done - t_received) * 1000:.0f}ms"
     )
     return tps, num_tokens, [snapshot_ssm_states(cache)]
+
+
+@final
+class RemotePrefillHandle:
+    """A remote prefill fetched on a background thread and ingested later.
+
+    The thread only does socket I/O. MLX is not thread safe, so ingest() must run on
+    the engine thread. Errors from the fetch are kept and raised by ingest(), where
+    the caller falls back to local prefill.
+    """
+
+    def __init__(
+        self,
+        prompt_tokens: mx.array,
+        *,
+        endpoint: str,
+        request_id: str,
+        model_id: str,
+        start_pos: int = 0,
+    ) -> None:
+        self._started = time.perf_counter()
+        self._received = self._started
+        self._start_pos = start_pos
+        self._result: PrefillResult | None = None
+        self._error: Exception | None = None
+        request = PrefillRequest(
+            model_id=model_id,
+            token_ids=cast(list[int], prompt_tokens.tolist()),
+            start_pos=start_pos,
+            request_id=request_id,
+        )
+        self._thread = threading.Thread(
+            target=self._fetch,
+            args=(endpoint, request),
+            name=f"remote-prefill-{request_id[:8]}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _fetch(self, endpoint: str, request: PrefillRequest) -> None:
+        try:
+            self._result = remote_prefill_fetch(endpoint, request)
+        except Exception as error:
+            self._error = error
+        self._received = time.perf_counter()
+
+    @property
+    def done(self) -> bool:
+        return not self._thread.is_alive()
+
+    def ingest(self, cache: KVCacheType) -> tuple[float, int, list[CacheSnapshot]]:
+        if self._error is not None:
+            raise self._error
+        assert self._result is not None
+        caches = cast(list[KVCache | RotatingKVCache | ArraysCache], list(cache))
+        final_offset = ingest_into_mlx_cache(
+            self._result, caches, start_pos=self._start_pos
+        )
+        finished = time.perf_counter()
+        num_tokens = final_offset - self._start_pos
+        tps = num_tokens / max(finished - self._started, 0.001)
+        logger.info(
+            f"Remote prefill (background): {num_tokens} tokens at {tps:.0f} tok/s, "
+            f"transfer={(self._received - self._started) * 1000:.0f}ms, "
+            f"inject={(finished - self._received) * 1000:.0f}ms"
+        )
+        return tps, num_tokens, [snapshot_ssm_states(cache)]
