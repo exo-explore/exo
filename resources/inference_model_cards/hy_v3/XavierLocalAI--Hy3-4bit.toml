@@ -1,0 +1,23 @@
+model_id = "XavierLocalAI/Hy3-4bit"
+n_layers = 80
+hidden_size = 4096
+num_key_value_heads = 8
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "hy_v3"
+model_type = "hy_v3"
+quantization = "4bit"
+base_model = "Hy3"
+capabilities = ["text", "thinking", "thinking_toggle"]
+# The template keeps earlier turns' reasoning only when the conversation has tools.
+reasoning_dialect = "tool_conditional"
+context_length = 262144
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
+[storage_size]
+in_bytes = 165988823624
+
+# Source: https://huggingface.co/tencent/Hy3/blob/main/generation_config.json
+# Source: https://huggingface.co/tencent/Hy3#quickstart ("Recommended parameters")
+[sampling_defaults]
+temperature = 0.9
+top_p = 1.0
