@@ -21,9 +21,11 @@ from exo.worker.disaggregated.server import PrefillRequest, write_request
 from exo.worker.engines.mlx.disaggregated.adapter import (
     chunk_to_mlx_nhd,
     inject_arrays_cache,
+    inject_deepseek_v4_cache,
     inject_kv_chunk,
     inject_rotating_kv_chunk,
 )
+from exo.worker.engines.mlx.models.deepseek_v4.model import DeepseekV4Cache
 
 _SOCKET_TIMEOUT_SECS = 60
 _RECV_BUFFER_BYTES = 4 * 1024 * 1024
@@ -105,7 +107,7 @@ def remote_prefill_fetch(
 
 def ingest_into_mlx_cache(
     result: PrefillResult,
-    caches: list[KVCache | RotatingKVCache | ArraysCache],
+    caches: list[KVCache | RotatingKVCache | ArraysCache | DeepseekV4Cache],
     *,
     start_pos: int = 0,
 ) -> int:
@@ -143,5 +145,9 @@ def ingest_into_mlx_cache(
 
         if i in result.arrays and isinstance(cache, ArraysCache):
             inject_arrays_cache(cache, result.arrays[i])
+        elif i in result.arrays and isinstance(cache, DeepseekV4Cache):
+            inject_deepseek_v4_cache(cache, result.arrays[i])
+            # DeepSeek V4 layers send no KV chunks, so the offset comes from the cache.
+            final_offset = max(final_offset, cache.offset)
 
     return final_offset

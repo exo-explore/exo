@@ -12,6 +12,7 @@ from exo.worker.engines.mlx.disaggregated.client import (
     ingest_into_mlx_cache,
     remote_prefill_fetch,
 )
+from exo.worker.engines.mlx.models.deepseek_v4.model import DeepseekV4Cache
 from exo.worker.engines.mlx.types import KVCacheType
 from exo.worker.runner.bootstrap import logger
 
@@ -56,7 +57,9 @@ def remote_prefill(
     )
     t_received = time.perf_counter()
 
-    caches = cast(list[KVCache | RotatingKVCache | ArraysCache], list(cache))
+    caches = cast(
+        list[KVCache | RotatingKVCache | ArraysCache | DeepseekV4Cache], list(cache)
+    )
     final_offset = ingest_into_mlx_cache(result, caches, start_pos=start_pos)
     t_done = time.perf_counter()
 

@@ -1,4 +1,4 @@
-from typing import BinaryIO
+from typing import BinaryIO, cast
 
 import mlx.core as mx
 import numpy as np
@@ -21,6 +21,9 @@ from exo.worker.disaggregated.protocol import (
     write_kv_chunk,
 )
 from exo.worker.engines.mlx.models.deepseek_v4.model import DeepseekV4Cache
+from exo.worker.engines.mlx.models.deepseek_v4.model import (
+    _CompressorBranch as CompressorBranch,  # type: ignore
+)
 from exo.worker.engines.mlx.types import KVCacheType, SnapshotCache
 from exo.worker.runner.bootstrap import logger
 
@@ -101,7 +104,10 @@ def send_mlx_kv_cache(
     tokens_sent = 0
     for layer_idx, c in enumerate(caches):
         match c:
-            case QuantizedKVCache() | CacheList() | DeepseekV4Cache() | SnapshotCache():
+            case DeepseekV4Cache():
+                write_arrays_state(stream, layer_idx, deepseek_v4_cache_to_blobs(c))
+                tokens_sent = max(tokens_sent, c.offset - start_pos)
+            case QuantizedKVCache() | CacheList() | SnapshotCache():
                 raise NotImplementedError
             case KVCache() | RotatingKVCache():
                 keys = c.keys
@@ -167,6 +173,171 @@ def chunk_to_mlx_nhd(chunk: KVChunk) -> tuple[mx.array, mx.array]:
 
 def blob_to_mlx(blob: TensorBlob) -> mx.array:
     return bytes_to_array(blob.data, blob.shape, blob.dtype)
+
+
+_DEEPSEEK_V4_WIRE_VERSION = 1
+# Same keys as DeepseekV4Cache._branches; the order is the order on the wire.
+_DEEPSEEK_V4_BRANCH_KEYS = ("compressor", "indexer")
+_DEEPSEEK_V4_ARRAYS_PER_BRANCH = 5
+_DEEPSEEK_V4_HEADER_FIELDS_PER_BRANCH = _DEEPSEEK_V4_ARRAYS_PER_BRANCH + 3
+
+
+def _compressor_branch_arrays(branch: CompressorBranch) -> list[mx.array | None]:
+    return [
+        branch.buffer_kv,
+        branch.buffer_gate,
+        branch.prev_kv,
+        branch.prev_gate,
+        branch.pool,
+    ]
+
+
+def _window_arrays(window: RotatingKVCache) -> tuple[mx.array, mx.array]:
+    """The window's keys and values, cut to its offset while it is still filling."""
+    keys, values = window.keys, window.values
+    assert keys is not None and values is not None
+    if window.offset < keys.shape[2]:
+        return keys[..., : window.offset, :], values[..., : window.offset, :]
+    return keys, values
+
+
+def deepseek_v4_cache_to_blobs(cache: DeepseekV4Cache) -> list[TensorBlob]:
+    """Serialise one DeepseekV4Cache (batch size 1) as the blobs of one ArraysState.
+
+    A DeepseekV4Cache is a sliding window (a RotatingKVCache) plus two compressor
+    branches, "compressor" and "indexer". The whole state is sent whatever start_pos
+    is, because the cache is not trimmable. The layout reuses the existing wire
+    format unchanged:
+
+    blob 0, float32 header:
+        version, keep, max_size, offset, _idx, window_present,
+        then for each branch: five presence flags (buffer_kv, buffer_gate, prev_kv,
+        prev_gate, pool), buffer_count, len(buffer_lengths) or -1,
+        len(pool_lengths) or -1,
+        then for each branch: its buffer_lengths, then its pool_lengths.
+    remaining blobs: window keys and values if present, then each present branch
+    array in the order above.
+
+    Every header value is an integer; float32 holds them exactly below 2**24.
+    """
+    window = cache.local
+    window_present = not cache.empty()
+    header: list[int] = [
+        _DEEPSEEK_V4_WIRE_VERSION,
+        window.keep,
+        window.max_size,
+        window.offset,
+        window._idx,
+        1 if window_present else 0,
+    ]
+    arrays: list[mx.array] = []
+    if window_present:
+        arrays += list(_window_arrays(window))
+
+    lengths: list[int] = []
+    for key in _DEEPSEEK_V4_BRANCH_KEYS:
+        branch = cache._branches[key]
+        for array in _compressor_branch_arrays(branch):
+            header.append(0 if array is None else 1)
+            if array is not None:
+                arrays.append(array)
+        header.append(branch.buffer_count or 0)
+        for branch_lengths in (branch.buffer_lengths, branch.pool_lengths):
+            if branch_lengths is None:
+                header.append(-1)
+            else:
+                header.append(len(branch_lengths))
+                lengths += branch_lengths
+
+    blobs = [
+        TensorBlob(
+            dtype="float32",
+            shape=(len(header) + len(lengths),),
+            data=np.asarray(header + lengths, dtype=np.float32).tobytes(),
+        )
+    ]
+    with mx.stream(mx.Device(mx.cpu)):
+        for array in arrays:
+            # The wire carries bf16, fp16 and fp32 only.
+            if array.dtype not in _MX_TO_STR:
+                array = array.astype(mx.float32)
+            array_cpu = mx.array(array)
+            mx.eval(array_cpu)
+            blobs.append(
+                TensorBlob(
+                    dtype=mx_dtype_to_str(array_cpu.dtype),
+                    shape=tuple(int(d) for d in array_cpu.shape),
+                    data=array_to_bytes(array_cpu),
+                )
+            )
+    return blobs
+
+
+def _read_lengths(
+    header: list[int], position: int, count: int
+) -> tuple[list[int] | None, int]:
+    if count < 0:
+        return None, position
+    return header[position : position + count], position + count
+
+
+def inject_deepseek_v4_cache(cache: DeepseekV4Cache, blobs: list[TensorBlob]) -> None:
+    """Rebuild a DeepseekV4Cache from the blobs of deepseek_v4_cache_to_blobs.
+
+    Raises ValueError for an unknown wire version; the caller treats it like any
+    other failed remote prefill.
+    """
+    header_values = np.frombuffer(blobs[0].data, dtype=np.float32)
+    header = cast(list[int], header_values.astype(np.int64).tolist())
+    if header[0] != _DEEPSEEK_V4_WIRE_VERSION:
+        raise ValueError(f"Unknown DeepseekV4Cache wire version {header[0]}")
+    keep, max_size, offset, window_index, window_present = header[1:6]
+    arrays = iter([blob_to_mlx(blob) for blob in blobs[1:]])
+
+    window = cache.local
+    if window_present:
+        window.keys = next(arrays)
+        window.values = next(arrays)
+    else:
+        window.keys = None
+        window.values = None
+    window.keep = keep
+    window.max_size = max_size
+    window.offset = offset
+    window._idx = window_index
+
+    position = 6
+    branches: list[tuple[CompressorBranch, int, int]] = []
+    for _ in _DEEPSEEK_V4_BRANCH_KEYS:
+        fields = header[position : position + _DEEPSEEK_V4_HEADER_FIELDS_PER_BRANCH]
+        position += _DEEPSEEK_V4_HEADER_FIELDS_PER_BRANCH
+        present = fields[:_DEEPSEEK_V4_ARRAYS_PER_BRANCH]
+        buffer_count, buffer_lengths_count, pool_lengths_count = fields[
+            _DEEPSEEK_V4_ARRAYS_PER_BRANCH:
+        ]
+        branch = CompressorBranch()
+        (
+            branch.buffer_kv,
+            branch.buffer_gate,
+            branch.prev_kv,
+            branch.prev_gate,
+            branch.pool,
+        ) = (next(arrays) if flag else None for flag in present)
+        branch.buffer_count = buffer_count
+        branches.append((branch, buffer_lengths_count, pool_lengths_count))
+
+    for branch, buffer_lengths_count, pool_lengths_count in branches:
+        branch.buffer_lengths, position = _read_lengths(
+            header, position, buffer_lengths_count
+        )
+        branch.pool_lengths, position = _read_lengths(
+            header, position, pool_lengths_count
+        )
+
+    cache._branches = {
+        key: branch
+        for key, (branch, _, _) in zip(_DEEPSEEK_V4_BRANCH_KEYS, branches, strict=True)
+    }
 
 
 def inject_kv_chunk(
