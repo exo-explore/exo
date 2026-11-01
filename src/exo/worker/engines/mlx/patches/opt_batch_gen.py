@@ -58,20 +58,23 @@ def take_ready_topk(batch: GenerationBatch) -> BatchTopKLogprobs:
 def _lazy_cache_metadata(cache: list[object]) -> list[mx.array]:
     """The per-sequence bookkeeping arrays a cache updates lazily at every step: an
     ArraysCache's left padding and lengths, which a linear attention layer moves on by the
-    number of tokens it processed.
+    number of tokens it processed, and a batch KV cache's offsets.
 
-    Most of them are never read during decode (a model builds its linear attention mask
-    from one layer's cache), so unless they are evaluated each update chains onto the last
-    and keeps every earlier one alive, each holding a small Metal buffer. A model with
-    linear attention layers (Qwen3.5) then reaches Metal's resource limit, and the runner
-    crashes: within an hour of steady generation."""
+    Not all of them are read during decode: a model builds its linear attention mask from
+    one layer's cache, and MiniMax M3 positions the keys of its sparse-attention index cache
+    with the attention cache's offsets, never reading the index cache's own. Unless they are
+    evaluated, each update chains onto the last and keeps every earlier one alive, each
+    holding a small Metal buffer, until the runner reaches Metal's resource limit and
+    crashes: within an hour of steady generation with Qwen3.5's linear attention layers,
+    and for MiniMax M3 (one buffer per layer per step) after about 8,000 decode steps of a
+    batch that never empties."""
     arrays: list[mx.array] = []
     for entry in cache:
         sub_caches = cast(list[object] | None, getattr(entry, "caches", None))
         if sub_caches is not None:
             arrays.extend(_lazy_cache_metadata(sub_caches))
             continue
-        for name in ("left_padding", "lengths"):
+        for name in ("left_padding", "lengths", "offset"):
             value = cast(object, getattr(entry, name, None))
             if isinstance(value, mx.array):
                 arrays.append(value)

@@ -33,6 +33,7 @@ from exo.worker.engines.mlx.models.registry import (
     get_model_classes,
     prompt_encoder_for,
     reasoning_effort_hook_for,
+    template_kwargs_for,
     template_messages_hooks_for,
     tokenizer_loader_for,
 )
@@ -608,6 +609,7 @@ def render_chat_template(
             extra_kwargs["reasoning_effort"] = template_effort
     elif task_params.reasoning_effort is not None:
         extra_kwargs["reasoning_effort"] = task_params.reasoning_effort
+    extra_kwargs.update(template_kwargs_for(task_params))
 
     patched_template: str | None = None
     if task_params.tools:

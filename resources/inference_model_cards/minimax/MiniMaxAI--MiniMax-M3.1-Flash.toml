@@ -1,0 +1,21 @@
+model_id = "MiniMaxAI/MiniMax-M3.1-Flash"
+n_layers = 60
+hidden_size = 6144
+num_key_value_heads = 4
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "minimax"
+model_type = "minimax_m3_vl"
+quantization = "NVFP4-MXFP8"
+base_model = "MiniMax M3.1 Flash"
+capabilities = ["text", "thinking", "thinking_toggle"]
+reasoning_dialect = "post_last_user"
+context_length = 1048576
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
+[storage_size]
+in_bytes = 252446157672
+
+# Source: https://huggingface.co/MiniMaxAI/MiniMax-M3.1-Flash (generation_config.json, README)
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95

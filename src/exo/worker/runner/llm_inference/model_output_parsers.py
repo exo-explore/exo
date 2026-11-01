@@ -18,7 +18,10 @@ from exo.worker.engines.mlx.utils_mlx import (
     detect_thinking_prompt_suffix,
 )
 from exo.worker.runner.bootstrap import logger
-from exo.worker.runner.llm_inference.tool_parsers import ToolParser
+from exo.worker.runner.llm_inference.tool_parsers import (
+    ToolParser,
+    coerce_tool_calls_to_schemas,
+)
 
 
 def count_reasoning_tokens(
@@ -70,6 +73,8 @@ def apply_all_parsers(
                 starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
             )
         generator = output_parser.parse(generator)
+        if output_parser.coerces_to_tool_schemas and tools:
+            generator = coerce_tool_call_responses(generator, tools)
     else:
         if tokenizer.has_thinking:
             generator = parse_thinking_models(
@@ -85,6 +90,22 @@ def apply_all_parsers(
     generator = count_reasoning_tokens(generator)
 
     return map(lambda r: map_responses_to_chunks(r, model_id), generator)
+
+
+def coerce_tool_call_responses(
+    responses: Generator[GenerationResponse | ToolCallResponse | None],
+    tools: list[dict[str, Any]],
+) -> Generator[GenerationResponse | ToolCallResponse | None]:
+    for response in responses:
+        if isinstance(response, ToolCallResponse):
+            response = response.model_copy(
+                update={
+                    "tool_calls": coerce_tool_calls_to_schemas(
+                        response.tool_calls, tools
+                    )
+                }
+            )
+        yield response
 
 
 def map_responses_to_chunks(

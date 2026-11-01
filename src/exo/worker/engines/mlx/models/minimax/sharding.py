@@ -8,6 +8,7 @@ from mlx_lm.models.base import (
 )
 from mlx_lm.models.minimax import MiniMaxAttention
 from mlx_lm.models.minimax import Model as MiniMaxModel
+from mlx_lm.models.minimax_m3_vl import Model as MiniMaxM3Model
 
 from exo.shared.types.worker.runner_response import ModelLoadingResponse
 from exo.worker.engines.mlx.sharding.blocks import (
@@ -131,6 +132,69 @@ class MiniMaxShardingStrategy(TensorParallelShardingStrategy):
             )
             layer.block_sparse_moe = ShardedMoE(layer.block_sparse_moe)  # type: ignore
             layer.block_sparse_moe.sharding_group = self.group
+            mx.eval(layer)
+            mx.clear_cache()
+
+            yield ModelLoadingResponse(layers_loaded=i, total=total)
+        return model
+
+
+class MiniMaxM3ShardingStrategy(TensorParallelShardingStrategy):
+    """MiniMax M3 / M3.1 (minimax_m3_vl), like mlx-lm's own ``Model.shard``.
+
+    - Attention: query, key and value heads. The QK norms are per head, so they need no
+      communication.
+    - Sparse attention: the lightning indexer has one index head per KV group, so each
+      rank keeps the index heads of its own KV heads. Its key projection is a single head
+      that every group shares, so it stays whole.
+    - MLPs: the dense MLPs, and the routed experts and the shared expert along their
+      intermediate dimension. The router stays whole on every rank; the MoE block sums the
+      routed and shared outputs across ranks once (its own ``sharding_group``).
+    """
+
+    def shard_model(
+        self,
+        model: nn.Module,
+    ) -> Generator[ModelLoadingResponse, None, nn.Module]:
+        model = cast(MiniMaxM3Model, model)
+        total = len(model.layers)
+        for i, layer in enumerate(model.layers):
+            attention = layer.self_attn
+            # Check before the first change, so that a failure leaves no layer half split.
+            heads = [attention.num_attention_heads, attention.num_key_value_heads]
+            if attention.is_sparse_attn:
+                heads.append(attention.index_n_heads)
+            if any(count % self.N != 0 for count in heads):
+                raise ValueError(
+                    f"MiniMax M3 head counts {heads} don't divide by {self.N} ranks"
+                )
+
+            mx.eval(layer.parameters())
+
+            attention.q_proj = self.all_to_sharded_linear(attention.q_proj)
+            attention.k_proj = self.all_to_sharded_linear(attention.k_proj)
+            attention.v_proj = self.all_to_sharded_linear(attention.v_proj)
+            attention.o_proj = self.sharded_to_all_linear(attention.o_proj)
+            attention.num_attention_heads //= self.N
+            attention.num_key_value_heads //= self.N
+            if attention.is_sparse_attn:
+                attention.index_q_proj = self.all_to_sharded_linear(
+                    attention.index_q_proj
+                )
+                attention.index_n_heads //= self.N
+
+            if layer.is_moe:
+                moe = layer.block_sparse_moe
+                for experts in (moe.switch_mlp, moe.shared_experts):
+                    self.all_to_sharded_linear_in_place(experts.gate_proj)
+                    self.all_to_sharded_linear_in_place(experts.up_proj)
+                    self.sharded_to_all_linear_in_place(experts.down_proj)
+                moe.sharding_group = self.group
+            else:
+                layer.mlp.gate_proj = self.all_to_sharded_linear(layer.mlp.gate_proj)
+                layer.mlp.up_proj = self.all_to_sharded_linear(layer.mlp.up_proj)
+                layer.mlp.down_proj = self.sharded_to_all_linear(layer.mlp.down_proj)
+
             mx.eval(layer)
             mx.clear_cache()
 
