@@ -372,7 +372,7 @@ class PromptSizer:
             except ValueError:
                 # Models without a Jinja chat template (e.g. DeepSeek V4 which
                 # ships its own Python encoder). Use the exo-side V4 encoder.
-                from exo.worker.engines.mlx.deepseek_v4_encoding import (
+                from exo.worker.engines.mlx.models.deepseek_v4.encoding import (
                     encode_messages as encode_v4,
                 )
 

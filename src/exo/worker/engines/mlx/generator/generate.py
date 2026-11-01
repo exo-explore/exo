@@ -32,14 +32,6 @@ from exo.shared.types.text_generation import (
 from exo.shared.types.worker.runner_response import (
     GenerationResponse,
 )
-from exo.worker.engines.mlx.auto_parallel import (
-    PipelineFirstLayer,
-    PipelineLastLayer,
-    clear_prefill_sends,
-    flush_prefill_sends,
-    set_pipeline_prefill,
-    set_pipeline_queue_sends,
-)
 from exo.worker.engines.mlx.cache import (
     CacheSnapshot,
     KVPrefixCache,
@@ -57,6 +49,14 @@ from exo.worker.engines.mlx.constants import (
     MAX_TOKENS,
 )
 from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
+from exo.worker.engines.mlx.sharding.pipeline import (
+    PipelineFirstLayer,
+    PipelineLastLayer,
+    clear_prefill_sends,
+    flush_prefill_sends,
+    set_pipeline_prefill,
+    set_pipeline_queue_sends,
+)
 from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,

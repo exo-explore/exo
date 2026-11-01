@@ -17,13 +17,12 @@ from mlx_lm.models.cache import (
 from mlx_lm.models.deepseek_v4 import (
     DeepseekV4Cache,
 )
-from mlx_lm.models.deepseek_v4 import (
-    _CompressorBranch as CompressorBranch,  # type: ignore
-)
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.memory import Memory
+from exo.worker.engines.mlx.cache_copy import copy_rotating_kv_cache, detached_copy
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
+from exo.worker.engines.mlx.models.deepseek_v4.cache import copy_deepseek_v4_cache
 from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.runner.bootstrap import logger
 
@@ -74,37 +73,6 @@ class CacheSnapshot:
         self.token_count = token_count
 
 
-def _detached_copy(a: mx.array) -> mx.array:
-    dtype = a.dtype
-    if dtype == mx.bfloat16:
-        return mx.array(np.array(a.astype(mx.float32))).astype(mx.bfloat16)
-    return mx.array(np.array(a))
-
-
-def copy_rotating_kv_cache(cache: RotatingKVCache) -> RotatingKVCache | None:
-    """
-    Deepcopy copies the metadata associated with an mx array.
-    Specifically, it shares a shared_ptr to the underlying data and
-    the mlx graph inputs of the array. This causes a memory leak for rotating
-    kv cache. By creating an np array, no metadata is stored so the old cache
-    can be cleaned up nicely.
-    """
-    if cache.keys is None or cache.values is None:
-        return None
-    n = min(cache.max_size, cache.keys.shape[2])
-    k_slice = _detached_copy(cache.keys[..., -n:, :])
-    v_slice = _detached_copy(cache.values[..., -n:, :])
-    mx.eval(k_slice, v_slice)
-    snap = RotatingKVCache.__new__(RotatingKVCache)
-    snap.keys = k_slice
-    snap.values = v_slice
-    snap.offset = cache.offset
-    snap._idx = n
-    snap.keep = cache.keep
-    snap.max_size = cache.max_size
-    return snap
-
-
 def _copy_arrays_cache(ac: ArraysCache) -> ArraysCache:
     entries: list[mx.array | None] = []
     for entry in ac.cache:  # type: ignore[reportUnknownMemberType]
@@ -112,7 +80,7 @@ def _copy_arrays_cache(ac: ArraysCache) -> ArraysCache:
             entries.append(None)
             continue
         assert isinstance(entry, mx.array)
-        entries.append(_detached_copy(entry))
+        entries.append(detached_copy(entry))
     copy = ArraysCache(len(entries))
     copy.cache = entries  # type: ignore[reportUnknownMemberType]
     return copy
@@ -132,50 +100,6 @@ def _copy_cache_list(cl: CacheList) -> CacheList:
     return CacheList(*copied)
 
 
-def _detached_copy_or_none(a: mx.array | None) -> mx.array | None:
-    if a is None:
-        return None
-    out = _detached_copy(a)
-    mx.eval(out)
-    return out
-
-
-def _copy_compressor_branch(b: CompressorBranch) -> CompressorBranch:
-    out = CompressorBranch.__new__(CompressorBranch)
-    out.buffer_kv = _detached_copy_or_none(b.buffer_kv)
-    out.buffer_gate = _detached_copy_or_none(b.buffer_gate)
-    out.prev_kv = _detached_copy_or_none(b.prev_kv)
-    out.prev_gate = _detached_copy_or_none(b.prev_gate)
-    out.pool = _detached_copy_or_none(b.pool)
-    out.buffer_lengths = deepcopy(b.buffer_lengths)
-    out.pool_lengths = deepcopy(b.pool_lengths)
-    out.buffer_count = deepcopy(b.buffer_count)
-    out._new_pool_lengths = deepcopy(b._new_pool_lengths)
-    return out
-
-
-def _copy_v4_cache(c: DeepseekV4Cache) -> DeepseekV4Cache:
-    snap = DeepseekV4Cache.__new__(DeepseekV4Cache)
-
-    local: RotatingKVCache = c.local
-    local_snap = copy_rotating_kv_cache(local)
-    if local_snap is None:
-        local_snap = RotatingKVCache.__new__(RotatingKVCache)
-        local_snap.keys = None
-        local_snap.values = None
-        local_snap.offset = local.offset
-        local_snap._idx = 0
-        local_snap.keep = local.keep
-        local_snap.max_size = local.max_size
-    snap.local = local_snap
-
-    snap._branches = {
-        key: _copy_compressor_branch(branch) for key, branch in c._branches.items()
-    }
-    snap._pending_lengths = deepcopy(c._pending_lengths)
-    return snap
-
-
 def copy_snapshot_entry(
     entry: ArraysCache | RotatingKVCache | CacheList | DeepseekV4Cache | None,
 ) -> ArraysCache | RotatingKVCache | CacheList | DeepseekV4Cache | None:
@@ -190,7 +114,7 @@ def copy_snapshot_entry(
         case CacheList():
             return _copy_cache_list(entry)
         case DeepseekV4Cache():
-            return _copy_v4_cache(entry)
+            return copy_deepseek_v4_cache(entry)
 
 
 def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
@@ -205,7 +129,7 @@ def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
         elif isinstance(c, CacheList) and not bool(c.is_trimmable()):  # type: ignore[reportUnknownMemberType]
             states.append(_copy_cache_list(c))
         elif isinstance(c, DeepseekV4Cache):
-            states.append(_copy_v4_cache(c))
+            states.append(copy_deepseek_v4_cache(c))
         else:
             states.append(None)
     token_count = cache_length(cache)
