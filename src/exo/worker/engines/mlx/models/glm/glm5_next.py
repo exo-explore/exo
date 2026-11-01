@@ -37,8 +37,10 @@
 # exo loads this file for config model_type "glm5_next" through
 # exo.worker.engines.mlx.models.registry.get_model_classes; glm5_next.pyi declares what exo uses.
 
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache, partial
+from importlib.metadata import version
 from typing import Any, Dict, List, Optional
 
 import mlx.core as mx
@@ -564,20 +566,89 @@ def _project(layer, x):
     return layer(x.astype(dtype)).astype(x.dtype)
 
 
-# Up to how many input rows one matmul over concatenated weights replaces the parts' own
-# matmuls. MLX picks its matmul variant and tiling from the row count and the output width,
-# so a wider matmul can sum in another order than the parts' (checked on MLX 0.32.4, M3
-# Ultra, every row count 1-17):
-# - quantized matmuls: the fused ones were bitwise the parts' at every row count, for these
-#   shapes and the tests' (tests/test_glm5_next_kernels.py);
-# - bf16 matmuls: bitwise for one row (a decode step); from 2 rows on, small inner
-#   dimensions (the tests' 256) already sum in another order.
-# Past the limit, prompt-sized inputs run one matmul per part on row slices of the fused
-# weight, which are bitwise the parts' own.
+# One matmul over concatenated weights replaces the parts' own matmuls only where MLX sums
+# every output of it in the order the parts' matmuls do. MLX picks its matmul kernel and
+# tiling from the GPU generation, the row count and the output width
+# (mlx/backend/metal/quantized.cpp and matmul.cpp, MLX 0.32.4), so this depends on all three:
+# - Quantized: below a row limit from get_qmv_batch_limit(GPU, input width, output width),
+#   MLX runs a matrix-vector kernel (qmv), whose output rows are independent dot products
+#   summed the same way at any output width. From the limit on it runs a split-K matrix
+#   kernel with 512 / (output width / 32) K partitions, so a wider fused matmul splits K
+#   into fewer partitions than its parts and rounds some outputs differently. A fused
+#   quantized matmul therefore runs only below the smallest limit of the fused width and
+#   every part's (and up to _FUSED_QUANTIZED_MAX_ROWS rows). For this model's 4096-wide
+#   inputs: the MLA q_a/kv_a and the shared experts' gate/up fuse up to 9 rows on M1/M2
+#   (except Ultras), 14 on other M3/M4, 16 on M5 and on Ultras; the dense MLP's gate/up
+#   (12288 wide, 6144 under 2x tensor parallelism) up to 5 or 6 rows on M1/M2, 12 on other
+#   M3-M5, 11 on Ultras.
+# - bf16, one row (a decode step): MLX's GEMV splits each dot product across 8 simdgroups
+#   when the input is at least 16 times the output width, and across 1 otherwise, on every
+#   GPU. Fused only if that choice is the same for the fused width and every part.
+# - The routed experts' gate/up gathers run one vector per expert row (gather_qmv), or a
+#   matrix kernel with fixed tiles for large sorted batches: per-row sums are independent
+#   of the output width, on M1-M4. On M5 MLX runs large sorted gathers on the GPU's matrix
+#   units (gather_qmm_rhs_nax), which no M5 hardware here has checked: M5 GPUs keep the
+#   separate gathers.
+# On M5 the fused projections above rest on MLX's dispatch rules alone (matrix-vector
+# kernels below the row limit, no matrix-unit kernel for those shapes): no M5 ran them.
+# Off these conditions (larger inputs, or a GPU or MLX release _gpu_architecture doesn't
+# know), the parts run as before: one matmul each, on row slices of the fused weight (or
+# the unfused layers), which are bitwise the parts' own.
 _FUSED_QUANTIZED_MAX_ROWS = 16
 _FUSED_GEMM_MAX_ROWS = 1
 # Whether modules fuse their projections on first call (tests compare against False).
 _FUSE_PROJECTIONS = True
+# The MLX release whose dispatch rules below were read and checked: 0.32.4, from PyPI or
+# built from exo's pin of the same commit (0.32.4.devN). tests/test_glm5_next_kernels.py
+# checks _qmv_row_limit against the running MLX for every GPU generation it can emulate.
+_CHECKED_MLX = re.compile(r"0\.32\.4(\.dev\d+)?(\+[0-9a-f]+)?")
+# Apple GPU generations 13-17 (M1-M5) in MLX's naming: g = base and Pro, s = Max, d = Ultra.
+# Other names (e.g. a virtual machine's paravirtual GPU) are unknown: nothing fuses there.
+_KNOWN_ARCHITECTURE = re.compile(r"applegpu_g(1[3-7])([gsd])")
+
+
+@lru_cache(maxsize=None)
+def _gpu_architecture():
+    """(generation, size letter) of the Metal GPU, e.g. (15, "d") for an M3 Ultra, when MLX's
+    matmul dispatch on it is known: a checked MLX release and a GPU it names. None
+    otherwise (no Metal, another MLX release, an unknown or future GPU): nothing fuses."""
+    if not mx.metal.is_available() or not _CHECKED_MLX.fullmatch(version("mlx")):
+        return None
+    match = _KNOWN_ARCHITECTURE.fullmatch(str(mx.device_info()["architecture"]))
+    return None if match is None else (int(match[1]), match[2])
+
+
+def _qmv_row_limit(architecture, in_dims, out_dims):
+    """MLX 0.32.4's get_qmv_batch_limit: from how many rows a quantized matmul with
+    transposed weights stops running the matrix-vector kernel, on a GPU generation 13-17."""
+    generation, size = architecture
+    small = in_dims <= 2048 and out_dims <= 2048
+    medium = in_dims <= 4096 and out_dims <= 4096
+    if size == "d":
+        return 32 if small else 18 if medium else 12
+    if generation >= 17:
+        return 33 if small else 25 if medium else 13
+    if generation >= 15:
+        return 13 if small else 15 if medium else 13
+    if small:
+        return 14
+    if medium:
+        return 10
+    return 7 if generation == 13 and size == "s" else 6
+
+
+def _fused_max_rows(quantized, in_dims, widths):
+    """Up to how many input rows one matmul over the concatenated weights of these widths
+    sums every output like the parts' own matmuls on this GPU (0: never)."""
+    architecture = _gpu_architecture()
+    if architecture is None:
+        return 0
+    widths = (*widths, sum(widths))
+    if quantized:
+        limit = min(_qmv_row_limit(architecture, in_dims, n) for n in widths)
+        return min(limit - 1, _FUSED_QUANTIZED_MAX_ROWS)
+    splits = {(in_dims <= 64, in_dims >= 16 * n) for n in widths}
+    return _FUSED_GEMM_MAX_ROWS if len(splits) == 1 else 0
 
 
 _PLAIN_LINEAR = (nn.Linear, AllToShardedLinear)
@@ -596,8 +667,9 @@ class _FusedLinear:
     def __init__(self, layers):
         first = layers[0]
         self.sizes = [layer.weight.shape[0] for layer in layers]
-        self.weight = mx.concatenate([layer.weight for layer in layers], axis=0)
         self.quantized = type(first) in _QUANTIZED_LINEAR
+        self.max_rows = _FusedLinear.max_rows_of(layers)
+        self.weight = mx.concatenate([layer.weight for layer in layers], axis=0)
         arrays = [self.weight]
         if self.quantized:
             self.scales = mx.concatenate([layer.scales for layer in layers], axis=0)
@@ -619,7 +691,10 @@ class _FusedLinear:
         # ones (sum_gradients is the identity there).
         if all(type(layer) in _PLAIN_LINEAR for layer in layers):
             return len({layer.weight.dtype for layer in layers}) == 1
-        if all(type(layer) in _QUANTIZED_LINEAR for layer in layers):
+        if all(
+            type(layer) in _QUANTIZED_LINEAR and layer.mode == "affine"
+            for layer in layers
+        ):
             keys = {
                 (
                     layer.group_size,
@@ -632,6 +707,19 @@ class _FusedLinear:
             }
             return len(keys) == 1
         return False
+
+    @staticmethod
+    def max_rows_of(layers):
+        """_fused_max_rows for these (fusable) layers."""
+        first = layers[0]
+        quantized = type(first) in _QUANTIZED_LINEAR
+        in_dims = (
+            first.scales.shape[-1] * first.group_size
+            if quantized
+            else first.weight.shape[-1]
+        )
+        widths = [layer.weight.shape[0] for layer in layers]
+        return _fused_max_rows(quantized, in_dims, widths)
 
     def matmul_dtype(self, x):
         """_matmul_dtype for the fused layers."""
@@ -662,18 +750,16 @@ class _FusedLinear:
         """The parts' outputs, as slices of one output; ``groups`` (counts of consecutive
         parts) returns some adjacent parts as one slice."""
         out = None
-        limit = _FUSED_QUANTIZED_MAX_ROWS if self.quantized else _FUSED_GEMM_MAX_ROWS
-        if x.size // x.shape[-1] <= limit:
+        if x.size // x.shape[-1] <= self.max_rows:
             out = self._matmul(x, 0, self.weight.shape[0])
         groups = groups or (1,) * len(self.sizes)
         parts, start, i = [], 0, 0
         for count in groups:
             size = sum(self.sizes[i : i + count])
             if out is None:
-                # Prompt-sized inputs: one matmul per part over its rows of the fused
-                # weight (concatenated for a group). MLX's GEMM tiling depends on the
-                # output width, so a wider matmul can round some outputs differently from
-                # the parts' own; matmuls on the parts' row slices are bitwise theirs.
+                # More rows than max_rows: one matmul per part over its rows of the fused
+                # weight (concatenated for a group), bitwise the parts' own matmuls (see
+                # _fused_max_rows).
                 pieces, offset = [], start
                 for part_size in self.sizes[i : i + count]:
                     pieces.append(self._matmul(x, offset, offset + part_size))
@@ -692,7 +778,8 @@ def _fuse(module, names):
     if not _FUSE_PROJECTIONS:
         return None
     layers = [module[name] for name in names]
-    if not _FusedLinear.fusable(layers):
+    # (not fused where one matmul would never run: then the parts stay as they are)
+    if not _FusedLinear.fusable(layers) or _FusedLinear.max_rows_of(layers) == 0:
         return None
     fused = _FusedLinear(layers)
     for name in names:
@@ -865,7 +952,9 @@ class MoE(nn.Module):
     def _fuse_gate_up(self):
         """The routed experts' gate and up projections as one gather over their
         concatenated output rows (each expert's [gate; up]), like _FusedLinear."""
-        if not _FUSE_PROJECTIONS:
+        architecture = _gpu_architecture()
+        # (not on M5: see the comment above _FUSED_QUANTIZED_MAX_ROWS)
+        if not _FUSE_PROJECTIONS or architecture is None or architecture[0] >= 17:
             return None
         switch = self.switch_mlp
         gate, up = switch.gate_proj, switch.up_proj
@@ -874,6 +963,7 @@ class MoE(nn.Module):
             and isinstance(up, QuantizedSwitchLinear)
             and (gate.group_size, gate.bits, gate.mode)
             == (up.group_size, up.bits, up.mode)
+            and gate.mode == "affine"
             and gate.get("biases") is not None
             and up.get("biases") is not None
             and gate.global_scale is None
@@ -1490,6 +1580,9 @@ class Indexer(nn.Module):
         weights = [self.wk.weight, self.index_kpool_compress_gate]
         if len({w.dtype for w in weights}) != 1:
             return None
+        widths = [w.shape[0] for w in weights]
+        if _fused_max_rows(False, weights[0].shape[1], widths) == 0:
+            return None
         fused = mx.concatenate(weights, axis=0)
         mx.eval(fused)
         del self["wk"], self["index_kpool_compress_gate"]
@@ -1503,6 +1596,7 @@ class Indexer(nn.Module):
             keys, gates = self.wk(x), x @ self.index_kpool_compress_gate.T
         else:
             width = self.head_dim
+            # (_fused_max_rows for these widths, checked when fusing)
             if x.size // x.shape[-1] <= _FUSED_GEMM_MAX_ROWS:
                 out = x @ self._x_proj.T
                 keys, gates = out[..., :width], out[..., width:]

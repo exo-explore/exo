@@ -1,6 +1,7 @@
 """Type stubs for the GLM-5.3-Flash model (glm5_next.py next to this file)."""
 
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,9 +25,18 @@ _router_select_kernel: _MetalKernel | None
 _FUSED_GEMM_MAX_ROWS: int
 _FUSED_QUANTIZED_MAX_ROWS: int
 _FUSE_PROJECTIONS: bool
+_CHECKED_MLX: re.Pattern[str]
+_KNOWN_ARCHITECTURE: re.Pattern[str]
+
+def _gpu_architecture() -> tuple[int, str] | None: ...
+def _qmv_row_limit(
+    architecture: tuple[int, str], in_dims: int, out_dims: int
+) -> int: ...
+def _fused_max_rows(quantized: bool, in_dims: int, widths: Sequence[int]) -> int: ...
 
 class _FusedLinear:
     sizes: list[int]
+    max_rows: int
     def __call__(
         self, x: mx.array, groups: tuple[int, ...] | None = None
     ) -> list[mx.array]: ...
@@ -122,6 +132,7 @@ class MoE(nn.Module):
     shared_experts: MLP
     def __init__(self, args: ModelArgs) -> None: ...
     def __call__(self, x: mx.array) -> mx.array: ...
+    def _fuse_gate_up(self) -> tuple[object, ...] | None: ...
 
 class GatedRMSNorm(nn.Module):
     eps: float

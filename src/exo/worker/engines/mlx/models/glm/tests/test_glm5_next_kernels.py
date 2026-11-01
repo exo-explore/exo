@@ -2,7 +2,10 @@
 small random model with the dimensions the Metal kernels need (KDA head_dim 128, an indexer
 of 32 heads, a hidden size divisible by 256) in bfloat16:
 
-- the fused projections give bitwise the separate layers' outputs;
+- the fused projections give bitwise the separate layers' outputs, on the GPU the tests run
+  on: one matmul over the fused weight only up to the row count where MLX sums it like the
+  parts (its dispatch rule, checked here for every GPU generation MLX can emulate), and the
+  parts' own matmuls past it or on GPUs and MLX releases the model doesn't know;
 - the KDA decode kernel, the hyper-connection kernels and the indexer's pool-score kernel
   agree with the ops to float32 rounding (bf16 outputs within a unit in the last place);
 - the model with every kernel matches itself across chunked prefill and decode, and a
@@ -11,7 +14,12 @@ of 32 heads, a hidden size divisible by 256) in bfloat16:
 
 Without Metal the kernels don't exist and the model runs the ops: the tests are skipped."""
 
-from collections.abc import Callable
+import json
+import os
+import subprocess
+import sys
+from collections.abc import Callable, Sequence
+from importlib.metadata import version
 from typing import Any, cast
 
 import mlx.core as mx
@@ -21,6 +29,7 @@ import numpy.typing as npt
 import pytest
 from mlx.utils import tree_flatten
 from mlx_lm.models.cache import ArraysCache, BatchKVCache, CacheList, KVCache
+from mlx_lm.models.switch_layers import SwitchLinear
 
 from exo.worker.engines.mlx.models.glm import glm5_next
 from exo.worker.engines.mlx.models.glm.glm5_next import (
@@ -87,6 +96,20 @@ TEXT_CONFIG: dict[str, Any] = {
     "hc_eps": 1e-6,
 }
 CONFIG: dict[str, Any] = {"model_type": "glm5_next", "text_config": TEXT_CONFIG}
+# Wide enough that MLX's quantized matmuls change kernel or K split with the output width
+# within 16 rows on every GPU generation: 1024-wide inputs, dense gate/up of 3072 (6144
+# fused), shared-expert gate/up of 1024 and MLA q_a/kv_a of 1024 and 512.
+QUANTIZED_CONFIG: dict[str, Any] = {
+    "model_type": "glm5_next",
+    "text_config": {
+        **TEXT_CONFIG,
+        "hidden_size": 1024,
+        "intermediate_size": 3072,
+        "moe_intermediate_size": 1024,
+        "q_lora_rank": 1024,
+        "kv_lora_rank": 512,
+    },
+}
 # parameters the model keeps in float32 (sanitize stores the last two in float32 too)
 _FLOAT32 = (
     "A_log",
@@ -99,9 +122,13 @@ _FLOAT32 = (
 )
 
 
-def _model(seed: int = 0) -> Model:
+def _model(seed: int = 0, quantized: bool = False) -> Model:
+    """The random model; ``quantized`` is a wider one (QUANTIZED_CONFIG) that stores the
+    MLPs, experts and MLA down projections in 4 bits with float16 scales, as the
+    mlx-community checkpoint does (the KDA and indexer projections stay bf16, as there)."""
     mx.random.seed(seed)
-    model = Model(cast(ModelArgs, ModelArgs.from_dict(CONFIG)))  # pyright: ignore[reportUnknownMemberType]
+    config = QUANTIZED_CONFIG if quantized else CONFIG
+    model = Model(cast(ModelArgs, ModelArgs.from_dict(config)))  # pyright: ignore[reportUnknownMemberType]
     params: list[tuple[str, mx.array]] = []
     for name, value in cast(
         list[tuple[str, mx.array]], tree_flatten(model.parameters())
@@ -113,6 +140,27 @@ def _model(seed: int = 0) -> Model:
         dtype = mx.float32 if name.endswith(_FLOAT32) else mx.bfloat16
         params.append((name, weight.astype(dtype)))
     model.load_weights(params)
+    if quantized:
+
+        def is_quantized(path: str, module: nn.Module) -> bool:
+            if not isinstance(module, (nn.Linear, SwitchLinear)):
+                return False
+            projection = ".mlp." in path or path.endswith(
+                ("q_a_proj", "kv_a_proj_with_mqa")
+            )
+            return projection and cast(mx.array, module.weight).shape[-1] % 64 == 0
+
+        nn.quantize(model, group_size=64, bits=4, class_predicate=is_quantized)
+        model.load_weights(
+            [
+                (name, value.astype(mx.float16))
+                for name, value in cast(
+                    list[tuple[str, mx.array]], tree_flatten(model.parameters())
+                )
+                if name.endswith((".scales", ".biases"))
+            ],
+            strict=False,
+        )
     model.eval()
     mx.eval(model.parameters())
     return model
@@ -164,11 +212,280 @@ def test_fused_projections_are_the_separate_layers(
     for name, part in zip(names, parts, strict=True):
         holder[name] = part
     fused = glm5_next._fuse(holder, names)  # pyright: ignore[reportPrivateUsage]
+    if glm5_next._gpu_architecture() is None:  # pyright: ignore[reportPrivateUsage]
+        # MLX's dispatch on this GPU or MLX release isn't known: the layers stay as they are
+        assert fused is None and all(name in holder for name in names)
+        return
     assert fused is not None and "a" not in holder
+    # One matmul up to max_rows rows (at least 5 for these quantized shapes on every known
+    # GPU, 1 for bf16), the parts' row slices past it: the separate layers' outputs either way.
+    assert fused.max_rows >= (5 if quantized else 1)
+    path = "one matmul" if rows <= fused.max_rows else "one matmul per part"
     for got, want in zip(fused(x), expected, strict=True):
-        assert mx.array_equal(got, want).item()
+        assert mx.array_equal(got, want).item(), path
     (joined,) = fused(x, groups=(len(parts),))
-    assert mx.array_equal(joined, mx.concatenate(expected, axis=-1)).item()
+    assert mx.array_equal(joined, mx.concatenate(expected, axis=-1)).item(), path
+
+
+# (name, input width, part widths, bits): the model's fused quantized projections, alone and
+# under 2x tensor parallelism, and the tests' shapes above
+_QUANTIZED_GROUPS = [
+    ("MLA q_a/kv_a", 4096, (1536, 512), 4),
+    ("shared experts' gate/up", 4096, (2048, 2048), 6),
+    ("shared experts' gate/up, 2x TP", 4096, (1024, 1024), 6),
+    ("dense MLP gate/up", 4096, (12288, 12288), 4),
+    ("dense MLP gate/up, 2x TP", 4096, (6144, 6144), 4),
+    ("test q_a/kv_a", 1024, (1536, 512), 4),
+    ("test gate/up", 1024, (2048, 2048), 4),
+]
+
+
+@pytest.mark.parametrize(("name", "in_dims", "sizes", "bits"), _QUANTIZED_GROUPS)
+def test_fused_quantized_matmuls_are_their_parts_on_this_gpu(
+    name: str, in_dims: int, sizes: tuple[int, ...], bits: int
+) -> None:
+    """At every row count the model runs one fused quantized matmul for on this GPU, its
+    outputs are bitwise the parts' matmuls'. In float16 (the model's matmul dtype) and in
+    float32, where any other summation order shows."""
+    max_rows = glm5_next._fused_max_rows(True, in_dims, sizes)  # pyright: ignore[reportPrivateUsage]
+    if glm5_next._gpu_architecture() is None:  # pyright: ignore[reportPrivateUsage]
+        assert max_rows == 0
+        return
+    mx.random.seed(len(name))
+    parts = [
+        mx.quantize(
+            (mx.random.normal((n, in_dims)) * 0.05).astype(mx.bfloat16),
+            group_size=64,
+            bits=bits,
+        )
+        for n in sizes
+    ]
+    fused = [mx.concatenate([part[i] for part in parts], axis=0) for i in range(3)]
+    mx.eval(*fused, *(array for part in parts for array in part))
+    for dtype in (mx.float16, mx.float32):
+        for rows in range(1, max_rows + 1):
+            x = (mx.random.normal((1, rows, in_dims)) * 0.5).astype(dtype)
+            out, start = _quantized_matmul(x, fused, bits), 0
+            for n, part in zip(sizes, parts, strict=True):
+                want = _quantized_matmul(x, part, bits)
+                got = out[..., start : start + n]
+                assert mx.array_equal(got, want).item(), (name, dtype, rows, n)
+                start += n
+
+
+def _quantized_matmul(x: mx.array, weight: Sequence[mx.array], bits: int) -> mx.array:
+    w, scales, biases = weight
+    return mx.quantized_matmul(
+        x,
+        w,
+        scales.astype(x.dtype),
+        biases.astype(x.dtype),
+        transpose=True,
+        group_size=64,
+        bits=bits,
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "in_dims", "sizes", "fused"),
+    [
+        ("KDA q/k/v", 4096, (8192, 8192, 8192), True),
+        ("KDA q/k/v, 2x TP", 4096, (4096, 4096, 4096), True),
+        ("KDA f_a/g_a, indexer wk/gate", 4096, (128, 128), True),
+        # b_proj (64 rows) splits its dot products across 8 simdgroups, a 320-row GEMV
+        # across 1: not fused
+        ("KDA b/f_a/g_a", 4096, (64, 128, 128), False),
+        ("test q/k/v", 1024, (2048, 2048, 2048), True),
+    ],
+)
+def test_fused_bf16_matmuls_are_their_parts_on_this_gpu(
+    name: str, in_dims: int, sizes: tuple[int, ...], fused: bool
+) -> None:
+    """The bf16 projections fuse for one input row where MLX's GEMV reduces each output
+    like the parts' GEMVs; then the outputs are bitwise the parts', also in float32."""
+    max_rows = glm5_next._fused_max_rows(False, in_dims, sizes)  # pyright: ignore[reportPrivateUsage]
+    if glm5_next._gpu_architecture() is None:  # pyright: ignore[reportPrivateUsage]
+        assert max_rows == 0
+        return
+    assert max_rows == (1 if fused else 0), name
+    if not fused:
+        return
+    mx.random.seed(len(name))
+    weights = [
+        (mx.random.normal((n, in_dims)) * 0.05).astype(mx.bfloat16) for n in sizes
+    ]
+    joined = mx.concatenate(weights, axis=0)
+    for dtype in (mx.bfloat16, mx.float32):
+        x = (mx.random.normal((1, 1, in_dims)) * 0.5).astype(dtype)
+        out, start = x @ joined.T, 0
+        for n, w in zip(sizes, weights, strict=True):
+            got = out[..., start : start + n]
+            assert mx.array_equal(got, x @ w.T).item(), (name, dtype, n)
+            start += n
+
+
+def test_fused_rows_per_gpu_generation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Up to how many rows the model's quantized projections run as one matmul, per GPU (MLX
+    0.32.4's qmv row limits): the MLA and shared-expert groupings, then the dense MLP's."""
+    groups = [(in_dims, sizes) for _, in_dims, sizes, _ in _QUANTIZED_GROUPS[:5]]
+    expected = {
+        (13, "g"): [9, 9, 9, 5, 5],  # M1 / M1 Pro
+        (13, "s"): [9, 9, 9, 6, 6],  # M1 Max
+        (14, "g"): [9, 9, 9, 5, 5],  # M2 / M2 Pro
+        (14, "d"): [16, 16, 16, 11, 11],  # M2 Ultra
+        (15, "d"): [16, 16, 16, 11, 11],  # M3 Ultra
+        (16, "s"): [14, 14, 14, 12, 12],  # M4 Max
+        (17, "g"): [16, 16, 16, 12, 12],  # M5
+    }
+    for architecture, rows in expected.items():
+        monkeypatch.setattr(glm5_next, "_gpu_architecture", _gpu_is(architecture))
+        got = [
+            glm5_next._fused_max_rows(True, in_dims, sizes)  # pyright: ignore[reportPrivateUsage]
+            for in_dims, sizes in groups
+        ]
+        assert got == rows, architecture
+
+
+def _gpu_is(architecture: tuple[int, str]) -> Callable[[], tuple[int, str]]:
+    return lambda: architecture
+
+
+def test_expert_gathers_fuse_on_m1_to_m4_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The routed experts' gate/up gathers fuse where MLX's gather kernels are known not to
+    depend on the output width (M1-M4); M5 GPUs (matrix-unit gathers) and unknown GPUs keep
+    the separate gathers."""
+    for architecture, fuses in [
+        ((13, "g"), True),
+        ((15, "d"), True),
+        ((16, "s"), True),
+        ((17, "s"), False),
+        (None, False),
+    ]:
+        monkeypatch.setattr(
+            glm5_next, "_gpu_architecture", _gpu_is_or_none(architecture)
+        )
+        moe = _model(quantized=True).model.layers[3].mlp
+        assert isinstance(moe, MoE)
+        assert (moe._fuse_gate_up() is not None) == fuses, architecture
+
+
+def _gpu_is_or_none(
+    architecture: tuple[int, str] | None,
+) -> Callable[[], tuple[int, str] | None]:
+    return lambda: architecture
+
+
+# Run with MLX_METAL_GPU_ARCH set, so that MLX dispatches as on that GPU generation: for
+# each (input width, output width, rows), whether MLX ran the matrix-vector kernel. It did if
+# the first two rows' outputs are bitwise those of a two-row matmul (always a matrix-vector
+# kernel); float32 inputs make any other summation order show (and keep MLX off the M5
+# matrix units, which an emulated M5 doesn't have).
+_DISPATCH_PROBE = """
+import json, sys
+import mlx.core as mx
+results = []
+for in_dims, out_dims, rows in json.loads(sys.argv[1]):
+    mx.random.seed(0)
+    w = mx.random.normal((out_dims, in_dims)) * 0.05
+    wq, scales, biases = mx.quantize(w, group_size=64, bits=4)
+    x = mx.random.normal((rows, in_dims))
+    def matmul(v):
+        return mx.quantized_matmul(v, wq, scales, biases, transpose=True)
+    results.append(mx.array_equal(matmul(x)[:2], matmul(x[:2])).item())
+print(json.dumps({"architecture": mx.device_info()["architecture"], "qmv": results}))
+"""
+
+
+@pytest.mark.parametrize(
+    "architecture",
+    [f"applegpu_g{generation}{size}" for generation in range(13, 18) for size in "gsd"],
+)
+def test_qmv_row_limits_are_mlx_dispatch(architecture: str) -> None:
+    """_qmv_row_limit against the running MLX, dispatching as on each GPU generation (MLX
+    reads MLX_METAL_GPU_ARCH): one row below the limit MLX runs the matrix-vector kernel, at
+    the limit it doesn't. An MLX release that moves the limits fails here."""
+    match = glm5_next._KNOWN_ARCHITECTURE.fullmatch(architecture)  # pyright: ignore[reportPrivateUsage]
+    assert match is not None
+    gpu = (int(match[1]), match[2])
+    cases: list[tuple[int, int, int]] = []
+    for in_dims, out_dims in [(1024, 2048), (4096, 2048), (4096, 6144), (2048, 4096)]:
+        limit = glm5_next._qmv_row_limit(gpu, in_dims, out_dims)  # pyright: ignore[reportPrivateUsage]
+        cases += [(in_dims, out_dims, limit - 1), (in_dims, out_dims, limit)]
+    env = {**os.environ, "MLX_METAL_GPU_ARCH": architecture, "MLX_ENABLE_TF32": "0"}
+    run = subprocess.run(
+        [sys.executable, "-c", _DISPATCH_PROBE, json.dumps(cases)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    probe = cast(dict[str, Any], json.loads(run.stdout))
+    assert probe["architecture"] == architecture
+    qmv = cast(list[bool], probe["qmv"])
+    expected = [rows < glm5_next._qmv_row_limit(gpu, k, n) for k, n, rows in cases]  # pyright: ignore[reportPrivateUsage]
+    assert qmv == expected, list(zip(cases, qmv, strict=True))
+
+
+# GPU generations whose dispatch the machine running the tests can stand in for (an M5's
+# matrix-unit kernels need an M5): M1, M1 Max, an Ultra, M3, M4 Max.
+_EMULATED_GPUS = [
+    "applegpu_g13g",
+    "applegpu_g13s",
+    "applegpu_g14d",
+    "applegpu_g15g",
+    "applegpu_g16s",
+]
+
+
+@pytest.mark.parametrize("architecture", _EMULATED_GPUS)
+def test_fused_paths_with_each_gpu_generations_dispatch(architecture: str) -> None:
+    """The fused-projection tests above again, on this GPU but with MLX dispatching as on
+    another generation (MLX_METAL_GPU_ARCH): the fused paths take that generation's rules,
+    on real hardware."""
+    tests = "fused_projections or fused_quantized or fused_bf16 or unknown_gpus"
+    run = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            __file__,
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "--import-mode=importlib",
+            "-k",
+            tests,
+        ],
+        env={**os.environ, "MLX_METAL_GPU_ARCH": architecture},
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == 0, run.stdout[-4000:]
+    assert "skipped" not in run.stdout.splitlines()[-1], run.stdout[-1000:]
+
+
+def test_mlx_release_is_one_the_fusion_rules_were_checked_on() -> None:
+    """The fused projections run only on the MLX releases in _CHECKED_MLX. After an MLX
+    upgrade, check its dispatch rules (quantized.cpp's get_qmv_batch_limit and qmv kernels,
+    matmul.cpp's GEMV tiling) against glm5_next.py's, then add the release."""
+    assert glm5_next._CHECKED_MLX.fullmatch(version("mlx")), version("mlx")  # pyright: ignore[reportPrivateUsage]
+
+
+def test_unknown_gpus_run_the_separate_layers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On a GPU or MLX release whose dispatch the model doesn't know, nothing fuses: the
+    model computes bitwise what it computes with fusing switched off."""
+    for name in _KERNELS:
+        monkeypatch.setattr(glm5_next, name, None)
+    monkeypatch.setattr(glm5_next, "_gpu_architecture", lambda: None)
+    prompt = _tokens(12, seed=3)
+    model = _model(quantized=True)
+    unknown = model(prompt, model.make_cache())
+    layers = model.model.layers
+    assert "q_proj" in layers[0].self_attn and "q_a_proj" in layers[3].self_attn
+    assert "gate_proj" in cast(MoE, layers[3].mlp).switch_mlp
+    monkeypatch.setattr(glm5_next, "_FUSE_PROJECTIONS", False)
+    off = _model(quantized=True)
+    assert mx.array_equal(unknown, off(prompt, off.make_cache())).item()
 
 
 def _kda(model: Model) -> KimiDeltaAttention:
@@ -416,8 +733,8 @@ _KERNELS = (
 )
 
 
-def _logits_by_chunk_length(lengths: list[int]) -> list[mx.array]:
-    model = _model()
+def _logits_by_chunk_length(lengths: list[int], quantized: bool) -> list[mx.array]:
+    model = _model(quantized=quantized)
     prompt = _tokens(max(lengths), seed=11)
     outs: list[mx.array] = []
     for length in lengths:
@@ -427,8 +744,8 @@ def _logits_by_chunk_length(lengths: list[int]) -> list[mx.array]:
     return outs
 
 
-def _logits_by_decode_batch(sizes: list[int]) -> list[mx.array]:
-    model = _model()
+def _logits_by_decode_batch(sizes: list[int], quantized: bool) -> list[mx.array]:
+    model = _model(quantized=quantized)
     outs: list[mx.array] = []
     for size in sizes:
         caches: list[list[ArraysCache | CacheList]] = []
@@ -450,8 +767,9 @@ def _logits_by_decode_batch(sizes: list[int]) -> list[mx.array]:
     return outs
 
 
+@pytest.mark.parametrize("quantized", [False, True])
 def test_fused_projections_are_exact_across_kernel_thresholds(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, quantized: bool
 ) -> None:
     """The fused projections and expert gathers change the row counts MLX's matmul,
     quantized-matmul and gather kernels see, and those kernels pick their variant by row
@@ -460,16 +778,16 @@ def test_fused_projections_are_exact_across_kernel_thresholds(
     float32-reordering kernels are off on both sides)."""
     for name in _KERNELS:
         monkeypatch.setattr(glm5_next, name, None)
-    # 2..8 rows: the dense quantized matmul's wide-row variant on M3-class GPUs; 15-17
-    # tokens: this model's gather flip (tokens x top_k / experts >= 4) and the fused
-    # matmuls' 16-row limit
-    lengths = list(range(1, 10)) + [15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129]
+    # 2..8 rows: the quantized matmuls' wide-row variant on M3-class GPUs; 12-17 tokens:
+    # MLX's quantized matrix-vector limit for these widths (13 to 33 rows, by GPU), this
+    # model's gather flip (tokens x top_k / experts >= 4) and the fused matmuls' 16-row cap
+    lengths = list(range(1, 18)) + [31, 32, 33, 63, 64, 65, 127, 128, 129]
     sizes = list(range(1, 10))
-    fused_prefill = _logits_by_chunk_length(lengths)
-    fused_decode = _logits_by_decode_batch(sizes)
+    fused_prefill = _logits_by_chunk_length(lengths, quantized)
+    fused_decode = _logits_by_decode_batch(sizes, quantized)
     monkeypatch.setattr(glm5_next, "_FUSE_PROJECTIONS", False)
-    separate_prefill = _logits_by_chunk_length(lengths)
-    separate_decode = _logits_by_decode_batch(sizes)
+    separate_prefill = _logits_by_chunk_length(lengths, quantized)
+    separate_decode = _logits_by_decode_batch(sizes, quantized)
     for length, a, b in zip(lengths, fused_prefill, separate_prefill, strict=True):
         assert mx.array_equal(a, b).item(), f"prefill chunk of {length} tokens"
     for i, (a, b) in enumerate(zip(fused_decode, separate_decode, strict=True)):
