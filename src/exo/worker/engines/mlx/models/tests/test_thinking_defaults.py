@@ -2,7 +2,8 @@
 thinking on (enable_thinking=true, no reasoning_effort). exo leaves the level unset, and
 each family keeps the behaviour its own tests were written for: GLM-5.x runs at High and
 Inkling at medium (as for "medium"), Hy3 gets high (its template does not think by
-default), and Qwen3.8 gets its template's own default (xhigh)."""
+default), MiniMax M3 and M3.1 get medium, and Qwen3.8 gets its template's own default
+(xhigh)."""
 
 import asyncio
 
@@ -20,6 +21,8 @@ from exo.worker.engines.mlx.models import registry
         ("mlx-community/GLM-5.3-Flash-4bit", "high"),
         ("mlx-community/Inkling-Small-mlx-4bit", "medium"),
         ("XavierLocalAI/Hy3-4bit", "high"),
+        ("MiniMaxAI/MiniMax-M3.1-Flash", "medium"),
+        ("mlx-community/MiniMax-M3-4bit", "medium"),
         ("mlx-community/Qwen3.8-27B-4bit", None),
         ("mlx-community/Qwen3.8-Flash-Next-4bit", None),
     ],

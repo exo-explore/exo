@@ -66,6 +66,9 @@ def _coerce_tool_arg_with_schema(value: Any, schema: dict[str, Any]) -> Any:  # 
 
     if schema_type == "object":
         parsed = value  # pyright: ignore[reportAny]
+        if parsed == "":
+            # Formats that write values as text (XML) write an empty object as nothing.
+            return {}
         if isinstance(parsed, str):
             try:
                 parsed = json.loads(parsed)  # pyright: ignore[reportAny]
@@ -88,6 +91,8 @@ def _coerce_tool_arg_with_schema(value: Any, schema: dict[str, Any]) -> Any:  # 
 
     if schema_type == "array":
         parsed = value  # pyright: ignore[reportAny]
+        if parsed == "":
+            return []
         if isinstance(parsed, str):
             try:
                 parsed = json.loads(parsed)  # pyright: ignore[reportAny]
@@ -184,6 +189,14 @@ def _coerce_tool_calls_to_schema(
             tool_call.model_copy(update={"arguments": json.dumps(coerced_args)})
         )
     return coerced_calls
+
+
+def coerce_tool_calls_to_schemas(
+    tool_calls: list[ToolCallItem], tools: list[dict[str, Any]]
+) -> list[ToolCallItem]:
+    """Each call's arguments coerced to its tool's JSON schema (e.g. "3" to 3 for an
+    integer parameter); calls to unknown tools, or that don't parse, are left as they are."""
+    return _coerce_tool_calls_to_schema(tool_calls, tools)
 
 
 def make_mlx_parser(

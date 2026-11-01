@@ -97,6 +97,9 @@ def tensor_auto_parallel(
     segments: int = 1
 
     def _all_to_sharded(path: str, weight: mx.array):
+        if path.endswith("global_scale"):
+            # One nvfp4 tensor scale per expert (or per matrix): every rank keeps them all.
+            return None
         if path.endswith("bias"):
             logger.info(f"Sharding bias for {path} - all to sharded")
             return weight.ndim - 1, segments
@@ -111,6 +114,8 @@ def tensor_auto_parallel(
     n = group.size()
 
     def _sharded_to_all(path: str, weight: mx.array):
+        if path.endswith("global_scale"):
+            return None
         if path.endswith("bias"):
             logger.info(f"Sharding bias for {path} - sharded to all")
             weight /= n
