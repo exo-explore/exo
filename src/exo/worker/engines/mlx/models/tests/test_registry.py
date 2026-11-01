@@ -190,11 +190,11 @@ def _mlx_lm_model_classes() -> dict[str, type]:
         if isinstance(model_class, type):
             classes[module_info.name] = model_class
     # Model types whose model a family ships itself, because mlx-lm has none
-    for model_type in ("deepseek_v4",):
+    for model_type in ("deepseek_v4", "nemotron_h_omni"):
         assert model_type not in classes
         classes[model_type] = registry.get_model_classes({"model_type": model_type})[0]
     # Model types whose family ships a subclass of mlx-lm's model, which exo loads instead
-    for model_type in ("flint",):
+    for model_type in ("flint", "nemotron_h"):
         shipped = registry.get_model_classes({"model_type": model_type})[0]
         assert issubclass(shipped, classes[model_type])
         classes[model_type] = shipped
@@ -219,6 +219,7 @@ _SUPPORTED_MODEL_TYPES = [
     "minimax",
     "ministral3",
     "nemotron_h",
+    "nemotron_h_omni",
     "qwen3",
     "qwen3_5",
     "qwen3_5_moe",
