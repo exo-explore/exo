@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Protocol, cast
 
 import mlx.core as mx
 from mlx_lm.generate import GenerationBatch, PromptProcessingBatch, generation_stream
@@ -55,6 +55,12 @@ def take_ready_topk(batch: GenerationBatch) -> BatchTopKLogprobs:
     return _get_buffer(batch).ready
 
 
+class TokenContext(Protocol):
+    """mlx_lm.models.cache.TokenBuffer: a growing array of one sequence's tokens."""
+
+    def update_and_fetch(self, tokens: mx.array) -> mx.array: ...
+
+
 def _lazy_cache_metadata(cache: list[object]) -> list[mx.array]:
     """The per-sequence bookkeeping arrays a cache updates lazily at every step: an
     ArraysCache's left padding and lengths, which a linear attention layer moves on by the
@@ -91,12 +97,20 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
     logits = self.model(inputs[:, None], cache=self.prompt_cache)
     logits = logits[:, -1, :]
 
+    token_context: list[mx.array] = []
     if self.logits_processors is not None and any(self.logits_processors):
+        # mlx-lm's per-sequence token context: the tokens in the cache and the one being fed
+        # this step, as mlx-lm's own step and generate_step give processors. (self.tokens
+        # gains the fed token only at the end of the step.)
+        token_context = [
+            context.update_and_fetch(inputs[e : e + 1])
+            for e, context in enumerate(cast(list[TokenContext], self._token_context))
+        ]
         processed_logits: list[mx.array] = []
         for e in range(len(self.uids)):
             sample_logits = logits[e : e + 1]
             for processor in self.logits_processors[e]:
-                sample_logits = processor(mx.array(self.tokens[e]), sample_logits)
+                sample_logits = processor(token_context[e], sample_logits)
             processed_logits.append(sample_logits)
         logits = mx.concatenate(processed_logits, axis=0)
 
@@ -135,12 +149,14 @@ def _patched_step(self: GenerationBatch) -> tuple[list[int], list[mx.array]]:
             pending_indices,
             pending_values,
             pending_selected,
+            *token_context,
             *_lazy_cache_metadata(self.prompt_cache),
         )
     else:
         mx.async_eval(
             self._next_tokens,
             self._next_logprobs,
+            *token_context,
             *_lazy_cache_metadata(self.prompt_cache),
         )
 

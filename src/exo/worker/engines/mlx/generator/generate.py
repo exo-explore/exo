@@ -3,7 +3,8 @@ import functools
 import math
 import time
 import uuid
-from typing import Callable, Generator, cast, get_args
+from collections.abc import Sequence
+from typing import Callable, Final, Generator, cast, final, get_args
 
 import mlx.core as mx
 from mlx_lm.generate import (
@@ -464,6 +465,94 @@ def warmup_inference(
     return check_for_cancel_every
 
 
+# mlx-lm's presence_context_size and frequency_context_size defaults.
+_PENALTY_CONTEXT: Final = 20
+
+
+@final
+class PenaltyProcessor:
+    """One of mlx-lm's penalty processors, given the tokens exo's penalties count:
+
+    - presence and frequency penalties, as OpenAI defines them: the generated tokens;
+    - the repetition penalty, as Hugging Face transformers applies it: the prompt and the
+      generated tokens.
+
+    Both include the token being fed in this step, the latest one generated.
+
+    Engines call processors with a history that starts with the end of the prompt (how much of
+    it depends on the engine and on mlx-lm's version) followed by every token generated so far.
+    The first call is for the first generated token, when the history holds only prompt
+    tokens: its length is how many prompt tokens every later history starts with."""
+
+    def __init__(
+        self,
+        processor: Callable[[mx.array, mx.array], mx.array],
+        prompt: Sequence[int],
+        include_prompt: bool,
+        context_size: int,
+    ) -> None:
+        self._processor = processor
+        self._prompt = prompt
+        self._include_prompt = include_prompt
+        self._context_size = context_size
+        self._prompt_in_history: int | None = None
+        self._prompt_before_history: mx.array | None = None
+
+    def __call__(self, history: mx.array, logits: mx.array) -> mx.array:
+        if self._prompt_in_history is None:
+            self._prompt_in_history = history.shape[0]
+            if self._include_prompt:
+                before = self._prompt[: len(self._prompt) - self._prompt_in_history]
+                if self._context_size > 0:
+                    before = before[-self._context_size :]
+                if len(before) > 0:
+                    self._prompt_before_history = mx.array(
+                        list(before), dtype=history.dtype
+                    )
+        if not self._include_prompt:
+            return self._processor(history[self._prompt_in_history :], logits)
+        if self._prompt_before_history is not None:
+            history = mx.concatenate([self._prompt_before_history, history])
+        return self._processor(history, logits)
+
+
+def penalty_processors(
+    prompt: Sequence[int],
+    repetition_penalty: float | None,
+    repetition_context_size: int | None,
+    presence_penalty: float | None,
+    frequency_penalty: float | None,
+) -> list[Callable[[mx.array, mx.array], mx.array]]:
+    """mlx-lm's repetition, presence and frequency penalty processors (same values, same
+    skipping of unset or zero penalties, same order), counting the tokens PenaltyProcessor
+    describes. One request's processors: they remember where its prompt ends."""
+    repetition_context = (
+        repetition_context_size if repetition_context_size is not None else 20
+    )
+    processors: list[Callable[[mx.array, mx.array], mx.array]] = []
+    for penalty, kind in (
+        (repetition_penalty, "repetition"),
+        (presence_penalty, "presence"),
+        (frequency_penalty, "frequency"),
+    ):
+        context = repetition_context if kind == "repetition" else _PENALTY_CONTEXT
+        for processor in make_logits_processors(
+            repetition_penalty=penalty if kind == "repetition" else None,
+            repetition_context_size=repetition_context,
+            presence_penalty=penalty if kind == "presence" else None,
+            frequency_penalty=penalty if kind == "frequency" else None,
+        ):
+            processors.append(
+                PenaltyProcessor(
+                    processor,
+                    prompt,
+                    include_prompt=kind == "repetition",
+                    context_size=context,
+                )
+            )
+    return processors
+
+
 def ban_token_ids(token_ids: list[int]) -> Callable[[mx.array, mx.array], mx.array]:
     token_ids = [int(t) for t in token_ids]
 
@@ -598,15 +687,12 @@ def mlx_generate(
                 f"KV cache hit: {prefix_hit_length}/{len(all_prompt_tokens)} tokens cached ({100 * prefix_hit_length / len(all_prompt_tokens):.1f}%)"
             )
 
-    logits_processors: list[Callable[[mx.array, mx.array], mx.array]] = (
-        make_logits_processors(
-            repetition_penalty=task.repetition_penalty,
-            repetition_context_size=task.repetition_context_size
-            if task.repetition_context_size is not None
-            else 20,
-            presence_penalty=task.presence_penalty,
-            frequency_penalty=task.frequency_penalty,
-        )
+    logits_processors = penalty_processors(
+        prompt=cast(list[int], all_prompt_tokens.tolist()),
+        repetition_penalty=task.repetition_penalty,
+        repetition_context_size=task.repetition_context_size,
+        presence_penalty=task.presence_penalty,
+        frequency_penalty=task.frequency_penalty,
     )
     if is_bench:
         # Only sample length eos tokens
