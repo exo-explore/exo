@@ -47,6 +47,14 @@ class ModelArgs:
     def from_dict(cls, params: dict[str, Any]) -> ModelArgs: ...
     def __post_init__(self) -> None: ...
 
+class MambaRMSNormGated(nn.Module):
+    eps: float
+    weight: mx.array
+    group_size: int
+
+    def __init__(self, hidden_size: int, eps: float, group_size: int) -> None: ...
+    def __call__(self, x: mx.array, gate: Optional[mx.array] = None) -> mx.array: ...
+
 class NemotronHMamba2Mixer(nn.Module):
     num_heads: int
     hidden_size: int
@@ -61,11 +69,27 @@ class NemotronHMamba2Mixer(nn.Module):
     dt_bias: mx.array
     A_log: mx.array
     D: mx.array
-    norm: nn.RMSNorm
+    norm: MambaRMSNormGated
     heads_per_group: int
     out_proj: nn.Linear
+    time_step_limit: Tuple[float, float]
 
     def __init__(self, args: ModelArgs) -> None: ...
+    def _conv(
+        self,
+        conv_input: mx.array,
+        cache: Optional[ArraysCache],
+        mask: Optional[mx.array],
+    ) -> mx.array: ...
+    def _ssm(
+        self,
+        hidden_states: mx.array,
+        B: mx.array,
+        C: mx.array,
+        dt: mx.array,
+        cache: Optional[ArraysCache],
+        mask: Optional[mx.array],
+    ) -> mx.array: ...
     def __call__(
         self,
         hidden_states: mx.array,
@@ -92,11 +116,26 @@ class NemotronHAttention(nn.Module):
         cache: Optional[KVCache] = None,
     ) -> mx.array: ...
 
+def group_expert_select(
+    gates: mx.array,
+    e_score_correction_bias: mx.array,
+    top_k: int,
+    n_group: Optional[int],
+    topk_group: Optional[int],
+    routed_scaling_factor: Optional[float],
+    norm_topk_prob: Optional[bool],
+) -> tuple[mx.array, mx.array]: ...
+
 class MoEGate(nn.Module):
     config: ModelArgs
     top_k: int
     norm_topk_prob: bool
+    n_routed_experts: int
+    routed_scaling_factor: float
+    n_group: int
+    topk_group: int
     weight: mx.array
+    e_score_correction_bias: mx.array
 
     def __init__(self, config: ModelArgs) -> None: ...
     def __call__(self, x: mx.array) -> tuple[mx.array, mx.array]: ...
