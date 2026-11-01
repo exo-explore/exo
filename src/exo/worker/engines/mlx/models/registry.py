@@ -37,6 +37,7 @@ from exo.worker.engines.mlx.models.kimi.family import FAMILY as KIMI
 from exo.worker.engines.mlx.models.laguna.family import FAMILY as LAGUNA
 from exo.worker.engines.mlx.models.llama.family import FAMILY as LLAMA
 from exo.worker.engines.mlx.models.minimax.family import FAMILY as MINIMAX
+from exo.worker.engines.mlx.models.muse_spark.family import FAMILY as MUSE_SPARK
 from exo.worker.engines.mlx.models.nemotron_h.family import FAMILY as NEMOTRON_H
 from exo.worker.engines.mlx.models.qwen3.family import FAMILY as QWEN3
 from exo.worker.engines.mlx.models.spec_registry import FAMILY_SPECS
@@ -61,6 +62,7 @@ FAMILIES: tuple[ModelFamily, ...] = (
     LAGUNA,
     INKLING,
     HY_V3,
+    MUSE_SPARK,
 )
 assert tuple(family.spec for family in FAMILIES) == FAMILY_SPECS
 

@@ -33,6 +33,7 @@ from mlx_lm.models.llama import Model as LlamaModel
 from mlx_lm.models.minimax import Model as MiniMaxModel
 from mlx_lm.models.minimax_m3_vl import Model as MiniMaxM3Model
 from mlx_lm.models.ministral3 import Model as Ministral3Model
+from mlx_lm.models.muse_spark import Model as MuseSparkModel
 from mlx_lm.models.nemotron_h import Model as NemotronHModel
 from mlx_lm.models.nemotron_h import NemotronHModel as NemotronHInnerModel
 from mlx_lm.models.qwen3 import Model as Qwen3Model
@@ -75,6 +76,7 @@ from exo.worker.engines.mlx.models.laguna.sharding import (
     fix_pipeline_shard as laguna_fixup,
 )
 from exo.worker.engines.mlx.models.minimax.parser import parse_minimax_m3
+from exo.worker.engines.mlx.models.muse_spark.parser import parse_muse_spark
 from exo.worker.engines.mlx.models.nemotron_h.sharding import (
     fix_pipeline_shard as nemotron_h_fixup,
 )
@@ -134,6 +136,9 @@ def _main_tensor_strategy(model_class: type) -> str | None:
     # Changed on purpose: MiniMax M3 is new, and main had no strategy for it.
     elif issubclass(model_class, MiniMaxM3Model):
         return "MiniMaxM3ShardingStrategy"
+    # Changed on purpose: Muse Spark is new.
+    elif issubclass(model_class, MuseSparkModel):
+        return "MuseSparkShardingStrategy"
     else:
         return None
 
@@ -171,6 +176,9 @@ def _main_output_parser(
     # Changed on purpose: MiniMax M3 is new.
     elif issubclass(model_class, MiniMaxM3Model):
         return ("parse_minimax_m3", False)
+    # Changed on purpose: Muse Spark is new.
+    elif issubclass(model_class, MuseSparkModel):
+        return ("parse_muse_spark", False)
     return None
 
 
@@ -264,6 +272,7 @@ _SUPPORTED_MODEL_TYPES = [
     "minimax",
     "minimax_m3_vl",
     "ministral3",
+    "muse_spark",
     "nemotron_h",
     "nemotron_h_omni",
     "qwen3",
@@ -328,6 +337,7 @@ def _parser_name(parse: object) -> str:
         ("parse_deepseek_v4", parse_deepseek_v4),
         ("parse_inkling", parse_inkling),
         ("parse_minimax_m3", parse_minimax_m3),
+        ("parse_muse_spark", parse_muse_spark),
     ):
         if parse is function:
             return name
