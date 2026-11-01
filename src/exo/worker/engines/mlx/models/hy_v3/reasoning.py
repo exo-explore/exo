@@ -7,9 +7,10 @@ The template understands exactly three values and raises on any other:
 - ``low`` and ``high``: the generation prompt opens it, and the system prompt (or, with
   tools, the tool instructions) gets ``<｜reasoning_mode:opensource｜>reasoning_effort:<value>``.
 
-exo's own levels are none / minimal / low / medium / high / xhigh, and it resolves
-``enable_thinking=True`` to "medium" and ``enable_thinking=False`` to "none". Without a
-mapping, every request that set either failed to render.
+exo's own levels are none / minimal / low / medium / high / xhigh. It resolves
+``enable_thinking=False`` to "none" and leaves the level unset for ``enable_thinking=True``.
+Without a mapping, every request that set a level failed to render, and one that only
+turned thinking on did not think.
 """
 
 from exo.shared.types.text_generation import (
@@ -26,14 +27,15 @@ def applies_to(task_params: TextGenerationTaskParams) -> bool:
 
 def template_effort(task_params: TextGenerationTaskParams) -> str | None:
     """Unset -> the template's default (no_think); none -> no_think; minimal, low -> low;
-    medium, high, xhigh -> high. A request that sets only enable_thinking counts as
-    medium (on) or none (off), as exo's API adapters resolve it."""
-    effort, _ = resolve_reasoning_params(
+    medium, high, xhigh -> high. A request that sets only enable_thinking gets high (on)
+    or no_think (off)."""
+    effort, thinking = resolve_reasoning_params(
         task_params.reasoning_effort, task_params.enable_thinking
     )
     match effort:
         case None:
-            return None
+            # Thinking on without a level: the template's default would not think.
+            return "high" if thinking else None
         case "none":
             return "no_think"
         case "minimal" | "low":
