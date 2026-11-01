@@ -1,0 +1,24 @@
+model_id = "deepseek-ai/DeepSeek-V4-Flash-0731"
+n_layers = 43
+hidden_size = 4096
+num_key_value_heads = 1
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "deepseek"
+model_type = "deepseek_v4"
+quantization = "MXFP4-FP8"
+base_model = "DeepSeek V4 Flash 0731"
+capabilities = ["text", "thinking", "thinking_toggle"]
+reasoning_dialect = "tool_conditional"
+
+context_length = 1048576
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
+# The release build, as published: FP4 experts load as MLX mxfp4 unchanged and the FP8
+# dense weights load as bf16. The multi-token prediction (DSpark) layers are not loaded.
+[storage_size]
+in_bytes = 166886535336
+
+# Source: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731
+[sampling_defaults]
+temperature = 1.0
+top_p = 1.0

@@ -48,5 +48,7 @@ FAMILY = ModelFamily(
         applies_to=prompt.applies_to,
         encode=prompt.encode_prompt,
         model_types=frozenset({"deepseek_v4"}),
+        # Chat mode and earlier turns end the assistant prefix with a bare `</think>`.
+        exact_think_tags=True,
     ),
 )

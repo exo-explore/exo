@@ -11,34 +11,51 @@ from mlx_lm.models.switch_layers import SwitchGLU
 
 @dataclass
 class ModelArgs(BaseModelArgs):
-    model_type: str
-    vocab_size: int
-    hidden_size: int
-    intermediate_size: int
-    moe_intermediate_size: int
-    num_hidden_layers: int
-    num_attention_heads: int
-    num_key_value_heads: int
-    n_shared_experts: Optional[int]
-    n_routed_experts: int
-    num_experts_per_tok: int
-    head_dim: int
-    qk_rope_head_dim: int
-    q_lora_rank: int
-    o_lora_rank: int
-    o_groups: int
-    sliding_window: int
-    hc_mult: int
-    hc_sinkhorn_iters: int
-    hc_eps: float
-    compress_ratios: Optional[List[int]]
-    compress_rope_theta: float
-    rope_theta: float
-    rope_scaling: Optional[Dict[str, Any]]
-    rms_norm_eps: float
-    swiglu_limit: float
-    attention_bias: bool
-    max_position_embeddings: int
+    model_type: str = "deepseek_v4"
+    vocab_size: int = 129280
+    hidden_size: int = 4096
+    intermediate_size: int = 0
+    moe_intermediate_size: int = 2048
+    num_hidden_layers: int = 43
+    num_attention_heads: int = 64
+    num_key_value_heads: int = 1
+    n_shared_experts: Optional[int] = 1
+    n_routed_experts: int = 256
+    num_experts_per_tok: int = 6
+    head_dim: int = 512
+    qk_rope_head_dim: int = 64
+    q_lora_rank: int = 1024
+    o_lora_rank: int = 1024
+    o_groups: int = 8
+    sliding_window: int = 128
+    hc_mult: int = 4
+    hc_sinkhorn_iters: int = 20
+    hc_eps: float = 1e-6
+    compress_ratios: Optional[List[int]] = None
+    compress_rope_theta: float = 160000.0
+    rope_theta: float = 10000.0
+    rope_scaling: Optional[Dict[str, Any]] = None
+    rms_norm_eps: float = 1e-6
+    swiglu_limit: float = 10.0
+    attention_bias: bool = False
+    max_position_embeddings: int = 1048576
+    index_n_heads: int = 64
+    index_head_dim: int = 128
+    index_topk: int = 512
+    num_hash_layers: int = 3
+    num_nextn_predict_layers: int = 1
+    scoring_func: str = "sqrtsoftplus"
+    topk_method: str = "noaux_tc"
+    norm_topk_prob: bool = True
+    routed_scaling_factor: float = 1.5
+
+# exo fixes (see the header of model.py)
+_SDPA_MAX_SCORES: int
+
+def _pow2_ceil(x: mx.array) -> mx.array: ...
+def _round_e2m1(v: mx.array) -> mx.array: ...
+def _fp8_kv_sim(kv: mx.array, rd: int) -> mx.array: ...
+def _fp4_indexer_sim(x: mx.array) -> mx.array: ...
 
 class DeepseekV4RoPE(nn.Module):
     dims: int
