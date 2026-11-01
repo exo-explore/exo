@@ -1,10 +1,13 @@
-"""MLX fast synch is used where it helps (RDMA instances), unless overridden."""
+"""MLX fast synch is used where it helps (RDMA instances), unless a model family turns it
+off or it is overridden."""
 
 import pytest
 
 from exo.shared.types.common import NodeId
 from exo.shared.types.worker.instances import Instance, InstanceId, MlxJacclInstance
 from exo.shared.types.worker.runners import RunnerId
+from exo.worker.engines.mlx.models import spec_registry
+from exo.worker.engines.mlx.models.spec import FamilySpec
 from exo.worker.runner.bootstrap import use_fast_synch
 from exo.worker.tests.constants import MODEL_A_ID
 from exo.worker.tests.unittests.conftest import (
@@ -56,3 +59,35 @@ def test_fast_synch_choice(
     instance: Instance, override: str | None, expected: bool
 ) -> None:
     assert use_fast_synch(instance, override) is expected
+
+
+@pytest.mark.parametrize(
+    ("family_fast_synch", "override", "expected"),
+    [
+        (False, None, False),
+        (True, None, True),
+        (None, None, True),
+        (False, "true", True),
+    ],
+)
+def test_a_family_can_turn_fast_synch_off(
+    monkeypatch: pytest.MonkeyPatch,
+    family_fast_synch: bool | None,
+    override: str | None,
+    expected: bool,
+) -> None:
+    family = (
+        None
+        if family_fast_synch is None
+        else FamilySpec(
+            name="family",
+            model_types=frozenset({"family"}),
+            fast_synch=family_fast_synch,
+        )
+    )
+
+    def lookup(_model_type: str | None) -> FamilySpec | None:
+        return family
+
+    monkeypatch.setattr(spec_registry, "family_spec_for_model_type", lookup)
+    assert use_fast_synch(rdma(), override) is expected

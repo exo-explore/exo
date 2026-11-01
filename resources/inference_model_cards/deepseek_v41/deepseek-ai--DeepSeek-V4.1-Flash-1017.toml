@@ -1,0 +1,27 @@
+model_id = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+n_layers = 40
+hidden_size = 5120
+num_key_value_heads = 1
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "deepseek"
+model_type = "deepseek_v41"
+quantization = "MXFP4-FP8"
+base_model = "DeepSeek V4.1 Flash 1017"
+capabilities = ["text", "thinking", "thinking_toggle"]
+reasoning_dialect = "tool_conditional"
+
+context_length = 1048576
+backends = ["MlxMetal"]
+# The checkpoint as published: FP4 experts and FP8 (32x32 blocks) dense weights load as MLX
+# mxfp4 / mxfp8 unchanged. Vision and the multi-token prediction layers are not loaded, and
+# the two engram tables (203 GB) stay in the downloaded files, read while running.
+[storage_size]
+in_bytes = 510296708312
+[memory_size]
+in_bytes = 300155315648
+
+# Source: https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017
+[sampling_defaults]
+temperature = 1.0
+top_p = 1.0
