@@ -1,0 +1,38 @@
+model_id = "mlx-community/Qwen3.8-Flash-Next-4bit"
+n_layers = 48
+hidden_size = 2560
+num_key_value_heads = 2
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "qwen"
+model_type = "qwen4_exp"
+quantization = "4bit"
+base_model = "Qwen3.8 Flash Next"
+capabilities = ["text", "thinking", "thinking_toggle"]
+reasoning_dialect = "post_last_user"
+context_length = 262144
+backends = ["MlxMetal"]
+# The vision tower is not loaded, and the hashed n-gram table (32 GB) stays in the
+# downloaded files: its rows are read while running.
+[storage_size]
+in_bytes = 111519423247
+[memory_size]
+in_bytes = 78620878080
+
+# Source: https://huggingface.co/Qwen/Qwen3.8-Flash-Next#best-practices
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+repetition_penalty = 1.0
+presence_penalty = 0.0
+
+# Source: https://huggingface.co/Qwen/Qwen3.8-Flash-Next#best-practices
+[sampling_defaults.non_thinking]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0
+repetition_penalty = 1.0
+presence_penalty = 1.5
