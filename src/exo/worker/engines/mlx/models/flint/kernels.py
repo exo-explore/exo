@@ -24,15 +24,31 @@ its own, so that matters at batch 1.
   every row, one token-expert pair each); for 2 to 12 rows it runs another kernel, so callers
   use this one only where MLX would run the same.
 
-``fused_kernels_available()`` is False off Metal (CUDA, CPU), where callers keep the
-original ops. The unit tests compare every kernel with those ops for bit equality.
+Bit equality depends on the GPU's code generation and arithmetic (M1 has no bfloat16
+units), not only on MLX: the kernels run on the GPU generations where they matched those ops
+bit for bit on real hardware, M1, M3 and M4 (``VERIFIED_GENERATIONS``). M2 and M5 GPUs,
+other GPUs, other MLX releases and CUDA or CPU keep the original ops
+(``fused_kernels_available()`` is False). The unit tests compare every kernel with those ops
+for bit equality.
 """
 
 import math
+import re
 from array import array
 from functools import cache
+from importlib.metadata import version
 
 import mlx.core as mx
+
+# The MLX release whose dispatch rules the stacked projections and the sliding-window
+# prefill rely on: 0.32.4, from PyPI or built from exo's pin of the same commit
+# (0.32.4.devN).
+CHECKED_MLX = re.compile(r"0\.32\.4(\.dev\d+)?(\+[0-9a-f]+)?")
+# Apple GPU generations 13-17 (M1-M5) in MLX's naming: g = base and Pro, s = Max, d = Ultra
+KNOWN_ARCHITECTURE = re.compile(r"applegpu_g(1[3-7])([gsd])")
+# GPU generations whose hardware ran every kernel here bit for bit like the ops it replaces:
+# M1 (13), M3 (15) and M4 (16).
+VERIFIED_GENERATIONS = frozenset({13, 15, 16})
 
 # MLX's rms_single_row kernel covers rows up to this size; longer rows use another loop.
 _MAX_ROW = 4096
@@ -339,9 +355,43 @@ def _metal_available() -> bool:
     return mx.metal.is_available()
 
 
+@cache
+def gpu_architecture() -> tuple[int, str] | None:
+    """(generation, size letter) of the Apple GPU, e.g. (15, "d") for an M3 Ultra, when
+    MLX's dispatch on it is known: MLX 0.32.4 and a GPU of generation 13-17. None otherwise
+    (no Metal, another MLX release, an unknown or future GPU such as a virtual machine's
+    paravirtual one)."""
+    if not _metal_available() or not CHECKED_MLX.fullmatch(version("mlx")):
+        return None
+    name = str(mx.device_info().get("architecture", ""))
+    match = KNOWN_ARCHITECTURE.fullmatch(name)
+    return None if match is None else (int(match[1]), match[2])
+
+
+def stacking_available() -> bool:
+    """Stacked projections and the sliding-window prefill follow MLX's dispatch rules: they
+    need the GPU as the default device and its dispatch known (``gpu_architecture``). On M5
+    the stacked projections rest on those rules alone (matrix-vector kernels up to the
+    stacks' row cap, no matrix-unit kernel for them), not on a run on M5 hardware."""
+    return gpu_architecture() is not None and mx.default_device().type == mx.gpu
+
+
+def expert_stacking_available() -> bool:
+    """The experts' stacked gate/up gather: as ``stacking_available``, on M1 to M4. On M5
+    MLX runs large sorted gathers on the GPU's matrix units (``gather_qmm_rhs_nax``), which
+    isn't checked here."""
+    architecture = gpu_architecture()
+    return stacking_available() and architecture is not None and architecture[0] <= 16
+
+
 def fused_kernels_available() -> bool:
-    """The kernels need Metal, and the default device to be the GPU."""
-    return _metal_available() and mx.default_device().type == mx.gpu
+    """The kernels need the GPU as the default device, on a generation in
+    ``VERIFIED_GENERATIONS`` (with MLX 0.32.4, see ``gpu_architecture``)."""
+    return (
+        _metal_available()
+        and mx.default_device().type == mx.gpu
+        and apple_gpu_generation() in VERIFIED_GENERATIONS
+    )
 
 
 @cache
@@ -539,14 +589,10 @@ def moe_combine(
     )[0]
 
 
-@cache
 def apple_gpu_generation() -> int | None:
     """The Apple GPU generation (13 = M1 ... 16 = M4, 17 = M5), None if unknown."""
-    if not _metal_available():
-        return None
-    architecture = str(mx.device_info().get("architecture", ""))
-    digits = "".join(c for c in architecture.removeprefix("applegpu_g") if c.isdigit())
-    return int(digits) if digits else None
+    architecture = gpu_architecture()
+    return None if architecture is None else architecture[0]
 
 
 def swiglu_down_fusable(
@@ -556,15 +602,12 @@ def swiglu_down_fusable(
     bits: int,
 ) -> bool:
     """Whether ``swiglu_down`` computes what MLX's down projection would: the 4-bit
-    matrix-vector kernel MLX runs for these shapes, on the GPUs it was checked on (M1 to
-    M4)."""
+    matrix-vector kernel MLX runs for these shapes, on the GPUs it was checked on
+    (``fused_kernels_available``)."""
     weight, scales, _ = down
-    generation = apple_gpu_generation()
     k = gate_up.shape[-1] // 2
     return (
         fused_kernels_available()
-        and generation is not None
-        and generation <= 16
         and bits == 4
         and group_size == 64
         and gate_up.dtype in (mx.bfloat16, mx.float16)

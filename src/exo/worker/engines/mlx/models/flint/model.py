@@ -15,7 +15,8 @@ scores 0.0452 and 0.9916 on the same positions.
 
 Speed: a decode step at batch 1 was ~2,000 small kernels, and their launches, more than
 the weights' bandwidth, set its time. On Metal the layer runs fused kernels
-(``kernels.py``) that compute exactly what the ops they replace compute, bit for bit:
+(``kernels.py``, on M1, M3 and M4 GPUs, where they were checked on the hardware) that
+compute exactly what the ops they replace compute, bit for bit:
 - every norm in one kernel instead of four (casts to and from float32 around the norm);
 - the residual add with the norm after it;
 - the query and key norms with the rotary embedding;
@@ -27,7 +28,11 @@ the weights' bandwidth, set its time. On Metal the layer runs fused kernels
   (every expert gather in decode; the shared expert and dense MLPs for one row).
 Prefill: a sliding-window layer (35 of 49) attends, per block of queries, only to the key
 tiles its 513-token window reaches, instead of to every key under a mask.
-Off Metal (CUDA, CPU) the layer runs mlx-lm's ops with float32 norms.
+The stacked projections and the sliding-window prefill depend only on MLX's kernel choice,
+so they also run on M2 GPUs without the kernels, and the stacked q/k/v and MLP gate/up on
+M5 GPUs (by MLX's dispatch rules; the experts' stacked gather is left out there). Off Metal
+(CUDA, CPU), on other GPUs and with other MLX releases the layer runs mlx-lm's ops with
+float32 norms.
 """
 
 from dataclasses import dataclass
@@ -144,8 +149,8 @@ class StackedQuantizedLinear(nn.Module):
 
 def _stack(module: nn.Module, names: list[str]) -> StackedQuantizedLinear | None:
     """Replace ``module``'s linears ``names`` by one stacked projection, if they allow it
-    and the fused kernels run (Metal)."""
-    if not kernels.fused_kernels_available():
+    and MLX's dispatch on this GPU is known (``kernels.stacking_available``)."""
+    if not kernels.stacking_available():
         return None
     parts = [cast(nn.Module, module[name]) for name in names]
     if not StackedQuantizedLinear.stackable(parts):
@@ -302,33 +307,56 @@ class FlintAttention(Attention):
         q, k, v = projection.split(x)
         return q, k, v, 0
 
+    def _norm_rope(
+        self, q: mx.array, k: mx.array, k_column: int, offset: int | mx.array
+    ) -> tuple[mx.array, mx.array]:
+        """mlx-lm's query and key norms and RoPE (``Attention.__call__``), for q and k as
+        ``_projections`` returns them."""
+        batch, length, _ = q.shape
+        head_dim = self.q_norm.weight.shape[0]
+        q = q[..., : self.n_heads * head_dim]
+        k = k[..., k_column : k_column + self.n_kv_heads * head_dim]
+        queries = self.q_norm(q.reshape(batch, length, self.n_heads, -1))
+        keys = self.k_norm(k.reshape(batch, length, self.n_kv_heads, -1))
+        queries, keys = queries.transpose(0, 2, 1, 3), keys.transpose(0, 2, 1, 3)
+        if self.rope is not None:
+            # (an array offset, one per row of a batch cache, works as in mlx-lm)
+            queries = self.rope(queries, offset=cast(int, offset))
+            keys = self.rope(keys, offset=cast(int, offset))
+        return queries, keys
+
     def __call__(
         self,
         x: mx.array,
         mask: mx.array | None = None,
         cache: Any | None = None,
     ) -> mx.array:
-        if not self._fusable(x):
+        fusable = self._fusable(x)
+        projections = self._projections(x)
+        if not fusable and projections is None:
             return super().__call__(x, mask, cache)
         batch, length, _ = x.shape
-        projections = self._projections(x)
         if projections is None:
             q, k, v, k_column = self.q_proj(x), self.k_proj(x), self.v_proj(x), 0
         else:
             q, k, v, k_column = projections
         offset = cast(int | mx.array, cache.offset) if cache is not None else 0
-        queries, keys = kernels.qk_norm_rope(
-            q,
-            k,
-            q_weight=self.q_norm.weight,
-            k_weight=self.k_norm.weight,
-            eps=self.q_norm.eps,
-            n_heads=self.n_heads,
-            n_kv_heads=self.n_kv_heads,
-            offset=offset,
-            rope_base=self._rope_base(),
-            k_column=k_column,
-        )
+        if not fusable:
+            # stacked projections without the kernels (see the module docstring)
+            queries, keys = self._norm_rope(q, k, k_column, offset)
+        else:
+            queries, keys = kernels.qk_norm_rope(
+                q,
+                k,
+                q_weight=self.q_norm.weight,
+                k_weight=self.k_norm.weight,
+                eps=self.q_norm.eps,
+                n_heads=self.n_heads,
+                n_kv_heads=self.n_kv_heads,
+                offset=offset,
+                rope_base=self._rope_base(),
+                k_column=k_column,
+            )
         values = v.reshape(batch, length, self.n_kv_heads, -1).transpose(0, 2, 1, 3)
         if cache is not None:
             keys, values = cast(
@@ -414,7 +442,11 @@ class FlintSparseMoeBlock(SparseMoeBlock):
         """The experts' gate and up projections stacked along their rows, at the first call:
         one gather instead of two."""
         glu = self.switch_mlp
-        if "gate_up_proj" not in glu and "gate_proj" in glu:
+        if (
+            "gate_up_proj" not in glu
+            and "gate_proj" in glu
+            and kernels.expert_stacking_available()
+        ):
             stacked = _stack(glu, ["gate_proj", "up_proj"])
             if stacked is not None:
                 glu.gate_up_proj = stacked
@@ -495,7 +527,7 @@ class FlintSparseMoeBlock(SparseMoeBlock):
         """The block's output, plus ``residual`` when given (the decoder layer passes its
         residual stream when the block is not sharded). ``x_float32`` is
         ``x.astype(float32)`` when the caller has it."""
-        if not kernels.fused_kernels_available():
+        if not kernels.stacking_available():
             out = super().__call__(x)
             return out if residual is None else residual + out
         group = self.sharding_group

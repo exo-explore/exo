@@ -1,8 +1,17 @@
-"""Flint's fused kernels compute exactly what the MLX ops they replace compute."""
+"""Flint's fused kernels compute exactly what the MLX ops they replace compute.
 
+What the model runs depends on the GPU (see kernels.py): the tests check the fused paths
+where this GPU takes them and mlx-lm's ops where it doesn't, and run the fused-path tests
+again with MLX dispatching as on M1, M2, M3 and M4 GPUs, on this GPU."""
+
+import json
+import os
+import subprocess
+import sys
 from collections.abc import Callable, Sequence
 from dataclasses import replace
-from typing import cast
+from importlib.metadata import version
+from typing import Any, cast
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -13,6 +22,7 @@ from mlx_lm.models.flint import Attention, ModelArgs
 from mlx_lm.models.flint import Model as MlxLmModel
 
 from exo.worker.engines.mlx.models.flint import kernels
+from exo.worker.engines.mlx.models.flint import model as flint_model
 from exo.worker.engines.mlx.models.flint.model import (
     FlintAttention,
     FlintSparseMoeBlock,
@@ -21,7 +31,7 @@ from exo.worker.engines.mlx.models.flint.model import (
 )
 
 needs_metal = pytest.mark.skipif(
-    not kernels.fused_kernels_available(), reason="the fused kernels need Metal"
+    not mx.metal.is_available(), reason="the fused kernels need Metal"
 )
 
 
@@ -268,9 +278,15 @@ def test_layers_use_the_fused_classes() -> None:
     assert all(isinstance(layer.mlp, FlintSparseMoeBlock) for layer in model.layers[1:])
 
 
-def test_off_metal_the_layer_runs_mlx_lms_ops(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Without the kernels (CUDA, CPU) every path falls back to the reference ops."""
+@pytest.mark.parametrize("stacks", [True, False])
+def test_off_metal_the_layer_runs_mlx_lms_ops(
+    monkeypatch: pytest.MonkeyPatch, stacks: bool
+) -> None:
+    """Without the kernels (M2 and M5 GPUs) the stacked projections run with mlx-lm's
+    other ops; without either (CUDA, CPU, other GPUs) every path is the reference ops."""
     monkeypatch.setattr(kernels, "fused_kernels_available", lambda: False)
+    if not stacks:
+        monkeypatch.setattr(kernels, "stacking_available", lambda: False)
     fused, reference = _quantized_pair()
     prompt = mx.random.randint(0, _ARGS.vocab_size, (1, 8), key=mx.random.key(5))
     got = _run(fused, prompt, 3, fused.make_cache)
@@ -301,6 +317,11 @@ def test_projections_are_stacked_at_the_first_call() -> None:
     prompt = mx.random.randint(0, _ARGS.vocab_size, (1, 3), key=mx.random.key(6))
     mx.eval(fused(prompt, cache=fused.make_cache()))
     names = {name for name, _ in tree_flatten(fused.parameters())}
+    if not kernels.stacking_available():
+        # MLX's dispatch on this GPU or MLX release isn't known: nothing is stacked
+        assert not any("gate_up_proj" in name or "qkv_proj" in name for name in names)
+        assert "model.layers.0.self_attn.q_proj.weight" in names
+        return
     for i in range(_ARGS.num_hidden_layers):
         attention = f"model.layers.{i}.self_attn"
         assert f"{attention}.qkv_proj.weight" in names
@@ -308,7 +329,8 @@ def test_projections_are_stacked_at_the_first_call() -> None:
         assert f"{attention}.o_proj.weight" in names
     assert "model.layers.0.mlp.gate_up_proj.weight" in names  # dense layer
     assert "model.layers.1.mlp.shared_expert.gate_up_proj.weight" in names
-    assert "model.layers.1.mlp.switch_mlp.gate_up_proj.weight" in names
+    experts = "model.layers.1.mlp.switch_mlp.gate_up_proj.weight"
+    assert (experts in names) == kernels.expert_stacking_available()
     assert "model.layers.1.mlp.switch_mlp.down_proj.weight" in names
 
 
@@ -336,8 +358,6 @@ def test_blocked_sliding_prefill_equals_attention_over_all_keys(
     when the length leaves a few rows over (293 = 9 x 32 + 5: MLX attends to 8 rows or
     fewer with another kernel, so the last block must take them). A 100-token window, so
     that each row sums enough keys for another summation order to show."""
-    from exo.worker.engines.mlx.models.flint import model as flint_model
-
     args = replace(_ARGS, sliding_window=100)
     fused, reference = _quantized_pair(args)
     prompt = mx.random.randint(
@@ -395,6 +415,10 @@ def test_sliding_attention_at_flints_shapes_equals_attention_over_all_keys(
     blocked = attention._sliding_attention(  # pyright: ignore[reportPrivateUsage]
         queries, keys, values, mask, RotatingKVCache(max_size=513)
     )
+    if not flint_model._tiled_attention_kernel():  # pyright: ignore[reportPrivateUsage]
+        # not a GPU whose attention kernel this was checked for: attention over all keys
+        assert blocked is None
+        return
     assert blocked is not None
     expected = mx.fast.scaled_dot_product_attention(
         queries,
@@ -498,7 +522,10 @@ def test_swiglu_down_one_row_equals_swiglu_then_quantized_matmul(
         bits=4,
     )
     down = (weight, scales, biases)
-    assert kernels.swiglu_down_fusable(gate_up, down, 64, 4)
+    # the model runs the kernel on the GPUs it was checked on; the kernel itself runs here
+    assert kernels.swiglu_down_fusable(gate_up, down, 64, 4) == (
+        kernels.fused_kernels_available()
+    )
     assert _identical(kernels.swiglu_down(gate_up, down), expected)
 
 
@@ -602,3 +629,118 @@ def test_stacked_qkv_projection_for_every_small_row_count(rows: int) -> None:
     x = _bf16((1, rows, 2048), 70 + rows)
     for part, out in zip(parts, stacked.split(x), strict=True):
         assert _identical(out, part(x))
+
+
+def test_fused_paths_per_gpu_generation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The kernels run on the GPU generations they were checked on (M1, M3, M4), the stacked
+    projections on every generation MLX 0.32.4's dispatch names (M1-M5), the experts'
+    stacked gather on M1-M4; nothing on other GPUs."""
+    for architecture, kernels_on in [
+        ((13, "g"), True),
+        ((13, "d"), True),
+        ((14, "g"), False),
+        ((15, "d"), True),
+        ((16, "s"), True),
+        ((17, "g"), False),
+        (None, False),
+    ]:
+        monkeypatch.setattr(kernels, "gpu_architecture", _gpu_is(architecture))
+        assert kernels.fused_kernels_available() == kernels_on, architecture
+        assert kernels.stacking_available() == (architecture is not None), architecture
+        experts = architecture is not None and architecture[0] <= 16
+        assert kernels.expert_stacking_available() == experts, architecture
+
+
+def _gpu_is(
+    architecture: tuple[int, str] | None,
+) -> Callable[[], tuple[int, str] | None]:
+    return lambda: architecture
+
+
+# Run with MLX_METAL_GPU_ARCH set, so that MLX dispatches as on that GPU generation: whether
+# MLX runs its matrix-vector kernel for each (input width, output width, rows). It does if
+# the first two rows' outputs are bitwise those of a two-row matmul (always that kernel);
+# float32 inputs make any other summation order show (and keep MLX off the M5 matrix units,
+# which an emulated M5 doesn't have).
+_DISPATCH_PROBE = """
+import json, sys
+import mlx.core as mx
+results = []
+for in_dims, out_dims, rows in json.loads(sys.argv[1]):
+    mx.random.seed(0)
+    w = mx.random.normal((out_dims, in_dims)) * 0.05
+    wq, scales, biases = mx.quantize(w, group_size=64, bits=4)
+    x = mx.random.normal((rows, in_dims))
+    def matmul(v):
+        return mx.quantized_matmul(v, wq, scales, biases, transpose=True)
+    results.append(mx.array_equal(matmul(x)[:2], matmul(x[:2])).item())
+print(json.dumps({"architecture": mx.device_info()["architecture"], "qmv": results}))
+"""
+
+
+@needs_metal
+@pytest.mark.parametrize(
+    "architecture",
+    [f"applegpu_g{generation}{size}" for generation in range(13, 18) for size in "gsd"],
+)
+def test_stacks_stay_within_mlxs_matrix_vector_kernel(architecture: str) -> None:
+    """A stacked projection runs as one matmul up to _STACKED_MAX_ROWS rows. Up to there
+    MLX runs its matrix-vector kernel on every GPU generation (MLX_METAL_GPU_ARCH), for
+    Flint's stacks (q/k/v of 5120 rows, the dense gate/up of 12288, the shared expert's of
+    2048, and their 2x tensor-parallel shards) and the widest a 2048-wide input can have."""
+    rows = flint_model._STACKED_MAX_ROWS  # pyright: ignore[reportPrivateUsage]
+    widths = [5120, 12288, 2048, 2560, 6144, 1024, 65536]
+    cases = [(2048, n, rows) for n in widths]
+    env = {**os.environ, "MLX_METAL_GPU_ARCH": architecture, "MLX_ENABLE_TF32": "0"}
+    run = subprocess.run(
+        [sys.executable, "-c", _DISPATCH_PROBE, json.dumps(cases)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    probe = cast(dict[str, Any], json.loads(run.stdout))
+    assert probe["architecture"] == architecture
+    assert cast(list[bool], probe["qmv"]) == [True] * len(cases), cases
+
+
+def test_mlx_release_is_one_the_rules_were_checked_on() -> None:
+    """The stacks, the sliding-window prefill and the kernels run only on the MLX release in
+    kernels.CHECKED_MLX. After an MLX upgrade, check its dispatch rules and the kernels
+    against it, then add the release."""
+    assert kernels.CHECKED_MLX.fullmatch(version("mlx")), version("mlx")
+
+
+@needs_metal
+@pytest.mark.parametrize(
+    "architecture",
+    # M1, M2 (the stacks and the sliding-window prefill without the kernels), M3, M4 Max
+    ["applegpu_g13g", "applegpu_g14g", "applegpu_g15g", "applegpu_g16s"],
+)
+def test_fused_paths_with_each_gpu_generations_dispatch(architecture: str) -> None:
+    """The fused-path tests again, on this GPU but with MLX dispatching as on another
+    generation (MLX_METAL_GPU_ARCH): the model takes that generation's paths, and the
+    kernels and stacks run on this hardware against MLX's ops as dispatched there."""
+    tests = (
+        "fused_model or fused_activation or swiglu or stacked or projections_are or "
+        "sliding_attention or blocked_sliding or off_metal"
+    )
+    run = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            __file__,
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "--import-mode=importlib",
+            "-k",
+            tests,
+        ],
+        env={**os.environ, "MLX_METAL_GPU_ARCH": architecture},
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == 0, run.stdout[-4000:]
+    assert "skipped" not in run.stdout.splitlines()[-1], run.stdout[-1000:]
