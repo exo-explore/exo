@@ -92,9 +92,10 @@ def _render(
     ("effort", "thinking", "expected_effort"),
     [
         (None, None, "Max"),
+        (None, True, "High"),  # enable_thinking=True alone counts as medium
         ("xhigh", True, "Max"),
         ("high", True, "High"),
-        ("medium", True, "High"),  # exo's default for enable_thinking=True
+        ("medium", True, "High"),
         ("low", True, "Low"),
         ("minimal", True, "Low"),
     ],
@@ -119,19 +120,20 @@ def test_glm53_thinking_off_closes_the_reasoning_block() -> None:
 
 
 @pytest.mark.parametrize(
-    ("effort", "expected_effort"),
+    ("effort", "thinking", "expected_effort"),
     [
-        (None, "Max"),
-        ("xhigh", "Max"),
-        ("high", "High"),
-        ("medium", "High"),
-        ("low", "High"),
+        (None, None, "Max"),
+        (None, True, "High"),  # enable_thinking=True alone counts as medium
+        ("xhigh", True, "Max"),
+        ("high", True, "High"),
+        ("medium", True, "High"),
+        ("low", True, "High"),
     ],
 )
 def test_glm52_effort_mapping(
-    effort: ReasoningEffort | None, expected_effort: str
+    effort: ReasoningEffort | None, thinking: bool | None, expected_effort: str
 ) -> None:
-    prompt = _render("mlx-community/GLM-5.2-4bit", GLM52_TEMPLATE, effort, True)
+    prompt = _render("mlx-community/GLM-5.2-4bit", GLM52_TEMPLATE, effort, thinking)
     assert prompt.startswith(f"<|system|>Reasoning Effort: {expected_effort}")
     assert prompt.endswith("<|assistant|><think>")
 

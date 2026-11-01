@@ -3,8 +3,9 @@
 The template writes "Thinking effort level: X" into a system message, mapping none,
 minimal, low, medium, high and max to 0, 0.1, 0.2, 0.7, 0.9 and 0.99 (0.9 when unset), and
 fails on any other name. exo's levels are the same up to high, then xhigh, which becomes
-max here. enable_thinking=false reaches the template as reasoning_effort="none", so no
-suffix is needed.
+max here. A request that only turns thinking on (enable_thinking=true without a level)
+gets medium (0.7). enable_thinking=false reaches the template as reasoning_effort="none",
+so no suffix is needed.
 """
 
 from exo.shared.types.text_generation import TextGenerationTaskParams
@@ -18,7 +19,7 @@ def applies_to(task_params: TextGenerationTaskParams) -> bool:
 def template_effort(task_params: TextGenerationTaskParams) -> str | None:
     match task_params.reasoning_effort:
         case None:
-            return None
+            return "medium" if task_params.enable_thinking is True else None
         case "xhigh":
             return "max"
         case "none" | "minimal" | "low" | "medium" | "high":

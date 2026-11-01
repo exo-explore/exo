@@ -13,8 +13,8 @@ def test_both_set_passes_through_unchanged() -> None:
     assert resolve_reasoning_params("low", False) == ("low", False)
 
 
-def test_enable_thinking_true_derives_medium() -> None:
-    assert resolve_reasoning_params(None, True) == ("medium", True)
+def test_enable_thinking_true_leaves_effort_to_the_model() -> None:
+    assert resolve_reasoning_params(None, True) == (None, True)
 
 
 def test_enable_thinking_false_derives_none() -> None:

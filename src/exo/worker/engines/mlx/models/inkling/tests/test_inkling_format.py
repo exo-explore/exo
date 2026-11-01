@@ -75,6 +75,14 @@ def test_every_reasoning_effort_reaches_the_template_as_a_level_it_knows(
     assert got is None or got in _TEMPLATE_EFFORTS
 
 
+@pytest.mark.parametrize(("thinking", "expected"), [(True, "medium"), (None, None)])
+def test_turning_thinking_on_without_a_level_gives_medium(
+    thinking: bool | None, expected: str | None
+) -> None:
+    task = _task(None).model_copy(update={"enable_thinking": thinking})
+    assert reasoning.template_effort(task) == expected
+
+
 def test_the_reasoning_hook_is_only_for_inkling() -> None:
     assert reasoning.applies_to(_task(None))
     other = _task(None).model_copy(update={"model": ModelId("someone/Other-Model")})
