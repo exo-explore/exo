@@ -1,0 +1,24 @@
+model_id = "poolside/Laguna-XS-2.1"
+n_layers = 40
+hidden_size = 2048
+num_key_value_heads = 8
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "laguna"
+model_type = "laguna"
+quantization = "bf16"
+base_model = "Laguna XS 2.1"
+capabilities = ["text", "thinking", "thinking_toggle", "code"]
+# The template sends reasoning_content back for every earlier assistant turn.
+reasoning_dialect = "post_last_user"
+context_length = 262144
+backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
+[storage_size]
+in_bytes = 66889022016
+
+# Source: https://huggingface.co/poolside/Laguna-XS-2.1/blob/main/generation_config.json
+[sampling_defaults]
+temperature = 1.0
+top_p = 1.0
+top_k = 20
+min_p = 0.0

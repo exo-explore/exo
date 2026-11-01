@@ -71,6 +71,10 @@ class Architecture:
     # checkpoint folder: for models that need more than their weights to run, e.g. a table
     # built from the tokenizer, or weights read from the checkpoint files at run time.
     post_load: Callable[[nn.Module, Path], None] | None = None
+    # PromptEncoder.exact_think_tags for a model rendered through its Jinja chat template:
+    # its template's think tags are exactly the model's format (e.g. a bare `</think>`
+    # that closes thinking when it is off), so exo leaves an unmatched `</think>` as it is.
+    exact_think_tags: bool = False
 
 
 @final
