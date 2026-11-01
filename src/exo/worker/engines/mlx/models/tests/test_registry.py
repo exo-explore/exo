@@ -27,6 +27,8 @@ from mlx_lm.models.glm4_moe_lite import Model as GLM4MoeLiteModel
 from mlx_lm.models.gpt_oss import GptOssMoeModel
 from mlx_lm.models.gpt_oss import Model as GptOssModel
 from mlx_lm.models.kimi_k25 import Model as KimiK25Model
+from mlx_lm.models.laguna import LagunaModel as LagunaInnerModel
+from mlx_lm.models.laguna import Model as LagunaModel
 from mlx_lm.models.llama import Model as LlamaModel
 from mlx_lm.models.minimax import Model as MiniMaxModel
 from mlx_lm.models.ministral3 import Model as Ministral3Model
@@ -64,6 +66,9 @@ from exo.worker.engines.mlx.models.flint.sharding import (
 from exo.worker.engines.mlx.models.gpt_oss.parser import parse_gpt_oss
 from exo.worker.engines.mlx.models.gpt_oss.sharding import (
     fix_pipeline_shard as gpt_oss_fixup,
+)
+from exo.worker.engines.mlx.models.laguna.sharding import (
+    fix_pipeline_shard as laguna_fixup,
 )
 from exo.worker.engines.mlx.models.nemotron_h.sharding import (
     fix_pipeline_shard as nemotron_h_fixup,
@@ -112,6 +117,9 @@ def _main_tensor_strategy(model_class: type) -> str | None:
     # Changed on purpose: Flint is new, and main had no strategy for it.
     elif issubclass(model_class, FlintModel):
         return "FlintShardingStrategy"
+    # Changed on purpose: Laguna is new, and main had no strategy for it.
+    elif issubclass(model_class, LagunaModel):
+        return "LagunaShardingStrategy"
     else:
         return None
 
@@ -174,6 +182,8 @@ _FIXUP_FOR_INNER_CLASS: list[tuple[type, PipelineShardFixup]] = [
     (NemotronHInnerModel, nemotron_h_fixup),
     # Changed on purpose: Flint is new.
     (FlintInnerModel, flint_fixup),
+    # Changed on purpose: Laguna is new.
+    (LagunaInnerModel, laguna_fixup),
 ]
 
 
@@ -215,6 +225,7 @@ _SUPPORTED_MODEL_TYPES = [
     "glm_moe_dsa",
     "gpt_oss",
     "kimi_k25",
+    "laguna",
     "llama",
     "minimax",
     "ministral3",

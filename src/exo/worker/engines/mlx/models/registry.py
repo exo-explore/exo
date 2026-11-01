@@ -31,6 +31,7 @@ from exo.worker.engines.mlx.models.gemma.family import FAMILY as GEMMA
 from exo.worker.engines.mlx.models.glm.family import FAMILY as GLM
 from exo.worker.engines.mlx.models.gpt_oss.family import FAMILY as GPT_OSS
 from exo.worker.engines.mlx.models.kimi.family import FAMILY as KIMI
+from exo.worker.engines.mlx.models.laguna.family import FAMILY as LAGUNA
 from exo.worker.engines.mlx.models.llama.family import FAMILY as LLAMA
 from exo.worker.engines.mlx.models.minimax.family import FAMILY as MINIMAX
 from exo.worker.engines.mlx.models.nemotron_h.family import FAMILY as NEMOTRON_H
@@ -54,6 +55,7 @@ FAMILIES: tuple[ModelFamily, ...] = (
     NEMOTRON_H,
     STEP,
     FLINT,
+    LAGUNA,
 )
 assert tuple(family.spec for family in FAMILIES) == FAMILY_SPECS
 
@@ -131,23 +133,40 @@ def prompt_encoder_for(
     return None
 
 
+# model_types whose architecture renders exact think tags through its Jinja chat template.
+_EXACT_THINK_TAG_MODEL_TYPES = frozenset(
+    architecture.model_type
+    for family in FAMILIES
+    for architecture in family.architectures
+    if architecture.exact_think_tags
+)
+
+
 def keeps_think_tags(
     task_params: TextGenerationTaskParams, model_type: str | None = None
 ) -> bool:
-    """Whether the request's prompt keeps its think tags exactly as rendered."""
+    """Whether the request's prompt keeps its think tags exactly as rendered: its prompt
+    encoder says so, or, for a model rendered through its Jinja chat template, its
+    architecture does."""
     encoder = prompt_encoder_for(task_params, model_type)
-    return encoder is not None and encoder.exact_think_tags
+    if encoder is not None and encoder.exact_think_tags:
+        return True
+    return model_type in _EXACT_THINK_TAG_MODEL_TYPES
 
 
 def model_type_keeps_think_tags(model_type: str | None) -> bool:
     """Whether prompts for a loaded model of this type keep their think tags exactly as
     rendered, for callers that have the prompt's token ids but not the request (the
-    disaggregated prefill server). Only encoders that list model_types can say."""
-    return model_type is not None and any(
-        encoder is not None
-        and model_type in encoder.model_types
-        and encoder.exact_think_tags
-        for encoder in (family.prompt_encoder for family in FAMILIES)
+    disaggregated prefill server). Encoders that list model_types can say, and so can
+    architectures rendered through their Jinja chat template."""
+    return model_type is not None and (
+        model_type in _EXACT_THINK_TAG_MODEL_TYPES
+        or any(
+            encoder is not None
+            and model_type in encoder.model_types
+            and encoder.exact_think_tags
+            for encoder in (family.prompt_encoder for family in FAMILIES)
+        )
     )
 
 

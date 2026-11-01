@@ -13,6 +13,7 @@ from exo.worker.engines.mlx.models.gemma.spec import SPEC as GEMMA
 from exo.worker.engines.mlx.models.glm.spec import SPEC as GLM
 from exo.worker.engines.mlx.models.gpt_oss.spec import SPEC as GPT_OSS
 from exo.worker.engines.mlx.models.kimi.spec import SPEC as KIMI
+from exo.worker.engines.mlx.models.laguna.spec import SPEC as LAGUNA
 from exo.worker.engines.mlx.models.llama.spec import SPEC as LLAMA
 from exo.worker.engines.mlx.models.minimax.spec import SPEC as MINIMAX
 from exo.worker.engines.mlx.models.nemotron_h.spec import SPEC as NEMOTRON_H
@@ -37,6 +38,7 @@ FAMILY_SPECS: tuple[FamilySpec, ...] = (
     NEMOTRON_H,
     STEP,
     FLINT,
+    LAGUNA,
 )
 
 
