@@ -62,9 +62,7 @@ from typing import Final, Literal, cast
 
 import mlx.core as mx
 import mlx.nn as nn
-from mlx_lm.models.activations import (
-    swiglu,  # pyright: ignore[reportUnknownVariableType]
-)
+from mlx_lm.models.activations import swiglu
 from mlx_lm.models.base import (
     create_attention_mask,
     create_ssm_mask,
@@ -1198,7 +1196,7 @@ class RoutedExperts(nn.Module):
         gate, up = _halves(
             cast(mx.array, self.gate_up_proj(x, idx, sorted_indices=do_sort))
         )
-        activated = cast(mx.array, swiglu(gate, up))
+        activated = swiglu(gate, up)
         x = cast(mx.array, self.down_proj(activated, idx, sorted_indices=do_sort))
         if inverse is not None:
             x = mx.unflatten(x[inverse], 0, indices.shape)

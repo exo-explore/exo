@@ -153,7 +153,7 @@ def test_the_bias_kernel_applies_a_mask_passed_in() -> None:
     mask = mx.random.uniform(shape=(2, 1, queries, queries)) > 0.4
     profiles = mx.random.normal((2, queries, attention.num_heads, attention.rel_extent))
     keys = mx.zeros((2, attention.num_kv_heads, queries, 8))
-    cache.update_and_fetch(keys, keys)  # pyright: ignore[reportUnknownMemberType]
+    cache.update_and_fetch(keys, keys)
     fused = inkling._RelativeBias(  # pyright: ignore[reportPrivateUsage]
         attention, profiles, mask, cache, queries, queries
     )
