@@ -69,6 +69,7 @@ def engine(mlx_gen: FakeMlxBatchGenerator) -> ExoBatchGenerator:
     gen._active_tasks = active  # pyright: ignore[reportAttributeAccessIssue, reportPrivateUsage]
     gen._finishing = set()  # pyright: ignore[reportPrivateUsage]
     gen._step_count = 0  # pyright: ignore[reportPrivateUsage]
+    gen._prefills_in_batch = {}  # pyright: ignore[reportPrivateUsage]
     return gen
 
 

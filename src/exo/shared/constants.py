@@ -109,6 +109,15 @@ EXO_TRACING_ENABLED = os.getenv("EXO_TRACING_ENABLED", "false").lower() == "true
 
 ENABLE_DISAGGREGATION = os.getenv("ENABLE_DISAGGREGATION", "false").lower() == "true"
 
+# Prefill a new local prompt inside the running batch, a chunk per step, so streams
+# already decoding on a single-node instance keep going. Off by default.
+EXO_NONBLOCKING_PREFILL = (
+    os.getenv("EXO_NONBLOCKING_PREFILL", "false").lower() == "true"
+)
+# Prompt tokens prefilled per step in that mode, shared by the prompts in the step.
+# The longest decode gap is about this many tokens' prefill time plus one decode step.
+EXO_PREFILL_STEP_TOKENS = int(os.getenv("EXO_PREFILL_STEP_TOKENS", "512"))
+
 EXO_MAX_CONCURRENT_REQUESTS = int(os.getenv("EXO_MAX_CONCURRENT_REQUESTS", "8"))
 
 EXO_MAX_INSTANCE_RETRIES = 5
