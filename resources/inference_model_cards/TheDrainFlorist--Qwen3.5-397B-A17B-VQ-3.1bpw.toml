@@ -1,0 +1,26 @@
+model_id = "TheDrainFlorist/Qwen3.5-397B-A17B-VQ-3.1bpw"
+n_layers = 60
+hidden_size = 4096
+num_key_value_heads = 2
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "qwen"
+quantization = "vq-3.1bpw"
+base_model = "Qwen3.5 397B A17B"
+capabilities = ["text", "thinking", "thinking_toggle", "vision"]
+reasoning_dialect = "post_last_user"
+context_length = 262144
+backends = ["MlxMetal"]
+[storage_size]
+in_bytes = 154277447647
+
+# Vector-quantized MoE experts. Loads on stock mlx-lm via the bundled
+# model.py (config.json model_file). Includes the vision tower.
+
+[sampling_defaults]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+repetition_penalty = 1.0
+presence_penalty = 0.0
