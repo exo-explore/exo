@@ -105,7 +105,7 @@ _CARDS = [card for _, card in _CARD_FILES]
 
 
 def test_there_are_builtin_cards() -> None:
-    assert len(_CARDS) == 126
+    assert len(_CARDS) == 127
 
 
 @pytest.mark.parametrize(
@@ -145,7 +145,9 @@ def test_cards_without_a_model_type_get_no_family_rules() -> None:
 
 
 # Architectures added since the whitelist moved into the family specs.
-_ADDED_TENSOR_ARCHITECTURES = frozenset({"DeepseekV41ForCausalLM"})
+_ADDED_TENSOR_ARCHITECTURES = frozenset(
+    {"DeepseekV41ForCausalLM", "Glm5NextForConditionalGeneration"}
+)
 
 
 def test_tensor_parallel_architectures_are_unchanged() -> None:

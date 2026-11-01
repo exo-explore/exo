@@ -9,6 +9,12 @@ from mlx_lm.models.glm4_moe_lite import Glm4MoeLiteDecoderLayer, Glm4MoeLiteMLP
 from mlx_lm.models.glm4_moe_lite import Model as GLM4MoeLiteModel
 
 from exo.shared.types.worker.runner_response import ModelLoadingResponse
+from exo.worker.engines.mlx.models.glm.glm5_next import (
+    Glm5NextAttention,
+    KimiDeltaAttention,
+)
+from exo.worker.engines.mlx.models.glm.glm5_next import Model as Glm5NextModel
+from exo.worker.engines.mlx.models.glm.glm5_next import MoE as Glm5NextMoE
 from exo.worker.engines.mlx.sharding.blocks import (
     CustomMlxLayer,
     LayerCallable,
@@ -153,3 +159,72 @@ def forward_shared_topk(
     first = layers[0]
     if isinstance(first, PipelineFirstLayer):
         first.shared_topk_size = topk_size
+
+
+class Glm5NextShardingStrategy(TensorParallelShardingStrategy):
+    """GLM-5.3-Flash: heads split across ranks in both attention kinds, experts and MLPs
+    split on their intermediate dimension. The hyper-connections, the routers and the DSA
+    indexers (and their caches) are replicated: every rank computes the same top-k."""
+
+    def shard_model(
+        self,
+        model: nn.Module,
+    ) -> Generator[ModelLoadingResponse, None, nn.Module]:
+        model = cast(Glm5NextModel, model)
+        rank = self.group.rank()
+        total = len(model.layers)
+        for i, layer in enumerate(model.layers):
+            mx.eval(layer.parameters())
+            attention = layer.self_attn
+            if isinstance(attention, KimiDeltaAttention):
+                heads = attention.num_heads // self.N
+                start, end = rank * heads, (rank + 1) * heads
+                width = attention.head_dim
+                attention.q_proj = self.all_to_sharded_linear(attention.q_proj)
+                attention.k_proj = self.all_to_sharded_linear(attention.k_proj)
+                attention.v_proj = self.all_to_sharded_linear(attention.v_proj)
+                for conv in (attention.q_conv, attention.k_conv, attention.v_conv):
+                    conv.weight = conv.weight[start * width : end * width]
+                attention.f_b_proj = self.all_to_sharded_linear(attention.f_b_proj)
+                attention.g_b_proj = self.all_to_sharded_linear(attention.g_b_proj)
+                attention.b_proj = self.all_to_sharded_linear(attention.b_proj)
+                attention.dt_bias = attention.dt_bias[start * width : end * width]
+                attention.A_log = attention.A_log[start:end]
+                attention.o_proj = self.sharded_to_all_linear(attention.o_proj)
+                attention.num_heads = heads
+            else:
+                assert isinstance(attention, Glm5NextAttention)
+                heads = attention.num_heads // self.N
+                start, end = rank * heads, (rank + 1) * heads
+
+                def shard_heads(
+                    w: mx.array, start: int = start, end: int = end
+                ) -> mx.array:
+                    return w[start:end]
+
+                attention.q_b_proj = self.all_to_sharded_linear(attention.q_b_proj)
+                attention.embed_q.apply(shard_heads)
+                attention.unembed_out.apply(shard_heads)
+                attention.o_proj = self.sharded_to_all_linear(attention.o_proj)
+                attention.num_heads = heads
+
+            mlp = layer.mlp
+            if isinstance(mlp, Glm5NextMoE):
+                self.all_to_sharded_linear_in_place(mlp.switch_mlp.gate_proj)
+                self.all_to_sharded_linear_in_place(mlp.switch_mlp.up_proj)
+                self.sharded_to_all_linear_in_place(mlp.switch_mlp.down_proj)
+                self.all_to_sharded_linear_in_place(mlp.shared_experts.gate_proj)
+                self.all_to_sharded_linear_in_place(mlp.shared_experts.up_proj)
+                self.sharded_to_all_linear_in_place(mlp.shared_experts.down_proj)
+                sharded = ShardedMoE(cast(LayerCallable, cast(object, mlp)))
+                sharded.sharding_group = self.group
+                layer.mlp = cast(Glm5NextMoE, cast(object, sharded))
+            else:
+                mlp.gate_proj = self.all_to_sharded_linear(mlp.gate_proj)
+                mlp.up_proj = self.all_to_sharded_linear(mlp.up_proj)
+                mlp.down_proj = self.sharded_to_all_linear(mlp.down_proj)
+
+            mx.eval(layer)
+            mx.clear_cache()
+            yield ModelLoadingResponse(layers_loaded=i, total=total)
+        return model
