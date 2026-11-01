@@ -37,20 +37,30 @@ index 3f233048..5e0f8eff 100644
    else()
      set(MLX_METAL_VERSION 0)
 diff --git a/cmake/extension.cmake b/cmake/extension.cmake
-index 2f244a14..4a4e11ac 100644
+index 1318eb65..f9c501d1 100644
 --- a/cmake/extension.cmake
 +++ b/cmake/extension.cmake
-@@ -37,7 +37,7 @@ macro(mlx_build_metallib)
+@@ -95,7 +95,8 @@ macro(mlx_build_metallib)
+     add_custom_command(
+       OUTPUT ${_MTLLIB_AIR_TARGET}
+       COMMAND
+-        xcrun -sdk macosx metal ${_MTLLIB_INCLUDE_OPTIONS}
++        metal -fmodules-cache-path=${CMAKE_BINARY_DIR}/metal-cache
++        ${_MTLLIB_INCLUDE_OPTIONS}
+         ${_MTLLIB_COMPILE_OPTIONS} ${MTLLIB_COMPILE_OPTIONS} -MMD -MF
+         ${_MTLLIB_DEPFILE} -MT ${_MTLLIB_AIR_TARGET} -c ${_MTLLIB_SOURCE} -o
+         ${_MTLLIB_AIR_TARGET}
+@@ -111,7 +112,7 @@ macro(mlx_build_metallib)
+   # Link the AIR files into a metallib
    add_custom_command(
      OUTPUT ${MTLLIB_BUILD_TARGET}
-     COMMAND
--      xcrun -sdk macosx metal
-+      metal -fmodules-cache-path=${CMAKE_BINARY_DIR}/metal-cache
-       "$<LIST:TRANSFORM,${MTLLIB_INCLUDE_DIRS},PREPEND,-I>"
-       ${MTLLIB_COMPILE_OPTIONS} ${MTLLIB_SOURCES} -o ${MTLLIB_BUILD_TARGET}
-     DEPENDS ${MTLLIB_DEPS} ${MTLLIB_SOURCES}
+-    COMMAND xcrun -sdk macosx metal ${_MTLLIB_LINK_OPTIONS}
++    COMMAND metal ${_MTLLIB_LINK_OPTIONS}
+             ${_MTLLIB_AIR_TARGETS} -o ${MTLLIB_BUILD_TARGET}
+     DEPENDS ${_MTLLIB_AIR_TARGETS}
+     COMMENT "Building ${MTLLIB_TITLE}.metallib"
 diff --git a/mlx/backend/metal/kernels/CMakeLists.txt b/mlx/backend/metal/kernels/CMakeLists.txt
-index 9b720334..0872c8c8 100644
+index 355c763a..ec375862 100644
 --- a/mlx/backend/metal/kernels/CMakeLists.txt
 +++ b/mlx/backend/metal/kernels/CMakeLists.txt
 @@ -30,7 +30,7 @@ function(build_kernel_base TARGET SRCFILE DEPS)
@@ -62,7 +72,7 @@ index 9b720334..0872c8c8 100644
              -I${PROJECT_SOURCE_DIR} -o ${TARGET}.air
      DEPENDS ${SRCFILE} ${DEPS} ${BASE_HEADERS}
      OUTPUT ${TARGET}.air
-@@ -202,7 +202,7 @@ endif()
+@@ -204,7 +204,7 @@ endif()
  
  add_custom_command(
    OUTPUT ${MLX_METAL_PATH}/mlx.metallib
