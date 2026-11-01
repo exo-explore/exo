@@ -105,7 +105,7 @@ _CARDS = [card for _, card in _CARD_FILES]
 
 
 def test_there_are_builtin_cards() -> None:
-    assert len(_CARDS) == 125
+    assert len(_CARDS) == 126
 
 
 @pytest.mark.parametrize(
