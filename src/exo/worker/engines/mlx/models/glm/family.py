@@ -10,6 +10,10 @@ from exo.worker.engines.mlx.models.family import (
     ModelClasses,
     ModelFamily,
 )
+from exo.worker.engines.mlx.models.glm.glm5_next import Model as Glm5NextModel
+from exo.worker.engines.mlx.models.glm.glm5_next import (
+    ModelArgs as Glm5NextModelArgs,
+)
 from exo.worker.engines.mlx.models.glm.glm_moe_dsa import Model as GlmMoeDsaModel
 from exo.worker.engines.mlx.models.glm.glm_moe_dsa import (
     ModelArgs as GlmMoeDsaModelArgs,
@@ -18,6 +22,7 @@ from exo.worker.engines.mlx.models.glm.reasoning import HOOK as REASONING_EFFORT
 from exo.worker.engines.mlx.models.glm.sharding import (
     GLM4MoeLiteShardingStrategy,
     Glm4MoeShardingStrategy,
+    Glm5NextShardingStrategy,
     forward_shared_topk,
 )
 from exo.worker.engines.mlx.models.glm.spec import SPEC
@@ -47,14 +52,28 @@ FAMILY = ModelFamily(
             pipeline_layer_count="num_layers",
             output_parser=DEEPSEEK_V32_OUTPUT_PARSER,
         ),
+        # GLM-5.3-Flash: KDA linear attention, NoPE MLA with a k-pool DSA indexer and
+        # hyper-connections (glm5_next.py in this folder). Each layer builds its attention
+        # mask from its own cache, so pipeline shards need no cache-index fixup.
+        Architecture(
+            model_type="glm5_next",
+            model_class=Glm5NextModel,
+            tensor_parallel=Glm5NextShardingStrategy,
+        ),
     ),
     # mlx-lm's GLM-5.x model with the reference DSA indexer key-norm epsilon
-    # (glm_moe_dsa.py in this folder).
+    # (glm_moe_dsa.py in this folder), and GLM-5.3-Flash, which mlx-lm doesn't have
+    # (glm5_next.py).
     model_classes=(
         ModelClasses(
             model_type="glm_moe_dsa",
             model_class=GlmMoeDsaModel,
             model_args_class=GlmMoeDsaModelArgs,
+        ),
+        ModelClasses(
+            model_type="glm5_next",
+            model_class=Glm5NextModel,
+            model_args_class=Glm5NextModelArgs,
         ),
     ),
     reasoning_effort_hook=REASONING_EFFORT_HOOK,
