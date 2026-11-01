@@ -164,3 +164,85 @@ def test_composed_call_works(layers_return_tuples: bool, base_port: int) -> None
             )
     finally:
         os.unlink(hostfile_path)
+
+
+def run_shared_topk_device(
+    rank: int,
+    world_size: int,
+    hostfile_path: str,
+    result_queue: Any,  # pyright: ignore[reportAny]
+    tokens: int,
+    topk_size: int,
+) -> None:
+    """Two ranks of a model whose layers share a DSA top-k selection (GLM-5.2+):
+    rank 0's last layer returns a selection, rank 1's first layer must receive it."""
+    import os
+
+    os.environ["MLX_HOSTFILE"] = hostfile_path
+    os.environ["MLX_RANK"] = str(rank)
+
+    class FakeCache:
+        offset = 0
+
+    received: list[object] = []
+
+    class SharedTopkLayer(mlx_nn.Module):
+        """Called as layer(x, mask, cache, prev_topk), returns (x, topk)."""
+
+        def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
+            prev_topk = cast(mx.array | None, args[2])
+            received.append(None if prev_topk is None else prev_topk.tolist())
+            topk = (
+                mx.full((1, 1, x.shape[1], topk_size), 7, mx.int32)
+                if x.shape[1] > topk_size
+                else None
+            )
+            return cast(mx.array, cast(object, (x * 2, topk)))
+
+    try:
+        group = mx.distributed.init(backend="ring", strict=True)
+        first = PipelineFirstLayer(SharedTopkLayer(), r=rank, group=group)
+        composed = PipelineLastLayer(first, r=rank, s=world_size, group=group)
+        first.shared_topk_size = topk_size
+        composed.shared_topk_size = topk_size
+        out = cast(
+            tuple[mx.array, object],
+            cast(object, composed(mx.ones((1, tokens, 4)), None, FakeCache(), None)),
+        )
+        mx.eval(out[0])
+        result_queue.put((rank, True, received))  # pyright: ignore[reportAny]
+    except Exception as e:
+        result_queue.put((rank, False, str(e)))  # pyright: ignore[reportAny]
+
+
+@pytest.mark.parametrize(("tokens", "base_port"), [(3, 29520), (2, 29530)])
+def test_shared_topk_is_forwarded_to_the_next_rank(tokens: int, base_port: int) -> None:
+    ctx = mp.get_context("spawn")
+    world_size, topk_size = 2, 2
+    hosts = [f"127.0.0.1:{base_port + i}" for i in range(world_size)]
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(hosts, f)
+        hostfile_path = f.name
+    try:
+        result_queue: Any = ctx.Queue()
+        processes: list[Any] = []
+        for rank in range(world_size):
+            p = ctx.Process(
+                target=run_shared_topk_device,
+                args=(rank, world_size, hostfile_path, result_queue, tokens, topk_size),
+            )
+            p.start()
+            processes.append(p)
+        for p in processes:  # pyright: ignore[reportAny]
+            p.join(timeout=30)  # pyright: ignore[reportAny]
+        results: dict[int, tuple[bool, object]] = {}
+        while not result_queue.empty():  # pyright: ignore[reportAny]
+            rank, success, value = cast(tuple[int, bool, object], result_queue.get())  # pyright: ignore[reportAny]
+            results[rank] = (success, value)
+        assert len(results) == world_size, results
+        assert all(success for success, _ in results.values()), results
+        assert results[0][1] == [None]
+        expected = [[[[7] * topk_size] * tokens]] if tokens > topk_size else None
+        assert results[1][1] == [expected]
+    finally:
+        os.unlink(hostfile_path)
