@@ -16,7 +16,7 @@ def sum_gradients(
     ...
 def shard_inplace(
     module: Module,
-    sharding: str,
+    sharding: str | Callable[[str, mx.array], int | tuple[int, int | list[int]] | None],
     *,
     segments: Union[int, list[int]] = ...,
     group: Optional[mx.distributed.Group] = ...,
