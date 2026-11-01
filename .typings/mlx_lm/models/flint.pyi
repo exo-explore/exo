@@ -67,6 +67,7 @@ class SparseMoeBlock(nn.Module):
     switch_mlp: SwitchGLU
     shared_expert: MLP
     sharding_group: Optional[mx.distributed.Group]
+    _zero_bias: mx.array
 
     def __init__(self, args: ModelArgs) -> None: ...
     def __call__(self, x: mx.array) -> mx.array: ...
