@@ -105,7 +105,7 @@ _CARDS = [card for _, card in _CARD_FILES]
 
 
 def test_there_are_builtin_cards() -> None:
-    assert len(_CARDS) == 127
+    assert len(_CARDS) == 128
 
 
 @pytest.mark.parametrize(
@@ -146,7 +146,11 @@ def test_cards_without_a_model_type_get_no_family_rules() -> None:
 
 # Architectures added since the whitelist moved into the family specs.
 _ADDED_TENSOR_ARCHITECTURES = frozenset(
-    {"DeepseekV41ForCausalLM", "Glm5NextForConditionalGeneration"}
+    {
+        "DeepseekV41ForCausalLM",
+        "Glm5NextForConditionalGeneration",
+        "Qwen4ExpForConditionalGeneration",
+    }
 )
 
 
@@ -200,9 +204,17 @@ _EOS_MODEL_IDS = (
 )
 
 
+def _expected_eos_token_ids(model_id: str) -> list[int] | None:
+    """main's rules, plus Qwen3.8 (added since; same ids as Qwen3.5 / Qwen3.6)."""
+    main = _main_eos_token_ids(model_id)
+    if main is None and any(f in model_id.lower() for f in ("qwen3.8", "qwen-3.8")):
+        return [248046, 248044]
+    return main
+
+
 @pytest.mark.parametrize("model_id", _EOS_MODEL_IDS)
 def test_eos_token_ids_are_unchanged(model_id: str) -> None:
-    assert eos_token_ids_for_model_id(model_id) == _main_eos_token_ids(model_id)
+    assert eos_token_ids_for_model_id(model_id) == _expected_eos_token_ids(model_id)
 
 
 def test_mlx_vlm_aliases_are_unchanged() -> None:
