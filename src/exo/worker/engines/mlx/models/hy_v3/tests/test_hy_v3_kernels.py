@@ -1,10 +1,19 @@
 # pyright: reportAny=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 """Hy3's fused kernels and stacked projections against the MLX ops they replace, for bit
 equality, at Hy3's shapes and at MLX's kernel-choice thresholds; and the whole fused model
-against #2520's code path (the fallback), logits bit for bit."""
+against #2520's code path (the fallback), logits bit for bit.
+
+What runs depends on the GPU (see kernels.py and fused.py): the tests check the fused paths
+where this GPU takes them and the original ops where it doesn't, and run the fused-path
+tests again with MLX dispatching as on M1, M2, M3 and M4 GPUs, on this GPU."""
 
 import copy
+import json
+import os
+import subprocess
+import sys
 from collections.abc import Callable, Iterator
+from importlib.metadata import version
 from typing import Any
 
 import mlx.core as mx
@@ -14,10 +23,11 @@ from mlx_lm.models.activations import swiglu
 from mlx_lm.models.cache import KVCache
 from mlx_lm.models.switch_layers import SwitchGLU
 
-from exo.worker.engines.mlx.models.hy_v3 import kernels
+from exo.worker.engines.mlx.models.hy_v3 import fused, kernels
 from exo.worker.engines.mlx.models.hy_v3.fused import (
     ExpertStack,
     StackedProjection,
+    arrays,
     qmv_batch_limit,
 )
 from exo.worker.engines.mlx.models.hy_v3.model import (
@@ -29,7 +39,7 @@ from exo.worker.engines.mlx.models.hy_v3.model import (
 )
 
 pytestmark = pytest.mark.skipif(
-    not kernels.fused_kernels_available(), reason="the fused kernels need Metal"
+    not mx.metal.is_available(), reason="the fused kernels need Metal"
 )
 
 _EPS = 1e-5
@@ -147,8 +157,8 @@ def test_moe_combine(tokens: int, float32_combine: bool) -> None:
         reference = (routed + shared.astype(mx.float32)).astype(mx.bfloat16)
     else:
         reference = routed.astype(mx.bfloat16) + shared
-    fused = kernels.moe_combine(y, weights, shared, float32_combine=float32_combine)
-    assert _same(fused, reference)
+    got = kernels.moe_combine(y, weights, shared, float32_combine=float32_combine)
+    assert _same(got, reference)
     fused_residual = kernels.moe_combine(
         y, weights, shared, residual, float32_combine=float32_combine
     )
@@ -170,21 +180,24 @@ def test_swiglu_down(tokens: int) -> None:
     down = _quantized((experts, hidden, intermediate))
     indices = mx.random.randint(0, experts, (tokens, 8)).astype(mx.uint32)
     gate_up = mx.random.normal((tokens, 8, 1, 2 * intermediate)).astype(mx.bfloat16)
-    assert kernels.swiglu_down_fusable(gate_up, down, 64, 4)
+    # the model runs the kernel on the GPUs it was checked on; the kernel itself runs here
+    assert kernels.swiglu_down_fusable(gate_up, down, 64, 4) == (
+        kernels.fused_kernels_available()
+    )
     activation = swiglu(gate_up[..., :intermediate], gate_up[..., intermediate:])
     reference = mx.gather_qmm(
         activation, *down, rhs_indices=indices, transpose=True, group_size=64, bits=4
     )
-    fused = kernels.swiglu_down(gate_up, down, indices)
-    assert _same(fused.reshape(*reference.shape), reference)
+    got = kernels.swiglu_down(gate_up, down, indices)
+    assert _same(got.reshape(*reference.shape), reference)
     # a prefix of a larger stack of experts
     prefix = tuple(a[: experts - 2] for a in down)
     small = indices % (experts - 2)
     reference = mx.gather_qmm(
         activation, *prefix, rhs_indices=small, transpose=True, group_size=64, bits=4
     )
-    fused = kernels.swiglu_down(gate_up, (prefix[0], prefix[1], prefix[2]), small)
-    assert _same(fused.reshape(*reference.shape), reference)
+    got = kernels.swiglu_down(gate_up, (prefix[0], prefix[1], prefix[2]), small)
+    assert _same(got.reshape(*reference.shape), reference)
     # dense, one row
     row = gate_up[:1, 0]
     reference = mx.quantized_matmul(
@@ -194,8 +207,23 @@ def test_swiglu_down(tokens: int) -> None:
         group_size=64,
         bits=4,
     )
-    fused = kernels.swiglu_down(row, (down[0][0], down[1][0], down[2][0]))
-    assert _same(fused.reshape(*reference.shape), reference)
+    got = kernels.swiglu_down(row, (down[0][0], down[1][0], down[2][0]))
+    assert _same(got.reshape(*reference.shape), reference)
+
+
+def _float32_matmul(
+    x: mx.array, weight: tuple[mx.array, mx.array, mx.array]
+) -> mx.array:
+    w, scales, biases = weight
+    return mx.quantized_matmul(
+        x.astype(mx.float32),
+        w,
+        scales.astype(mx.float32),
+        biases.astype(mx.float32),
+        transpose=True,
+        group_size=64,
+        bits=4,
+    )
 
 
 def _linears(in_dims: int, outs: list[int]) -> list[nn.Module]:
@@ -215,32 +243,56 @@ def _caller(module: nn.Module) -> "Callable[[mx.array], mx.array]":
     return call
 
 
-def test_stacked_projection_matches_its_parts_at_every_row_count() -> None:
-    """Stacked q/k/v-like and gate/up-like projections, one matmul up to MLX's batch
-    limit and per-part matmuls above it: always the parts' own bits."""
-    for outs in ([8192, 1024, 1024], [1536, 1536]):
-        parts = _linears(4096, outs)
-        originals = [copy.copy(p) for p in parts]
-        references_fn = [_caller(p) for p in originals]
-        stack = StackedProjection.build(parts)
-        assert stack is not None
-        limit = min(qmv_batch_limit(4096, n) or 0 for n in [*outs, sum(outs)])
-        assert stack.max_rows == limit - 1
-        for rows in range(1, limit + 3):
-            x = mx.random.normal((1, rows, 4096)).astype(mx.bfloat16)
-            references = [f(x) for f in references_fn]
-            # the parts now point into the stack: still their own results
-            for part, reference in zip(parts, references, strict=True):
-                assert _same(part(x), reference)
-            stacked = stack(x)
-            if rows > stack.max_rows:
-                assert stacked is None
-                continue
-            assert stacked is not None
-            for start, stop, reference in zip(
-                stack.bounds[:-1], stack.bounds[1:], references, strict=True
-            ):
-                assert _same(stacked[..., start:stop], reference)
+@pytest.mark.parametrize(
+    "outs",
+    [
+        [8192, 1024, 1024],  # q/k/v-like
+        [1536, 1536],  # the shared expert's gate/up
+        [768, 768],  # the same under 2x tensor parallelism
+        [13312, 13312],  # the dense MLP's gate/up
+        [6656, 6656],  # the same under 2x tensor parallelism
+    ],
+)
+def test_stacked_projection_matches_its_parts_at_every_row_count(
+    outs: list[int],
+) -> None:
+    """Stacked projections at Hy3's shapes (alone and as 2x tensor-parallel shards), one
+    matmul up to MLX's batch limit on this GPU and per-part matmuls above it: always the
+    parts' own bits, also in float32, where any other summation order shows."""
+    parts = _linears(4096, outs)
+    originals = [copy.copy(p) for p in parts]
+    references_fn = [_caller(p) for p in originals]
+    stack = StackedProjection.build(parts)
+    if fused.gpu_architecture() is None:
+        # MLX's dispatch on this GPU or MLX release isn't known: nothing is stacked
+        assert stack is None
+        return
+    assert stack is not None
+    limit = min(qmv_batch_limit(4096, n) or 0 for n in [*outs, sum(outs)])
+    assert stack.max_rows == limit - 1
+    for rows in range(1, stack.max_rows + 1):
+        x = mx.random.normal((1, rows, 4096))
+        out = _float32_matmul(x, (stack.weight, stack.scales, stack.biases))
+        for start, stop, part in zip(
+            stack.bounds[:-1], stack.bounds[1:], originals, strict=True
+        ):
+            want = _float32_matmul(x, arrays(part))
+            assert _same(out[..., start:stop], want), (outs, rows)
+    for rows in range(1, limit + 3):
+        x = mx.random.normal((1, rows, 4096)).astype(mx.bfloat16)
+        references = [f(x) for f in references_fn]
+        # the parts now point into the stack: still their own results
+        for part, reference in zip(parts, references, strict=True):
+            assert _same(part(x), reference)
+        stacked = stack(x)
+        if rows > stack.max_rows:
+            assert stacked is None
+            continue
+        assert stacked is not None
+        for start, stop, reference in zip(
+            stack.bounds[:-1], stack.bounds[1:], references, strict=True
+        ):
+            assert _same(stacked[..., start:stop], reference)
 
 
 def _switch(experts: int, hidden: int, intermediate: int) -> SwitchGLU:
@@ -289,8 +341,8 @@ def test_experts_with_stacked_gate_up_match_switch_glu(tokens: int) -> None:
         ..., :8
     ].astype(mx.uint32)
     reference = reference_glu(x, indices)
-    fused = moe._experts(x, indices, stack)  # pyright: ignore[reportPrivateUsage]
-    assert _same(fused, reference)
+    got = moe._experts(x, indices, stack)  # pyright: ignore[reportPrivateUsage]
+    assert _same(got, reference)
 
 
 def test_expert_stack_points_the_modules_into_it() -> None:
@@ -361,7 +413,7 @@ def test_fused_model_matches_the_reference_path(
 ) -> None:
     """Prefill at several lengths, then decode steps of 1 and 2 tokens, batch 1 and 3:
     the fused path's logits are the reference path's, bit for bit."""
-    fused, reference = _models(quantized)
+    fused_model, reference = _models(quantized)
     tokens = mx.random.randint(0, 256, (3, 200))
 
     def run(model: Model, batch: int) -> list[mx.array]:
@@ -374,17 +426,137 @@ def test_fused_model_matches_the_reference_path(
         return outputs
 
     for batch in (1, 3):
-        fused_out = run(fused, batch)
+        fused_out = run(fused_model, batch)
         with monkeypatch.context() as patch:
             patch.setattr(kernels, "fused_kernels_available", lambda: False)
+            patch.setattr(fused, "stacking_available", lambda: False)
             reference_out = run(reference, batch)
         for a, b in zip(fused_out, reference_out, strict=True):
             assert _same(a, b)
     if quantized:
-        # the fused path did run: the experts' gate and up, and the dense MLP's, stacked
-        moe = fused.layers[1].mlp
+        # the experts' gate and up, and the dense MLP's, were stacked where this GPU allows
+        moe = fused_model.layers[1].mlp
         assert isinstance(moe, MoE)
-        assert moe.__dict__.get("_expert_stack") is not None
-        dense = fused.layers[0].mlp
+        experts = fused.expert_stacking_available()
+        assert (moe.__dict__.get("_expert_stack") is not None) == experts
+        dense = fused_model.layers[0].mlp
         assert isinstance(dense, MLP)
-        assert dense.__dict__.get("_gate_up_stack") is not None
+        stacked = fused.stacking_available()
+        assert (dense.__dict__.get("_gate_up_stack") is not None) == stacked
+
+
+def test_fused_paths_per_gpu_generation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The kernels run on the GPU generations they were checked on (M1, M3, M4); the dense
+    stacks on every generation MLX 0.32.4's dispatch names (M1-M5), the expert stacks on
+    M1-M4; nothing on other GPUs."""
+    for architecture, kernels_on in [
+        ((13, "g"), True),
+        ((13, "d"), True),
+        ((14, "g"), False),
+        ((15, "d"), True),
+        ((16, "s"), True),
+        ((17, "g"), False),
+        (None, False),
+    ]:
+        monkeypatch.setattr(fused, "gpu_architecture", _gpu_is(architecture))
+        assert kernels.fused_kernels_available() == kernels_on, architecture
+        assert fused.stacking_available() == (architecture is not None), architecture
+        experts = architecture is not None and architecture[0] <= 16
+        assert fused.expert_stacking_available() == experts, architecture
+
+
+def _gpu_is(
+    architecture: tuple[int, str] | None,
+) -> Callable[[], tuple[int, str] | None]:
+    return lambda: architecture
+
+
+# Run with MLX_METAL_GPU_ARCH set, so that MLX dispatches as on that GPU generation: for
+# each (input width, output width, rows), whether MLX ran the matrix-vector kernel. It did if
+# the first two rows' outputs are bitwise those of a two-row matmul (always a matrix-vector
+# kernel); float32 inputs make any other summation order show (and keep MLX off the M5
+# matrix units, which an emulated M5 doesn't have).
+_DISPATCH_PROBE = """
+import json, sys
+import mlx.core as mx
+results = []
+for in_dims, out_dims, rows in json.loads(sys.argv[1]):
+    mx.random.seed(0)
+    w = mx.random.normal((out_dims, in_dims)) * 0.05
+    wq, scales, biases = mx.quantize(w, group_size=64, bits=4)
+    x = mx.random.normal((rows, in_dims))
+    def matmul(v):
+        return mx.quantized_matmul(v, wq, scales, biases, transpose=True)
+    results.append(mx.array_equal(matmul(x)[:2], matmul(x[:2])).item())
+print(json.dumps({"architecture": mx.device_info()["architecture"], "qmv": results}))
+"""
+
+
+@pytest.mark.parametrize(
+    "architecture",
+    [f"applegpu_g{generation}{size}" for generation in range(13, 18) for size in "gsd"],
+)
+def test_qmv_batch_limits_are_mlx_dispatch(
+    architecture: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """qmv_batch_limit against the running MLX, dispatching as on each GPU generation (MLX
+    reads MLX_METAL_GPU_ARCH): one row below the limit MLX runs the matrix-vector kernel, at
+    the limit it doesn't. An MLX release that moves the limits fails here."""
+    match = fused.KNOWN_ARCHITECTURE.fullmatch(architecture)
+    assert match is not None
+    monkeypatch.setattr(fused, "gpu_architecture", _gpu_is((int(match[1]), match[2])))
+    cases: list[tuple[int, int, int]] = []
+    for in_dims, out_dims in [(1024, 2048), (4096, 3072), (4096, 13312), (2048, 4096)]:
+        limit = qmv_batch_limit(in_dims, out_dims)
+        assert limit is not None
+        cases += [(in_dims, out_dims, limit - 1), (in_dims, out_dims, limit)]
+    env = {**os.environ, "MLX_METAL_GPU_ARCH": architecture, "MLX_ENABLE_TF32": "0"}
+    run = subprocess.run(
+        [sys.executable, "-c", _DISPATCH_PROBE, json.dumps(cases)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    probe = json.loads(run.stdout)
+    assert probe["architecture"] == architecture
+    expected = [rows < (qmv_batch_limit(k, n) or 0) for k, n, rows in cases]
+    assert probe["qmv"] == expected, list(zip(cases, probe["qmv"], strict=True))
+
+
+def test_mlx_release_is_one_the_rules_were_checked_on() -> None:
+    """The stacks and kernels run only on the MLX release in fused.CHECKED_MLX. After an MLX
+    upgrade, check its dispatch rules (quantized.cpp's get_qmv_batch_limit, the qmv and
+    gather kernels) and the kernels against it, then add the release."""
+    assert fused.CHECKED_MLX.fullmatch(version("mlx")), version("mlx")
+
+
+@pytest.mark.parametrize(
+    "architecture",
+    # M1, M2 (stacks without the kernels), M3, M4 Max
+    ["applegpu_g13g", "applegpu_g14g", "applegpu_g15g", "applegpu_g16s"],
+)
+def test_fused_paths_with_each_gpu_generations_dispatch(architecture: str) -> None:
+    """The fused-path tests again, on this GPU but with MLX dispatching as on another
+    generation (MLX_METAL_GPU_ARCH): the model takes that generation's paths, and the
+    kernels and stacks run on this hardware against MLX's ops as dispatched there."""
+    tests = "swiglu or stacked or experts_with or fused_model or add_rms or moe_combine"
+    run = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            __file__,
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "--import-mode=importlib",
+            "-k",
+            tests,
+        ],
+        env={**os.environ, "MLX_METAL_GPU_ARCH": architecture},
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == 0, run.stdout[-4000:]
+    assert "skipped" not in run.stdout.splitlines()[-1], run.stdout[-1000:]

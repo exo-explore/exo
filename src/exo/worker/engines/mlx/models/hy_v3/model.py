@@ -37,9 +37,11 @@ Local changes against the reference
 - Only the ``default`` rotary embedding is implemented: that is what the checkpoints use.
 - On Metal, the layers run a fused path (``kernels.py``, ``fused.py``) that computes the same
   values as the code above, bit for bit, in fewer kernels: the residual add with the next
-  RMSNorm, the query and key norms with RoPE, the router's selection, the MoE's combination,
-  the experts' gate and up projections in one gather and SwiGLU inside the 4-bit down
-  projection. Elsewhere the code above runs as written.
+  RMSNorm, the query and key norms with RoPE, the router's selection, the MoE's combination
+  and SwiGLU inside the 4-bit down projection (Metal kernels, on M1, M3 and M4 GPUs), and
+  the MLPs' gate and up projections stacked into one matmul (on M1 to M5 GPUs) and the
+  experts' into one gather (M1 to M4), where MLX's kernel choice keeps every output's sum.
+  Elsewhere the code above runs as written.
 """
 
 import math
@@ -59,7 +61,7 @@ from mlx_lm.models.base import (
 from mlx_lm.models.cache import KVCache
 from mlx_lm.models.switch_layers import SwitchGLU
 
-from exo.worker.engines.mlx.models.hy_v3 import kernels
+from exo.worker.engines.mlx.models.hy_v3 import fused, kernels
 from exo.worker.engines.mlx.models.hy_v3.fused import (
     ExpertStack,
     StackedProjection,
@@ -253,7 +255,7 @@ class MLP(nn.Module):
         self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=bias)
 
     def __call__(self, x: mx.array) -> mx.array:
-        stack = self._gate_up() if kernels.fused_kernels_available() else None
+        stack = self._gate_up() if fused.stacking_available() else None
         gate_up = stack(x) if stack is not None else None
         if stack is None or gate_up is None:
             return self.down_proj(swiglu(self.gate_proj(x), self.up_proj(x)))
@@ -484,10 +486,15 @@ class MoE(nn.Module):
     ) -> tuple[mx.array, mx.array, mx.array] | None:
         """The experts' outputs, their weights and the shared expert's output, through the
         fused path; None where it doesn't apply."""
-        stack = self._stack() if kernels.fused_kernels_available() else None
+        stack = self._stack() if fused.expert_stacking_available() else None
         if stack is None:
             return None
-        routing = self.router.route_fused(x, x_float32)
+        # (route_fused keeps float32 router weights: only where its kernel runs)
+        routing = (
+            self.router.route_fused(x, x_float32)
+            if kernels.fused_kernels_available()
+            else None
+        )
         indices, weights = routing if routing is not None else self.router.route(x)
         return self._experts(x, indices, stack), weights, self.shared_mlp(x)
 
@@ -654,11 +661,11 @@ class HYV3Model(nn.Module):
         )
         mask = create_attention_mask(h, layer_caches[0])
         # Each layer hands the next one on this rank its input norm (see DecoderLayer).
-        fused = kernels.fused_kernels_available()
+        linked = kernels.fused_kernels_available()
         inner = [_decoder_layer(layer) for layer in self.layers]
         for layer, following in zip(inner, [*inner[1:], None], strict=True):
             if layer is not None:
-                layer.link(following if fused else None)
+                layer.link(following if linked else None)
         for layer, layer_cache in zip(self.layers, layer_caches, strict=True):
             h = layer(h, mask, layer_cache)
         return self.norm(h)

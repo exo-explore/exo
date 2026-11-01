@@ -14,35 +14,60 @@ call only where every output row keeps the reduction it has alone:
   matrix-vector gather or, sorted, by the gather that tiles N without splitting K; the
   choice between them depends on the number of pairs and of experts, which a stack of
   gate and up (along N) leaves unchanged.
+
+Both rules are MLX 0.32.4's, on the GPU generations its dispatch names; with another MLX
+release or on another GPU (e.g. a virtual machine's paravirtual one) nothing is stacked and
+every module runs its own forward. Dense stacks run on M1 to M5: below the batch limit MLX
+runs the matrix-vector kernels on every generation (on M5 this rests on MLX's dispatch
+rules, not on a run on M5 hardware). Expert stacks run on M1 to M4: on M5 MLX runs large
+sorted gathers on the GPU's matrix units (``gather_qmm_rhs_nax``), which isn't checked here.
 """
 
+import re
 from dataclasses import dataclass
 from functools import cache
+from importlib.metadata import version
 from typing import cast
 
 import mlx.core as mx
 import mlx.nn as nn
 
+# The MLX release whose dispatch rules were read and checked: 0.32.4, from PyPI or built from
+# exo's pin of the same commit (0.32.4.devN). tests/test_hy_v3_kernels.py checks
+# qmv_batch_limit against the running MLX for every GPU generation it can emulate.
+CHECKED_MLX = re.compile(r"0\.32\.4(\.dev\d+)?(\+[0-9a-f]+)?")
+# Apple GPU generations 13-17 (M1-M5) in MLX's naming: g = base and Pro, s = Max, d = Ultra
+KNOWN_ARCHITECTURE = re.compile(r"applegpu_g(1[3-7])([gsd])")
+
 
 @cache
-def _gpu_architecture() -> tuple[int, str] | None:
-    """(generation, size letter) of the Apple GPU, e.g. (15, "d") for an M3 Ultra."""
-    if not mx.metal.is_available():
+def gpu_architecture() -> tuple[int, str] | None:
+    """(generation, size letter) of the Apple GPU, e.g. (15, "d") for an M3 Ultra, when
+    MLX's dispatch on it is known: MLX 0.32.4 and a GPU of generation 13-17. None otherwise
+    (no Metal, another MLX release, an unknown or future GPU)."""
+    if not mx.metal.is_available() or not CHECKED_MLX.fullmatch(version("mlx")):
         return None
     name = str(mx.device_info().get("architecture", ""))
-    if not name.startswith("applegpu_g") or len(name) < len("applegpu_g") + 2:
-        return None
-    digits = "".join(c for c in name.removeprefix("applegpu_g") if c.isdigit())
-    if not digits:
-        return None
-    return int(digits), name[-1]
+    match = KNOWN_ARCHITECTURE.fullmatch(name)
+    return None if match is None else (int(match[1]), match[2])
+
+
+def stacking_available() -> bool:
+    """Stacks need the GPU as the default device and its MLX dispatch known."""
+    return gpu_architecture() is not None and mx.default_device().type == mx.gpu
+
+
+def expert_stacking_available() -> bool:
+    """Expert stacks: as ``stacking_available``, on M1 to M4 (see the module docstring)."""
+    architecture = gpu_architecture()
+    return stacking_available() and architecture is not None and architecture[0] <= 16
 
 
 def qmv_batch_limit(in_dims: int, out_dims: int) -> int | None:
     """MLX 0.32.4's ``get_qmv_batch_limit`` (backend/metal/quantized.cpp): from this many
     rows a transposed quantized matmul runs the matrix-matrix kernels. None if the GPU is
     unknown."""
-    architecture = _gpu_architecture()
+    architecture = gpu_architecture()
     if architecture is None:
         return None
     generation, size = architecture
@@ -54,13 +79,11 @@ def qmv_batch_limit(in_dims: int, out_dims: int) -> int | None:
         return 13 if small else 15 if medium else 13
     if size == "d":
         return 32 if small else 18 if medium else 12
-    if generation >= 13:
-        if small:
-            return 14
-        if medium:
-            return 10
-        return 7 if (generation == 13 and size == "s") else 6
-    return 18 if small else 12 if medium else 10
+    if small:
+        return 14
+    if medium:
+        return 10
+    return 7 if (generation == 13 and size == "s") else 6
 
 
 def quantized_affine(linear: nn.Module) -> bool:

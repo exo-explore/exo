@@ -34,9 +34,12 @@ before it, so their count sets much of a step's time at batch 1.
   every row, one token-expert pair each); for several rows of a plain matmul it runs
   another kernel, so callers use this one only where MLX would run the same.
 
-The kernels follow the approach of exo's fused kernels for Flint. ``fused_kernels_available()``
-is False off Metal (CUDA, CPU), where callers keep the original ops. The unit tests compare
-every kernel with those ops for bit equality.
+The kernels follow the approach of exo's fused kernels for Flint. Bit equality depends on
+the GPU's code generation and arithmetic (M1 has no bfloat16 units), not only on MLX: the
+kernels run on the GPU generations where they matched those ops bit for bit on real
+hardware, M1, M3 and M4 (``VERIFIED_GENERATIONS``). M2 and M5 GPUs, other GPUs, other MLX
+releases and CUDA or CPU keep the original ops (``fused_kernels_available()`` is False). The
+unit tests compare every kernel with those ops for bit equality.
 """
 
 import math
@@ -44,6 +47,12 @@ from array import array
 from functools import cache
 
 import mlx.core as mx
+
+from exo.worker.engines.mlx.models.hy_v3 import fused
+
+# GPU generations whose hardware ran every kernel here bit for bit like the ops it replaces:
+# M1 (13), M3 (15) and M4 (16).
+VERIFIED_GENERATIONS = frozenset({13, 15, 16})
 
 # MLX's rms_single_row kernel covers rows up to this size; longer rows use another loop.
 _MAX_ROW = 4096
@@ -474,8 +483,13 @@ def _metal_available() -> bool:
 
 
 def fused_kernels_available() -> bool:
-    """The kernels need Metal, and the default device to be the GPU."""
-    return _metal_available() and mx.default_device().type == mx.gpu
+    """The kernels need the GPU as the default device, on a generation in
+    ``VERIFIED_GENERATIONS`` (with MLX 0.32.4, see ``fused.gpu_architecture``)."""
+    return (
+        _metal_available()
+        and mx.default_device().type == mx.gpu
+        and apple_gpu_generation() in VERIFIED_GENERATIONS
+    )
 
 
 @cache
@@ -741,14 +755,10 @@ def moe_combine_norm(
     return h, normed
 
 
-@cache
 def apple_gpu_generation() -> int | None:
     """The Apple GPU generation (13 = M1 ... 16 = M4, 17 = M5), None if unknown."""
-    if not _metal_available():
-        return None
-    architecture = str(mx.device_info().get("architecture", ""))
-    digits = "".join(c for c in architecture.removeprefix("applegpu_g") if c.isdigit())
-    return int(digits) if digits else None
+    architecture = fused.gpu_architecture()
+    return None if architecture is None else architecture[0]
 
 
 def swiglu_down_fusable(
@@ -758,15 +768,12 @@ def swiglu_down_fusable(
     bits: int,
 ) -> bool:
     """Whether ``swiglu_down`` computes what MLX's down projection would: the 4-bit
-    matrix-vector kernel MLX runs for these shapes, on the GPUs it was checked on (M1 to
-    M4)."""
+    matrix-vector kernel MLX runs for these shapes, on the GPUs it was checked on
+    (``fused_kernels_available``)."""
     weight, scales, biases = down
-    generation = apple_gpu_generation()
     k = gate_up.shape[-1] // 2
     return (
         fused_kernels_available()
-        and generation is not None
-        and generation <= 16
         and bits == 4
         and group_size == 64
         and gate_up.dtype in (mx.bfloat16, mx.float16)
