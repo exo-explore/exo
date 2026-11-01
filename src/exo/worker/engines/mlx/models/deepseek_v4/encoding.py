@@ -5,12 +5,15 @@ DeepSeek-V4 Encoding
 Vendored from DeepSeek's reference encoder for DeepSeek V4 (the model ships no Jinja
 chat template).
 
-Source:   https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash/blob/a7aaed80dd2df27620eb534454253ea25eb11c7a/encoding/encoding_dsv4.py
-Revision: a7aaed80dd2df27620eb534454253ea25eb11c7a ("Release DeepSeek-V4", 2026-04-24);
-          the file (git blob cdb68f233a71b142732372b901fa140d7d2148a3) is unchanged
-          up to revision 60d8d70770c6776ff598c94bb586a859a38244f1 (2026-06-22).
-          deepseek-ai/DeepSeek-V4-Pro carries the same encoder.
-Vendored: 2026-04-27 (exo PR #1978).
+Source:   https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731/blob/7872f01b1d1fe23eabc4c98b48bffcef5a386062/encoding/encoding_dsv4.py
+Revision: 7872f01b1d1fe23eabc4c98b48bffcef5a386062 (2026-08-01), the release build that
+          supersedes the preview. The file (git blob 66f2d30ece5a93e08fbab47aeb9f3541830930ef)
+          is the same in deepseek-ai/DeepSeek-V4-Pro-0813 at
+          72e1d3230f6c080a530b0a1d46f8eb4602340597.
+Vendored: 2026-04-27 (exo PR #1978) from the preview (deepseek-ai/DeepSeek-V4-Flash at
+          a7aaed80dd2df27620eb534454253ea25eb11c7a); updated to the release encoder
+          2026-10-30. The release only changes the reasoning-effort prompts: "low"
+          (the default, no text), "high" (the preview's "max" text) and "max" (new text).
 Licence:  MIT, Copyright (c) 2023 DeepSeek (notice below).
 
 Local changes, none of which change behaviour:
@@ -95,11 +98,23 @@ tool_calls_block_name: str = "tool_calls"
 
 tool_output_template: str = "<tool_result>{content}</tool_result>"
 
-REASONING_EFFORT_MAX = (
-    "Reasoning Effort: Absolute maximum with no shortcuts permitted.\n"
-    "You MUST be very thorough in your thinking and comprehensively decompose the problem to resolve the root cause, rigorously stress-testing your logic against all potential paths, edge cases, and adversarial scenarios.\n"
-    "Explicitly write out your entire deliberation process, documenting every intermediate step, considered alternative, and rejected hypothesis to ensure absolutely no assumption is left unchecked.\n\n"
-)
+# Reasoning effort levels. In thinking mode, the prompt for the selected level is
+# prepended at the very beginning of the conversation. `low` is the default and
+# adds nothing.
+REASONING_EFFORT_PROMPTS: Dict[str, str] = {
+    "low": "",
+    "high": (
+        "Reasoning Effort: Absolute maximum with no shortcuts permitted.\n"
+        "You MUST be very thorough in your thinking and comprehensively decompose the problem to resolve the root cause, rigorously stress-testing your logic against all potential paths, edge cases, and adversarial scenarios.\n"
+        "Explicitly write out your entire deliberation process, documenting every intermediate step, considered alternative, and rejected hypothesis to ensure absolutely no assumption is left unchecked.\n\n"
+    ),
+    "max": (
+        "Reasoning Effort: Beyond maximum — exhaustive, relentless, and uncompromising.\n"
+        "You MUST reason with the utmost depth and rigor, leaving absolutely nothing to chance: exhaustively decompose the problem into its most fundamental components, trace every causal chain to its root, and resolve the underlying cause rather than any surface symptom.\n"
+        "Do not stop reasoning until you have independently verified the solution from multiple angles and are certain that no assumption remains unchecked and no error remains undiscovered.\n\n"
+    ),
+}
+DEFAULT_REASONING_EFFORT = "low"
 
 TOOLS_TEMPLATE = """## Tools
 
@@ -283,7 +298,8 @@ def render_message(
         messages: Full list of messages in the conversation.
         thinking_mode: Either "chat" or "thinking".
         drop_thinking: Whether to drop reasoning content from earlier turns.
-        reasoning_effort: Optional reasoning effort level ("max", "high", or None).
+        reasoning_effort: Reasoning effort level, one of "low", "high", "max".
+            None is treated as "low".
 
     Returns:
         Encoded string for this message.
@@ -310,12 +326,13 @@ def render_message(
     if tool_calls:
         tool_calls = tool_calls_from_openai_format(tool_calls)
 
-    # Reasoning effort prefix (only at index 0 in thinking mode with max effort)
-    assert reasoning_effort in ["max", None, "high"], (
-        f"Invalid reasoning effort: {reasoning_effort}"
+    # Reasoning effort prefix (only at index 0 in thinking mode; "low" adds nothing)
+    reasoning_effort = reasoning_effort or DEFAULT_REASONING_EFFORT
+    assert reasoning_effort in REASONING_EFFORT_PROMPTS, (
+        f"Invalid reasoning effort: {reasoning_effort}, expected one of {list(REASONING_EFFORT_PROMPTS)}"
     )
-    if index == 0 and thinking_mode == "thinking" and reasoning_effort == "max":
-        prompt += REASONING_EFFORT_MAX
+    if index == 0 and thinking_mode == "thinking":
+        prompt += REASONING_EFFORT_PROMPTS[reasoning_effort]
 
     if role == "system":
         prompt += system_msg_template.format(content=content or "")
@@ -622,7 +639,8 @@ def encode_messages(
         drop_thinking: If True, drop reasoning_content from earlier assistant turns
                       (only keep reasoning for messages after the last user message).
         add_default_bos_token: Whether to prepend BOS token at conversation start.
-        reasoning_effort: Optional reasoning effort level ("max", "high", or None).
+        reasoning_effort: Reasoning effort level, one of "low", "high", "max".
+            Only takes effect in thinking mode. None is treated as "low".
 
     Returns:
         The encoded prompt string.

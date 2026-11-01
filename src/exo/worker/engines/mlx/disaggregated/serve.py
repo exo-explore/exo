@@ -12,6 +12,10 @@ from exo.worker.engines.mlx.cache import (
     snapshot_ssm_states,
 )
 from exo.worker.engines.mlx.generator.generate import prefill as mlx_prefill
+from exo.worker.engines.mlx.models.registry import (
+    model_type_keeps_think_tags,
+    model_type_of,
+)
 from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.engines.mlx.utils_mlx import fix_unmatched_think_end_tokens
 from exo.worker.runner.bootstrap import logger
@@ -26,7 +30,8 @@ def run_prefill_for_request(
     request: PrefillRequest,
 ) -> KVCacheType:
     prompt_tokens = mx.array(request.token_ids)
-    prompt_tokens = fix_unmatched_think_end_tokens(prompt_tokens, tokenizer)
+    if not model_type_keeps_think_tags(model_type_of(model)):
+        prompt_tokens = fix_unmatched_think_end_tokens(prompt_tokens, tokenizer)
     n_tokens = int(prompt_tokens.shape[0])
     t0 = time.perf_counter()
 

@@ -8,11 +8,23 @@ def applies_to(task_params: TextGenerationTaskParams) -> bool:
     return "deepseek-v4" in task_params.model.lower()
 
 
+# The release builds (DeepSeek-V4-Flash-0731, DeepSeek-V4-Pro-0813) were trained with
+# three reasoning-effort prompts: "low" (the default, no prompt), "high" and "max". The
+# preview builds (2026-04) know one, the text the release encoder renders for "high".
+_V4_RELEASE = re.compile(r"deepseek-v4-(?:flash|pro)-(?:0731|0813)")
+
+
 def _v4_reasoning_effort(task_params: TextGenerationTaskParams) -> str | None:
+    """The encoder's reasoning_effort for a request (None is the encoder's default, "low")."""
     effort = task_params.reasoning_effort
+    if _V4_RELEASE.search(task_params.model.lower()):
+        if effort == "xhigh":
+            return "max"
+        if effort == "high":
+            return "high"
+        return None
+    # Preview builds: only exo's top effort turns their single effort prompt on.
     if effort == "xhigh":
-        return "max"
-    if effort == "high":
         return "high"
     return None
 

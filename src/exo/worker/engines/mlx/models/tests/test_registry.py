@@ -473,10 +473,10 @@ def test_the_v4_encoder_is_not_picked_for_other_model_types(model_type: str) -> 
     assert registry.prompt_encoder_for(task, model_type) is not v4_encoder
 
 
-def test_v41_keeps_its_bare_think_end_and_others_do_not() -> None:
-    # V4.1's chat mode ends the prompt with `</think>` and no opener
+def test_deepseek_v4_and_v41_keep_their_bare_think_end_and_others_do_not() -> None:
+    # V4.1's chat mode ends the prompt with `</think>` and no opener, and so does V4's
     v4_task = _task("mlx-community/DeepSeek-V4-Flash")
-    assert not registry.keeps_think_tags(v4_task, "deepseek_v4")
+    assert registry.keeps_think_tags(v4_task, "deepseek_v4")
     v41_task = _task("deepseek-ai/DeepSeek-V4.1-Flash")
     assert registry.keeps_think_tags(v41_task, "deepseek_v41")
     assert not registry.keeps_think_tags(_task("Qwen/Qwen3-8B"), "qwen3")
