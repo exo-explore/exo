@@ -184,3 +184,35 @@ def test_closing_a_full_channel_that_sends_immediately_does_not_block():
     closer.join(2)
     assert not closer.is_alive()
     send.close()
+
+
+@pytest.mark.parametrize("send_immediately", [True, False])
+def test_closing_a_channel_from_several_threads_at_once_closes_it_once(
+    send_immediately: bool,
+):
+    # A receiver's reader thread closes the channel when it reads the end-of-stream
+    # marker that the receiver's own close has just written: two closes at once.
+    # Closing a pipe twice closed its descriptor twice (EBADF, or another file's).
+    failures: list[BaseException] = []
+    for _ in range(50):
+        send, recv = mp_channel[int](send_immediately=send_immediately)
+        start = threading.Barrier(4)
+
+        def close(
+            channel: MpSender[int] | MpReceiver[int], start: threading.Barrier
+        ) -> None:
+            start.wait()
+            try:
+                channel.close()
+            except BaseException as error:  # noqa: BLE001 - recorded, then asserted on
+                failures.append(error)
+
+        closers = [
+            threading.Thread(target=close, args=(c, start))
+            for c in (send, recv, send, recv)
+        ]
+        for closer in closers:
+            closer.start()
+        for closer in closers:
+            closer.join(5)
+    assert failures == []

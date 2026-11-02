@@ -2,6 +2,7 @@ import contextlib
 import multiprocessing as mp
 import pickle
 import select
+import threading
 from dataclasses import dataclass, field
 from functools import wraps
 from inspect import iscoroutinefunction
@@ -287,6 +288,8 @@ class _ImmediateQueue[T]:
         return cast(T, pickle.loads(payload))
 
     def close(self) -> None:
+        if self._closed:
+            return
         self._closed = True
         self._reader.close()
         self._writer.close()
@@ -311,11 +314,36 @@ class MpState[T]:
         else:
             self.buffer = mp.Queue(max_buffer_size)
         self.closed: Event = mp.Event()
+        self._buffer_close_lock = threading.Lock()
+        self._buffer_closed = False
+
+    def close_buffer(self) -> None:
+        """Close this process's end of the buffer, once.
+
+        Two threads can close a channel at the same time: a receiver's reader thread
+        closes it when it reads the end-of-stream marker, which the receiver's close
+        writes just before it closes the buffer itself. Closing a pipe twice closes its
+        descriptor twice, which fails (EBADF), or closes whatever file was given that
+        number in between.
+        """
+        with self._buffer_close_lock:
+            if self._buffer_closed:
+                return
+            self._buffer_closed = True
+        self.buffer.close()
 
     def __getstate__(self):
         d = self.__dict__.copy()
         d.pop("__orig_class__", None)
+        # per process: a copy in another process closes its own end
+        d.pop("_buffer_close_lock", None)
+        d.pop("_buffer_closed", None)
         return d
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        self._buffer_close_lock = threading.Lock()
+        self._buffer_closed = False
 
 
 @dataclass(eq=False)
@@ -357,7 +385,7 @@ class MpSender[T]:
             self._state.closed.set()
         with contextlib.suppress(Exception):
             self._state.buffer.put_nowait(_MpEndOfStream())
-        self._state.buffer.close()
+        self._state.close_buffer()
 
     # == unique to Mp channels ==
     def join(self) -> None:
@@ -416,10 +444,10 @@ class MpReceiver[T]:
         except WouldBlock:
             try:
                 item = self._state.buffer.get()
-            except (TypeError, OSError):
-                # Queue pipe can get closed while we are blocked on get().
-                # The underlying connection._handle becomes None, causing
-                # TypeError in read(handle, remaining).
+            except (TypeError, OSError, ValueError):
+                # Queue pipe can get closed while we are blocked on get(), or just
+                # before: the underlying connection._handle becomes None, causing
+                # TypeError in read(handle, remaining), or the queue says it's closed.
                 raise ClosedResourceError from None
             if isinstance(item, _MpEndOfStream):
                 self.close()
@@ -436,7 +464,7 @@ class MpReceiver[T]:
             self._state.closed.set()
         with contextlib.suppress(Exception):
             self._state.buffer.put_nowait(_MpEndOfStream())
-        self._state.buffer.close()
+        self._state.close_buffer()
 
     # == unique to Mp channels ==
     def join(self) -> None:
