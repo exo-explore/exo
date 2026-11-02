@@ -115,6 +115,14 @@ EXO_ASYNC_REMOTE_PREFILL = (
     os.getenv("EXO_ASYNC_REMOTE_PREFILL", "false").lower() == "true"
 )
 
+# Remote prefill: decode each layer of the KV stream as it arrives and stage it, instead
+# of buffering the whole stream; the cache is still only written once Done arrives.
+# Synchronous remote prefill only (EXO_ASYNC_REMOTE_PREFILL's background fetch keeps
+# buffering, since its thread must not make MLX calls). Off by default.
+EXO_LAYERWISE_REMOTE_INGEST = (
+    os.getenv("EXO_LAYERWISE_REMOTE_INGEST", "false").lower() == "true"
+)
+
 EXO_MAX_CONCURRENT_REQUESTS = int(os.getenv("EXO_MAX_CONCURRENT_REQUESTS", "8"))
 
 EXO_MAX_INSTANCE_RETRIES = 5

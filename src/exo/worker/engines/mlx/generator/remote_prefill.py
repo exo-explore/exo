@@ -7,10 +7,12 @@ from typing import cast, final
 import mlx.core as mx
 from mlx_lm.models.cache import ArraysCache, KVCache, RotatingKVCache
 
+from exo.shared.constants import EXO_LAYERWISE_REMOTE_INGEST
 from exo.worker.disaggregated.protocol import Header, KVChunk
 from exo.worker.disaggregated.server import PrefillRequest
 from exo.worker.engines.mlx.cache import CacheSnapshot, snapshot_ssm_states
 from exo.worker.engines.mlx.disaggregated.client import (
+    LayerwiseIngest,
     PrefillResult,
     ingest_into_mlx_cache,
     remote_prefill_fetch,
@@ -96,16 +98,31 @@ def remote_prefill(
         start_pos=start_pos,
         request_id=request_id,
     )
+    caches = cast(list[KVCache | RotatingKVCache | ArraysCache], list(cache))
+    # Per-layer ingest decodes each of this rank's layers as it arrives; either way the
+    # cache is only written once the whole stream is in, so a failed fetch leaves it
+    # untouched.
+    staged = (
+        LayerwiseIngest.for_caches(caches, layer_offset=layer_offset)
+        if EXO_LAYERWISE_REMOTE_INGEST
+        else None
+    )
     _report(force=True)
     result = remote_prefill_fetch(
-        endpoint, request, on_header=_on_header, on_kv_chunk=_on_chunk
+        endpoint,
+        request,
+        on_header=_on_header,
+        on_kv_chunk=_on_chunk,
+        layerwise=staged,
     )
     t_received = time.perf_counter()
 
-    caches = cast(list[KVCache | RotatingKVCache | ArraysCache], list(cache))
-    final_offset = ingest_into_mlx_cache(
-        result, caches, start_pos=start_pos, layer_offset=layer_offset
-    )
+    if staged is not None:
+        final_offset = staged.commit(caches, start_pos=start_pos)
+    else:
+        final_offset = ingest_into_mlx_cache(
+            result, caches, start_pos=start_pos, layer_offset=layer_offset
+        )
     t_done = time.perf_counter()
 
     num_tokens = final_offset - start_pos
@@ -113,7 +130,8 @@ def remote_prefill(
 
     logger.info(
         f"Remote prefill: {num_tokens} tokens (start_pos={start_pos}, "
-        f"final_offset={final_offset}) at {tps:.0f} tok/s, "
+        f"final_offset={final_offset}, layerwise={staged is not None}) "
+        f"at {tps:.0f} tok/s, "
         f"transfer={(t_received - t0) * 1000:.0f}ms, "
         f"inject={(t_done - t_received) * 1000:.0f}ms"
     )
@@ -125,7 +143,9 @@ class RemotePrefillHandle:
     """A remote prefill fetched on a background thread and ingested later.
 
     The thread only does socket I/O. MLX is not thread safe, so ingest() must run on
-    the engine thread. Errors from the fetch are kept and raised by ingest(), where
+    the engine thread. For the same reason this path always buffers the stream:
+    EXO_LAYERWISE_REMOTE_INGEST (which decodes with MLX as layers arrive) applies to
+    remote_prefill() only. Errors from the fetch are kept and raised by ingest(), where
     the caller falls back to local prefill.
 
     The thread also counts what has arrived, and take_progress() hands that to the
