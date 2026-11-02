@@ -17,6 +17,7 @@ from exo.shared.types.events import (
     InstanceDeleted,
     InstanceLinkCreated,
     InstanceLinkDeleted,
+    InstanceReplacedAtomically,
     NodeDownloadProgress,
     NodeGatheredInfo,
     NodeTimedOut,
@@ -106,6 +107,8 @@ def event_apply(event: Event, state: State) -> State:
             return apply_instance_created(event, state)
         case InstanceDeleted():
             return apply_instance_deleted(event, state)
+        case InstanceReplacedAtomically():
+            return apply_instance_replaced_atomically(event, state)
         case NodeTimedOut():
             return apply_node_timed_out(event, state)
         case NodeDownloadProgress():
@@ -283,6 +286,49 @@ def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
             "tasks": new_tasks,
             "runners": new_runners,
             "prefill_server_ports": new_ports,
+        }
+    )
+
+
+def apply_instance_replaced_atomically(
+    event: InstanceReplacedAtomically, state: State
+) -> State:
+    old_id = event.old_instance_id
+    new_instance = event.new_instance
+    new_id = new_instance.instance_id
+
+    new_instances: dict[InstanceId, Instance] = {}
+    for iid, inst in state.instances.items():
+        if iid == old_id:
+            new_instances[new_id] = new_instance
+        else:
+            new_instances[iid] = inst
+    if new_id not in new_instances:
+        new_instances[new_id] = new_instance
+
+    # Seamlessly update all existing tasks: point them to new_id instead of cancelling
+    new_tasks: dict[TaskId, Task] = {}
+    for tid, task in state.tasks.items():
+        if getattr(task, "instance_id", None) == old_id:
+            new_tasks[tid] = task.model_copy(update={"instance_id": new_id})
+        else:
+            new_tasks[tid] = task
+
+    # Update instance_links referencing old_id
+    new_links: dict[InstanceLinkId, InstanceLink] = {}
+    for link_id, link in state.instance_links.items():
+        prefill = [new_id if i == old_id else i for i in link.prefill_instances]
+        decode = [new_id if i == old_id else i for i in link.decode_instances]
+        new_links[link_id] = link.model_copy(
+            update={"prefill_instances": prefill, "decode_instances": decode}
+        )
+
+    # Note: runners and ports remain intact and active
+    return state.model_copy(
+        update={
+            "instances": new_instances,
+            "tasks": new_tasks,
+            "instance_links": new_links,
         }
     )
 
