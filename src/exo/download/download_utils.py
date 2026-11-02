@@ -281,25 +281,128 @@ async def seed_models(seed_dir: str | Path):
                     logger.error(traceback.format_exc())
 
 
+def has_partial_files(model_dir: Path) -> bool:
+    """Check if the directory contains any in-progress '.partial' download files."""
+    if not model_dir.is_dir():
+        return False
+    for _, _, filenames in os.walk(model_dir):
+        for filename in filenames:
+            if filename.endswith(".partial"):
+                return True
+    return False
+
+
+def is_local_model_folder_ready(model_dir: Path) -> bool:
+    """Checks if a model directory is non-empty and contains no '.partial' download files.
+
+    Implements official TODO.md item #8: allows loading pre-copied or offline model directories
+    without requiring internet connection to verify a remote index or cache.
+    """
+    if not model_dir.is_dir():
+        return False
+
+    has_files = False
+    has_recognized_model_artifact = False
+
+    for dirpath, _, filenames in os.walk(model_dir):
+        for filename in filenames:
+            if filename.endswith(".partial"):
+                return False  # Incomplete download fragment present
+            has_files = True
+            fn_lower = filename.lower()
+            if (
+                fn_lower.endswith(
+                    (
+                        ".safetensors",
+                        ".bin",
+                        ".pt",
+                        ".gguf",
+                        ".onnx",
+                        ".model",
+                    )
+                )
+                or fn_lower
+                in (
+                    "config.json",
+                    "model_card.toml",
+                    "tokenizer.json",
+                    "params.json",
+                )
+            ):
+                has_recognized_model_artifact = True
+
+    return has_files and has_recognized_model_artifact
+
+
 def _scan_model_directory(
     model_dir: Path, recursive: bool = False
 ) -> list[FileListEntry] | None:
     """Scan a local model directory and build a file list.
 
-    Requires at least one ``*.safetensors.index.json``.  Every weight file
-    referenced by the index that is missing on disk gets ``size=None``.
+    Supports both:
+    1. Standard repos with a ``*.safetensors.index.json``.
+    2. Offline/copied model folders without index json (TODO #8) as long as the
+       folder is non-empty and has no ``.partial`` files.
     """
     index_files = list(model_dir.glob("**/*.safetensors.index.json"))
-    if not index_files:
-        return None
-
     entries_by_path: dict[str, FileListEntry] = {}
+
+    if index_files:
+        # Case A: Sharded model with index file
+        if recursive:
+            for dirpath, _, filenames in os.walk(model_dir):
+                for filename in filenames:
+                    if filename.endswith(".partial"):
+                        continue
+                    full_path = Path(dirpath) / filename
+                    rel_path = str(full_path.relative_to(model_dir))
+                    entries_by_path[rel_path] = FileListEntry(
+                        type="file",
+                        path=rel_path,
+                        size=full_path.stat().st_size,
+                    )
+        else:
+            for item in model_dir.iterdir():
+                if item.is_file() and not item.name.endswith(".partial"):
+                    entries_by_path[item.name] = FileListEntry(
+                        type="file",
+                        path=item.name,
+                        size=item.stat().st_size,
+                    )
+
+        # Add expected weight files from index that haven't been downloaded yet
+        for index_file in index_files:
+            try:
+                index_data = ModelSafetensorsIndex.model_validate_json(
+                    index_file.read_text()
+                )
+                relative_dir = index_file.parent.relative_to(model_dir)
+                for filename in set(index_data.weight_map.values()):
+                    rel_path = (
+                        str(relative_dir / filename)
+                        if relative_dir != Path(".")
+                        else filename
+                    )
+                    if rel_path not in entries_by_path:
+                        entries_by_path[rel_path] = FileListEntry(
+                            type="file",
+                            path=rel_path,
+                            size=None,
+                        )
+            except (OSError, ValueError):
+                continue
+
+        return list(entries_by_path.values())
+
+    # Case B (TODO.md #8): Model directory without index json (e.g. single safetensors, GGUF, or copied model)
+    if not is_local_model_folder_ready(model_dir):
+        return None
 
     if recursive:
         for dirpath, _, filenames in os.walk(model_dir):
             for filename in filenames:
                 if filename.endswith(".partial"):
-                    continue
+                    return None  # Incomplete download fragment
                 full_path = Path(dirpath) / filename
                 rel_path = str(full_path.relative_to(model_dir))
                 entries_by_path[rel_path] = FileListEntry(
@@ -309,36 +412,16 @@ def _scan_model_directory(
                 )
     else:
         for item in model_dir.iterdir():
-            if item.is_file() and not item.name.endswith(".partial"):
+            if item.is_file():
+                if item.name.endswith(".partial"):
+                    return None
                 entries_by_path[item.name] = FileListEntry(
                     type="file",
                     path=item.name,
                     size=item.stat().st_size,
                 )
 
-    # Add expected weight files from index that haven't been downloaded yet
-    for index_file in index_files:
-        try:
-            index_data = ModelSafetensorsIndex.model_validate_json(
-                index_file.read_text()
-            )
-            relative_dir = index_file.parent.relative_to(model_dir)
-            for filename in set(index_data.weight_map.values()):
-                rel_path = (
-                    str(relative_dir / filename)
-                    if relative_dir != Path(".")
-                    else filename
-                )
-                if rel_path not in entries_by_path:
-                    entries_by_path[rel_path] = FileListEntry(
-                        type="file",
-                        path=rel_path,
-                        size=None,
-                    )
-        except Exception:
-            continue
-
-    return list(entries_by_path.values())
+    return list(entries_by_path.values()) if entries_by_path else None
 
 
 def is_model_directory_complete(model_dir: Path, card: ModelCard | None = None) -> bool:
@@ -369,9 +452,7 @@ async def _build_file_list_from_local_directory(
 ) -> list[FileListEntry] | None:
     """Build a file list from locally existing model files.
 
-    We can only figure out the files we need from safetensors index, so
-    a local directory must contain a *.safetensors.index.json and
-    safetensors listed there.
+    Supports both index-based models and standalone non-empty model folders with no .partial files (TODO #8).
     """
     normalized = model_id.normalize()
     for search_dir in (*EXO_MODELS_READ_ONLY_DIRS, *EXO_MODELS_DIRS):
@@ -416,6 +497,13 @@ async def fetch_file_list_with_cache(
             logger.warning(
                 f"No internet and no cached file list for {model_id} - using local file list"
             )
+            try:
+                async with aiofiles.open(cache_file, "w") as f:
+                    await f.write(
+                        TypeAdapter(list[FileListEntry]).dump_json(local_file_list).decode()
+                    )
+            except OSError as write_err:
+                logger.debug(f"Could not persist offline file list cache {cache_file}: {write_err}")
             return local_file_list
         raise FileNotFoundError(
             f"No internet connection and no cached file list for {model_id}"
@@ -451,6 +539,13 @@ async def fetch_file_list_with_cache(
             logger.warning(
                 f"Failed to fetch file list for {model_id} and no cache exists, using local file list"
             )
+            try:
+                async with aiofiles.open(cache_file, "w") as f:
+                    await f.write(
+                        TypeAdapter(list[FileListEntry]).dump_json(local_file_list).decode()
+                    )
+            except OSError as write_err:
+                logger.debug(f"Could not persist offline file list cache {cache_file}: {write_err}")
             return local_file_list
         raise FileNotFoundError(f"Failed to fetch file list for {model_id}: {e}") from e
 
