@@ -88,8 +88,8 @@ class Timing:
     # The worker's backoff between StartDownload requests (0.5 s doubling to 10 s).
     worker_backoff_base: float = 0.005
     worker_backoff_cap: float = 0.1
-    # ... and between StartDownload requests for a failed download (30 s to 5 min)
-    worker_failed_backoff_base: float = 0.3
+    # ... and for a failed download (at once, then 30 s doubling to 5 min)
+    worker_failed_backoff_base: float = 0.15
     worker_failed_backoff_cap: float = 3.0
 
 

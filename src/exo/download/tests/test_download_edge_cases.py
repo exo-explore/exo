@@ -8,11 +8,17 @@ from pathlib import Path
 
 import pytest
 
+from exo.download.download_utils import download_file_with_retry
 from exo.download.tests.fake_hub import (
+    Corrupt,
     FakeHub,
     FakeRepo,
+    Fault,
+    FirstByteDelay,
+    Reset,
     content_for,
     model_repo_files,
+    server_error,
 )
 from exo.download.tests.harness import (
     NODE_ID,
@@ -586,4 +592,239 @@ async def test_online_legacy_model_with_separate_vision_weights_is_adopted_witho
         assert hub.body_bytes() == 0
         assert isinstance(first, DownloadCompleted), (
             f"a complete model was first shown as {type(first).__name__}"
+        )
+
+
+# ===== second review pass =====
+
+
+# --- hash failures that are never counted -------------------------------------------------
+
+
+async def test_a_file_that_is_always_wrong_fails_even_on_a_flaky_link(
+    hub: FakeHub, repo: FakeRepo, tmp_path: Path
+) -> None:
+    """A server that always sends the wrong bytes for a file (a broken mirror, a
+    stale CDN object) on a link that drops each fresh request part way. Every
+    attempt that completes the file is a resume, so its mismatch is never counted
+    (``fetched_whole`` is only true for attempts from byte 0): the file is fetched
+    again and again forever, the status stays Ongoing and never says why."""
+    hub.bandwidth = 2_000_000
+    # (the fake Hub applies the first matching fault: fresh requests are cut, resumed
+    # ones carry the bad byte)
+    hub.inject(Fault(Reset(after_bytes=100_000), path=SHARD1, ranged=False, times=None))
+    hub.inject(Fault(Corrupt(offset=200_000), path=SHARD1, times=None))
+    async with DownloadNode(
+        hub, tmp_path, [card_for(repo)], worker=False, timing=Timing(rescan_interval=60)
+    ) as node:
+        await node.start_download(REPO)
+        await asyncio.sleep(6)
+        fetched = hub.body_bytes(REPO, SHARD1)
+        assert isinstance(node.status(REPO), DownloadFailed), (
+            f"still {type(node.status(REPO)).__name__} after fetching {SHARD1}"
+            f" {fetched // len(expected_files(repo)[SHARD1])} times"
+        )
+
+
+# --- older exo's vision folders ------------------------------------------------------------
+
+
+async def test_a_half_downloaded_legacy_vision_folder_is_not_complete(
+    hub: FakeHub, tmp_path: Path
+) -> None:
+    """Older exo interrupted while fetching a vision repo with two weight files:
+    ``config.json`` and the first file are there, the second is a ``.partial``.
+    The model isn't complete; offline, it must not be reported Completed."""
+    vision = "fake-org/vision"
+    vision_files = {
+        "config.json": b'{"model_type": "fake"}',
+        "vision-1.safetensors": content_for("v1", 100_000),
+        "vision-2.safetensors": content_for("v2", 100_000),
+    }
+    hub.add_repo(FakeRepo(vision, vision_files))
+    a = hub.add_repo(FakeRepo("fake-org/a", model_repo_files("fake-org/a")))
+    models = tmp_path / "models"
+    main_dir = models / ModelId(a.repo_id).normalize()
+    main_dir.mkdir(parents=True)
+    for path, content in expected_files(a).items():
+        (main_dir / path).write_bytes(content)
+    vision_dir = models / ModelId(vision).normalize()
+    vision_dir.mkdir(parents=True)
+    (vision_dir / "config.json").write_bytes(vision_files["config.json"])
+    (vision_dir / "vision-1.safetensors").write_bytes(
+        vision_files["vision-1.safetensors"]
+    )
+    (vision_dir / "vision-2.safetensors.partial").write_bytes(
+        vision_files["vision-2.safetensors"][:10_000]
+    )
+    async with DownloadNode(
+        hub, tmp_path, [vision_card(a.repo_id, vision, 1)], worker=False, offline=True
+    ) as node:
+        await node.start_download(a.repo_id)
+        status = await node.wait_for(
+            a.repo_id, (DownloadCompleted, DownloadFailed), timeout=5
+        )
+        assert isinstance(status, DownloadFailed), (
+            "a vision folder missing a weight file was reported complete"
+        )
+
+
+# --- proxies from the environment ----------------------------------------------------------
+
+
+async def test_a_netrc_entry_does_not_break_downloads_with_a_token(
+    hub: FakeHub, repo: FakeRepo, tmp_path: Path
+) -> None:
+    """``trust_env=True`` (for the proxy variables) also makes aiohttp read
+    ~/.netrc. With HF_TOKEN set and a netrc entry for the Hub's host, aiohttp
+    refuses every request ("Cannot combine AUTHORIZATION header with AUTH
+    argument"), which surfaces as "Download failed unexpectedly: ValueError."
+    git and curl read the same file, so such entries exist."""
+    netrc = tmp_path / "netrc"
+    netrc.write_text("machine 127.0.0.1 login someone password something\n")
+    netrc.chmod(0o600)
+    saved = {k: os.environ.get(k) for k in ("NETRC", "HF_TOKEN")}
+    try:
+        async with DownloadNode(hub, tmp_path, [card_for(repo)], worker=False) as node:
+            os.environ["NETRC"] = str(netrc)
+            os.environ["HF_TOKEN"] = "hf_token_for_the_test"
+            await node.start_download(REPO)
+            status = await node.wait_for(
+                REPO, (DownloadCompleted, DownloadFailed), timeout=10
+            )
+            assert isinstance(status, DownloadCompleted), status
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+# --- model card fetches ------------------------------------------------------------------
+
+
+async def test_fetching_one_card_file_gives_up_like_before(
+    hub: FakeHub, repo: FakeRepo, tmp_path: Path
+) -> None:
+    """``download_file_with_retry`` backs API calls (adding a custom model, loading
+    an unknown card). Main gave up after 3 tries (seconds for a 5xx); it now
+    retries a file for give_up_after (30 minutes in production) of no progress,
+    so the HTTP request waits that long."""
+    hub.inject(
+        Fault(server_error(503), where="resolve", path="config.json", times=None)
+    )
+    target = tmp_path / "card-dir"
+    target.mkdir()
+    saved = os.environ.get("HF_ENDPOINT")
+    os.environ["HF_ENDPOINT"] = hub.url
+    try:
+        with pytest.raises(Exception) as raised:  # noqa: B017 - any error, not a hang
+            await asyncio.wait_for(
+                download_file_with_retry(ModelId(REPO), "main", "config.json", target),
+                15,
+            )
+        assert not isinstance(raised.value, TimeoutError), (
+            "still retrying after 15 s (main gave up within seconds)"
+        )
+    finally:
+        if saved is None:
+            os.environ.pop("HF_ENDPOINT", None)
+        else:
+            os.environ["HF_ENDPOINT"] = saved
+
+
+# --- the window before the files are listed ---------------------------------------------
+
+
+async def test_deleting_the_instance_while_the_files_are_listed_stops_the_download(
+    hub: FakeHub, repo: FakeRepo, tmp_path: Path
+) -> None:
+    """The master cancels downloads no instance needs, but only those it sees as
+    DownloadOngoing. The coordinator now keeps the old status (Pending, or Failed
+    for a retry) until the files are listed, so an instance deleted in that window
+    leaves a download running for nobody. (On faf9614d the window was at most the
+    1 s progress interval; on main it was the first file-list fetch.)"""
+    hub.inject(Fault(FirstByteDelay(1.0), where="tree"))  # a slow listing
+    async with DownloadNode(
+        hub,
+        tmp_path,
+        [card_for(repo)],
+        worker=False,
+        timing=Timing(rescan_interval=60, metadata_timeout=3),
+    ) as node:
+        await node.start_download(REPO)
+        await asyncio.sleep(0.5)  # listing the files
+        for command in cancel_unnecessary_downloads({}, node.state.downloads):
+            await node.send(command)
+        await asyncio.sleep(3)
+        assert hub.body_bytes(REPO) == 0, (
+            f"{hub.body_bytes(REPO)} bytes fetched for a deleted instance;"
+            f" status {type(node.status(REPO)).__name__}"
+        )
+
+
+# --- file I/O under cancel (expected to pass: records what was verified) ------------------
+
+
+async def test_delete_during_slow_writes_leaves_nothing_behind(
+    hub: FakeHub, repo: FakeRepo, tmp_path: Path
+) -> None:
+    """Writes take 0.2 s each (a slow disk). A delete mid-download waits for the
+    writes in flight, and nothing is written, created or reopened after it."""
+    import time as _time
+
+    from exo.download import transfer
+
+    hub.bandwidth = 2_000_000
+    async with DownloadNode(
+        hub, tmp_path, [card_for(repo)], worker=False, timing=Timing(rescan_interval=60)
+    ) as node:
+        patched = transfer._write_at  # pyright: ignore[reportPrivateUsage]
+
+        def slow_write(
+            descriptor: int, data: bytes, offset: int, state: transfer.FileState
+        ) -> None:
+            _time.sleep(0.2)
+            patched(descriptor, data, offset, state)
+
+        transfer._write_at = slow_write  # pyright: ignore[reportPrivateUsage]
+        try:
+            before = len(os.listdir("/dev/fd"))
+            await node.start_download(REPO)
+            await asyncio.sleep(0.5)
+            await node.delete(REPO)
+            await node.wait_for(REPO, DownloadPending, timeout=5)
+            await asyncio.sleep(1.0)
+            assert node.model_dirs(REPO) == [], "files came back after the delete"
+            assert len(os.listdir("/dev/fd")) <= before + 2
+        finally:
+            transfer._write_at = patched  # pyright: ignore[reportPrivateUsage]
+
+
+# --- resuming with the Hub unreachable ------------------------------------------------------------------
+
+
+async def test_an_unreachable_hub_is_reported_when_resuming_too(
+    hub: FakeHub, repo: FakeRepo, tmp_path: Path
+) -> None:
+    """ "Can't reach Hugging Face" after 2 minutes only covers listing the files. A
+    download resumed from its manifest (after a restart, or a pause) needs no
+    listing, so with the Hub unreachable it shows Ongoing, with no reason, until
+    give_up_after (30 minutes in production; 18 s here)."""
+    hub.bandwidth = 300_000
+    async with DownloadNode(
+        hub, tmp_path, [card_for(repo)], worker=False, timing=Timing(rescan_interval=60)
+    ) as node:
+        await node.start_download(REPO)
+        reached = asyncio.Event()
+        hub.when_sent(SHARD1, 50_000, reached.set)
+        await reached.wait()
+        await node.cancel(REPO)
+        await node.wait_for(REPO, DownloadPending)
+        await hub.go_down("refuse")
+        await node.start_download(REPO)
+        await asyncio.sleep(3)  # ~5 production minutes at this timing scale
+        assert isinstance(node.status(REPO), DownloadFailed), (
+            f"after ~5 production minutes: {type(node.status(REPO)).__name__}"
         )

@@ -19,7 +19,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from loguru import logger
-from pydantic import ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from exo.download.hub import RepoFile
 from exo.shared.constants import (
@@ -92,8 +92,17 @@ def write_manifest(model_dir: Path, manifest: Manifest) -> None:
     with tempfile.NamedTemporaryFile(
         "w", dir=model_dir, prefix=MANIFEST + ".", delete=False
     ) as temporary:
-        temporary.write(manifest.model_dump_json(by_alias=True))
-    os.replace(temporary.name, model_dir / MANIFEST)
+        try:
+            temporary.write(manifest.model_dump_json(by_alias=True))
+            os.fchmod(temporary.fileno(), 0o644)
+        except BaseException:
+            os.unlink(temporary.name)
+            raise
+    try:
+        os.replace(temporary.name, model_dir / MANIFEST)
+    except BaseException:
+        Path(temporary.name).unlink(missing_ok=True)
+        raise
 
 
 # --- which files, and are they all there ---------------------------------------------
@@ -127,7 +136,7 @@ def file_size(path: Path) -> int | None:
         return None
 
 
-def is_complete(model_dir: Path, *, vision_weights: bool = False) -> bool:
+def is_complete(model_dir: Path, *, vision_repo_id: ModelId | None = None) -> bool:
     """Whether every file exo downloads for this model is here and was verified.
 
     With a manifest: it says so, and every listed file has its listed size (files
@@ -144,7 +153,9 @@ def is_complete(model_dir: Path, *, vision_weights: bool = False) -> bool:
     try:
         if _legacy_complete(model_dir):
             return True
-        return vision_weights and _legacy_vision_complete(model_dir)
+        return vision_repo_id is not None and _legacy_vision_complete(
+            model_dir, vision_repo_id
+        )
     except OSError as error:
         logger.warning(f"Can't read {model_dir}: {error}")
         return False
@@ -167,10 +178,45 @@ def _legacy_complete(model_dir: Path) -> bool:
     return True
 
 
-def _legacy_vision_complete(model_dir: Path) -> bool:
-    return (model_dir / "config.json").is_file() and any(
-        model_dir.rglob("*.safetensors")
+def _legacy_vision_complete(model_dir: Path, repo: ModelId) -> bool:
+    """A vision weights repo older exo fetched (``*.safetensors`` and
+    ``config.json``, no index). Its file-list cache, when there, says exactly which
+    files; otherwise all that can be checked is that nothing is half done."""
+    listed = _old_file_list(repo)
+    if listed is not None:
+        wanted = [
+            (path, size)
+            for path, size in listed
+            if fnmatch.fnmatch(path, "*.safetensors") or path == "config.json"
+        ]
+        return bool(wanted) and all(
+            file_size(model_dir / path) == size for path, size in wanted
+        )
+    return (
+        (model_dir / "config.json").is_file()
+        and any(model_dir.rglob("*.safetensors"))
+        and not any(model_dir.rglob("*" + PARTIAL_SUFFIX))
     )
+
+
+class _OldListEntry(BaseModel):
+    type: str
+    path: str
+    size: int | None = None
+
+
+_old_list: TypeAdapter[list[_OldListEntry]] = TypeAdapter(list[_OldListEntry])
+
+
+def _old_file_list(repo: ModelId) -> list[tuple[str, int | None]] | None:
+    """The file list older exo cached for a repo (path, size), if it is there."""
+    name = repo.normalize()
+    cache = default_dir() / "caches" / name / f"{name}--main--file_list.json"
+    try:
+        entries = _old_list.validate_json(cache.read_bytes())
+    except (OSError, ValidationError):
+        return None
+    return [(e.path, e.size) for e in entries if e.type == "file"]
 
 
 def find_complete(model_id: ModelId, card: ModelCard | None = None) -> Path | None:
@@ -180,7 +226,7 @@ def find_complete(model_id: ModelId, card: ModelCard | None = None) -> Path | No
         return None
     sibling = vision_repo(card)
     if sibling is not None and not any(
-        is_complete(d, vision_weights=True) for d in candidates(sibling)
+        is_complete(d, vision_repo_id=sibling) for d in candidates(sibling)
     ):
         return None
     return found
@@ -270,11 +316,20 @@ def _gb(n: int) -> str:
 # --- deleting ------------------------------------------------------------------------
 
 
-def forget_manifest(repo: ModelId) -> None:
-    """Drop the repo's pinned commit, keeping its files."""
-    for model_dir in candidates(repo):
-        if not is_read_only(model_dir):
-            (model_dir / MANIFEST).unlink(missing_ok=True)
+def writable_copies(repo: ModelId) -> list[Path]:
+    return [d for d in candidates(repo) if not is_read_only(d)]
+
+
+def forget_manifest(model_dir: Path) -> None:
+    """Drop the dir's pinned commit, keeping its files."""
+    (model_dir / MANIFEST).unlink(missing_ok=True)
+
+
+def drop_partials(model_dir: Path) -> None:
+    """Remove a dir's unfinished files and pinned commit (the download moved)."""
+    for path in model_dir.rglob("*" + PARTIAL_SUFFIX):
+        path.unlink(missing_ok=True)
+    forget_manifest(model_dir)
 
 
 def delete(model_id: ModelId) -> bool:

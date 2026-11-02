@@ -9,9 +9,9 @@ import aiohttp
 from anyio import to_thread
 
 from exo.download import store, transfer
-from exo.download.hub import Hub, NotFoundError, new_session
+from exo.download.hub import Hub, NotFoundError, new_session, proxy_for
 from exo.download.store import Manifest
-from exo.download.transfer import DownloadSettings, Part, Progress
+from exo.download.transfer import DownloadSettings, Locks, Part, Progress
 from exo.shared.models.model_cards import ModelCard
 from exo.shared.types.common import ModelId
 
@@ -43,16 +43,25 @@ def create_http_session(
     auto_decompress: bool = False,
     timeout_profile: Literal["short", "long"] = "long",
 ) -> aiohttp.ClientSession:
+    # one proxy for the session's requests, as before (any host)
+    proxy = proxy_for("https://")
     if timeout_profile == "short":
         return new_session(
             connect_timeout=10,
             idle_timeout=30,
             total_timeout=30,
             auto_decompress=auto_decompress,
+            proxy=proxy,
         )
     return new_session(
-        connect_timeout=60, idle_timeout=60, auto_decompress=auto_decompress
+        connect_timeout=60,
+        idle_timeout=60,
+        auto_decompress=auto_decompress,
+        proxy=proxy,
     )
+
+
+_TRIES = 3
 
 
 async def download_file_with_retry(
@@ -91,18 +100,17 @@ async def download_file_with_retry(
             )
 
         try:
+            # it answers an API call: a few tries, as before, not a long wait
             manifest = await transfer.retrying(
-                locate,
-                progress,
-                settings,
-                give_up_after=settings.unreachable_after,
-                giving_up="Can't reach Hugging Face",
+                locate, progress, settings, max_tries=_TRIES
             )
             file = next((f for f in manifest.files if f.path == path), None)
             if file is None:
                 raise FileNotFoundError(f"{path} is not in {model_id}.")
             part = Part(model_id, target_dir, manifest, check_index=False)
-            await transfer.fetch_file(hub, part, file, progress, settings)
+            await transfer.fetch_file(
+                hub, part, file, progress, settings, Locks(), max_tries=_TRIES
+            )
         except NotFoundError as error:
             raise FileNotFoundError(error.message) from error
     on_progress(file.size, file.size, True)

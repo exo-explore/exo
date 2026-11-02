@@ -187,7 +187,7 @@ class DownloadCoordinator:
         elif self.offline:
             await self._fail(model, f"Offline, and {model_id} isn't fully downloaded.")
         else:
-            self._launch(model, status)
+            await self._launch(model, status)
 
     async def _cancel(self, model_id: ModelId) -> None:
         model = self._models.get(model_id)
@@ -238,13 +238,16 @@ class DownloadCoordinator:
 
     # --- running a download --------------------------------------------------------
 
-    def _launch(self, model: _Model, initial: DownloadProgress) -> None:
+    async def _launch(self, model: _Model, initial: DownloadProgress) -> None:
         running = _Running(Progress())
         if isinstance(initial, DownloadPending):
             running.initial = initial
         model.running = running
         model.generation += 1
-        # the status stays as it was until the files are listed and the dir chosen
+        # Ongoing at once, so the cluster sees it running (and the master can
+        # cancel it) while the files are still being listed
+        model.status = self._ongoing(model, running)
+        await self._send(model.status)
         self._tg.start_soon(self._download, model, running)
         self._tg.start_soon(self._report, model, running)
 
@@ -302,12 +305,10 @@ class DownloadCoordinator:
                             card,
                             progress,
                             self._locks,
-                            lambda: self._reserved(model),
+                            lambda repo: self._reserved(model, repo),
                         ),
                         progress,
                         settings,
-                        give_up_after=settings.unreachable_after,
-                        giving_up="Can't reach Hugging Face",
                     )
                     running.planned = True
                     await self._announce_progress(model, running)
@@ -317,17 +318,25 @@ class DownloadCoordinator:
                     if attempt == 2:
                         raise
                     logger.warning(f"{error.repo}: pinned commit gone, pinning again")
-                    await to_thread.run_sync(store.forget_manifest, error.repo)
+                    running.planned = False
+                    for directory in store.writable_copies(error.repo):
+                        async with self._locks.directory(directory):
+                            await to_thread.run_sync(store.forget_manifest, directory)
                     progress.reset()
         raise AssertionError("unreachable")
 
-    def _reserved(self, excluding: _Model) -> dict[Path, int]:
-        """Bytes other running downloads still need, by models dir."""
-        reserved: dict[Path, int] = {}
+    def _reserved(self, excluding: _Model, repo: ModelId) -> dict[Path, int]:
+        """Bytes other running downloads still need, by models dir; a repo dir two
+        downloads share (a vision weights repo) counts once, and ``repo`` not at all."""
+        by_dir: dict[Path, int] = {}
         for model in self._models.values():
             if model.running is not None and model is not excluding:
-                for root, left in model.running.progress.remaining().items():
-                    reserved[root] = reserved.get(root, 0) + left
+                for directory, left in model.running.progress.remaining().items():
+                    if directory.name != repo.normalize():
+                        by_dir[directory] = max(by_dir.get(directory, 0), left)
+        reserved: dict[Path, int] = {}
+        for directory, left in by_dir.items():
+            reserved[directory.parent] = reserved.get(directory.parent, 0) + left
         return reserved
 
     async def _report(self, model: _Model, running: _Running) -> None:

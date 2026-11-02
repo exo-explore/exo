@@ -909,7 +909,9 @@ async def test_progress_is_truthful_and_paced(
         for status in ongoing:
             progress = status.download_progress
             assert progress.downloaded.in_bytes <= progress.total.in_bytes
-            assert progress.total.in_bytes == total_bytes(repo)
+            # 0 of 0 while the files are being listed, then the real total
+            assert progress.total.in_bytes in (0, total_bytes(repo))
+        assert ongoing[-1].download_progress.total.in_bytes == total_bytes(repo)
 
 
 async def test_file_list_pages_are_all_followed(

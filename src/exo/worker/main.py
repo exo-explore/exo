@@ -112,9 +112,10 @@ class Worker:
         self._inputs_lost: set[TaskId] = set()
 
         self._download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=0.5, cap=10.0)
-        # a failed download is asked for again after 30 s, doubling up to 5 min
-        self._failed_download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(
-            base=30.0, cap=300.0
+        # an instance asks again for its failed download at once, then after 30 s,
+        # doubling up to 5 min
+        self._failed_download_backoff: KeyedBackoff[InstanceId] = KeyedBackoff(
+            base=15.0, cap=300.0
         )
         self._instance_backoff: KeyedBackoff[InstanceId] = KeyedBackoff(
             base=0.5, cap=10.0
@@ -391,7 +392,7 @@ class Worker:
                             task_id=task.task_id, task_status=TaskStatus.Complete
                         )
                     )
-                case DownloadModel(shard_metadata=shard):
+                case DownloadModel(shard_metadata=shard, instance_id=instance_id):
                     model_id = shard.model_card.model_id
                     self._download_backoff.record_attempt(model_id)
                     if any(
@@ -399,7 +400,7 @@ class Worker:
                         and download.shard_metadata.model_card.model_id == model_id
                         for download in self.state.downloads.get(self.node_id, [])
                     ):
-                        self._failed_download_backoff.record_attempt(model_id)
+                        self._failed_download_backoff.record_attempt(instance_id)
 
                     found_path = await to_thread.run_sync(
                         resolve_existing_model, model_id, shard.model_card
@@ -529,7 +530,7 @@ class Worker:
                     if (instance := self.state.instances.get(instance_id)) is not None:
                         model_id = instance.shard_assignments.model_id
                         self._download_backoff.reset(model_id)
-                        self._failed_download_backoff.reset(model_id)
+                    self._failed_download_backoff.reset(instance_id)
 
                     await self._start_runner_task(task)
                 case task:

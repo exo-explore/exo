@@ -1,5 +1,5 @@
 import exo.worker.plan as plan_mod
-from exo.shared.types.common import ModelId, NodeId
+from exo.shared.types.common import NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import LoadModel
 from exo.shared.types.worker.downloads import (
@@ -261,7 +261,7 @@ def _plan_with(
     runner: FakeRunnerSupervisor,
     instances: dict[InstanceId, Instance],
     local: list[DownloadProgress],
-    failed_backoff: KeyedBackoff[ModelId],
+    failed_backoff: KeyedBackoff[InstanceId],
 ) -> object:
     return plan_mod.plan(
         node_id=NODE_A,
@@ -288,12 +288,26 @@ def test_plan_asks_again_for_a_stopped_download_whatever_the_runner_is_doing():
 def test_plan_asks_again_for_a_failed_download_with_its_own_backoff():
     runner, instances, shard = _connected_runner_of_two_node_instance()
     failed = DownloadFailed(shard_metadata=shard, node_id=NODE_A, error_message="x")
-    failed_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=30.0, cap=300.0)
+    failed_backoff: KeyedBackoff[InstanceId] = KeyedBackoff(base=15.0, cap=300.0)
     assert isinstance(
         _plan_with(runner, instances, [failed], failed_backoff), plan_mod.DownloadModel
     )
-    failed_backoff.record_attempt(MODEL_A_ID)
+    failed_backoff.record_attempt(INSTANCE_1_ID)
     assert _plan_with(runner, instances, [failed], failed_backoff) is None
+
+
+def test_a_new_instance_is_not_held_back_by_an_old_instances_failures():
+    """The user fixes the cause (frees disk, sets HF_TOKEN) and places a new
+    instance: its download, still shown Failed, is asked for at once."""
+    runner, instances, shard = _connected_runner_of_two_node_instance()
+    failed = DownloadFailed(shard_metadata=shard, node_id=NODE_A, error_message="x")
+    failed_backoff: KeyedBackoff[InstanceId] = KeyedBackoff(base=15.0, cap=300.0)
+    old_instance = InstanceId()
+    for _ in range(4):  # the old instance's asks over several minutes
+        failed_backoff.record_attempt(old_instance)
+    assert isinstance(
+        _plan_with(runner, instances, [failed], failed_backoff), plan_mod.DownloadModel
+    )
 
 
 def test_plan_leaves_a_running_download_alone():

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import os
 import ssl
+import urllib.request
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from typing import final
@@ -76,11 +77,14 @@ def new_session(
     idle_timeout: float,
     total_timeout: float | None = None,
     auto_decompress: bool = False,
+    proxy: str | None = None,
 ) -> aiohttp.ClientSession:
-    """A session honouring SSL_CERT_FILE and the usual proxy variables.
+    """A session honouring SSL_CERT_FILE, and ``proxy`` for every request.
 
     ``idle_timeout`` is the longest wait for the next bytes; there is no limit on
-    a whole request unless ``total_timeout`` is given.
+    a whole request unless ``total_timeout`` is given. The environment is not
+    trusted wholesale (that would also send ~/.netrc credentials, which clash with
+    HF_TOKEN): proxies are chosen per request by :func:`proxy_for`.
     """
     ssl_context = ssl.create_default_context(
         cafile=os.getenv("SSL_CERT_FILE") or certifi.where()
@@ -88,14 +92,25 @@ def new_session(
     return aiohttp.ClientSession(
         auto_decompress=auto_decompress,
         connector=aiohttp.TCPConnector(ssl=ssl_context),
-        # HTTP(S)_PROXY in either case, and NO_PROXY
-        trust_env=True,
+        proxy=proxy,
         timeout=aiohttp.ClientTimeout(
             total=total_timeout,
             sock_connect=connect_timeout,
             sock_read=idle_timeout,
         ),
     )
+
+
+def proxy_for(url: str) -> str | None:
+    """The proxy from HTTPS_PROXY or HTTP_PROXY (either case) for ``url``, unless
+    NO_PROXY exempts its host."""
+    proxies = urllib.request.getproxies_environment()
+    host = (urlsplit(url).hostname or "").lower()
+    for entry in proxies.get("no", "").replace(" ", "").lower().split(","):
+        entry = entry.lstrip(".")
+        if entry == "*" or (entry and (host == entry or host.endswith("." + entry))):
+            return None
+    return proxies.get("https") or proxies.get("http")
 
 
 def parse_retry_after(headers: Mapping[str, str]) -> float | None:
@@ -244,7 +259,9 @@ class Hub:
         async with (
             network_errors(),
             asyncio.timeout(self._metadata_timeout),
-            self._session.get(url, headers=self._headers) as response,
+            self._session.get(
+                url, headers=self._headers, proxy=proxy_for(url)
+            ) as response,
         ):
             _raise_for_status(response, repo, "")
             body = await response.read()
@@ -279,10 +296,6 @@ class Hub:
             for entry in entries:
                 if entry.type != "file":
                     continue
-                if not is_safe_path(entry.path):
-                    raise PermanentError(
-                        f"{repo} lists a file exo won't write: {entry.path!r}."
-                    )
                 files.append(
                     RepoFile(
                         path=entry.path,
@@ -304,7 +317,7 @@ class Hub:
         url = f"{self._endpoint}/{repo}/resolve/{revision}/{quote(path)}"
         async with (
             network_errors(),
-            self._session.get(url, headers=headers) as response,
+            self._session.get(url, headers=headers, proxy=proxy_for(url)) as response,
         ):
             _raise_for_status(response, repo, path)
             yield response

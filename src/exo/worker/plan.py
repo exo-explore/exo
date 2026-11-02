@@ -52,7 +52,7 @@ def plan(
     tasks: Mapping[TaskId, Task],
     instance_backoff: KeyedBackoff[InstanceId],
     download_backoff: KeyedBackoff[ModelId],
-    failed_download_backoff: KeyedBackoff[ModelId] | None = None,
+    failed_download_backoff: KeyedBackoff[InstanceId] | None = None,
 ) -> Task | None:
     # A runner that has yet to pick up the last task sent to it still has the status from
     # before that task: starting the next phase from it would send the task again. Such a
@@ -73,7 +73,7 @@ def plan(
             runners,
             global_download_status,
             download_backoff,
-            failed_download_backoff or download_backoff,
+            failed_download_backoff or KeyedBackoff(),
         )
         or _init_distributed_backend(settled, all_runners)
         or _load_model(settled, all_runners, global_download_status)
@@ -151,7 +151,7 @@ def _model_needs_download(
     runners: Mapping[RunnerId, RunnerSupervisor],
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
     download_backoff: KeyedBackoff[ModelId],
-    failed_download_backoff: KeyedBackoff[ModelId],
+    failed_download_backoff: KeyedBackoff[InstanceId],
 ) -> DownloadModel | None:
     """Ask for the model of each local runner that hasn't loaded it, until it is
     downloaded.
@@ -159,8 +159,8 @@ def _model_needs_download(
     That includes runners already connecting to the rest of their instance (a
     multi-node instance connects before its downloads finish). A download that
     isn't running (never started, stopped, or failed) is asked for again; a failed
-    one with a slower backoff. Models no instance on this node needs are never
-    asked for.
+    one with a slower backoff, kept per instance, so a new instance asks at once.
+    Models no instance on this node needs are never asked for.
     """
     local_downloads = global_download_status.get(node_id, [])
     download_status = {
@@ -173,15 +173,15 @@ def _model_needs_download(
         ):
             continue  # loading or past it: the model is on disk
         model_id = runner.bound_instance.bound_shard.model_card.model_id
+        instance_id = runner.bound_instance.instance.instance_id
         status = download_status.get(model_id)
         if isinstance(status, (DownloadOngoing, DownloadCompleted)):
             continue
-        backoff = (
-            failed_download_backoff
+        if (
+            failed_download_backoff.should_proceed(instance_id)
             if isinstance(status, DownloadFailed)
-            else download_backoff
-        )
-        if backoff.should_proceed(model_id):
+            else download_backoff.should_proceed(model_id)
+        ):
             return DownloadModel(
                 instance_id=runner.bound_instance.instance.instance_id,
                 shard_metadata=runner.bound_instance.bound_shard,
