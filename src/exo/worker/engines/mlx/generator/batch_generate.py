@@ -66,6 +66,8 @@ from exo.worker.runner.bootstrap import logger
 
 _MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
 REMOTE_PREFILL_MIN_TOKENS = 1000
+# At most one progress report per background fetch per this many seconds.
+REMOTE_PREFILL_PROGRESS_INTERVAL_SECONDS = 1.0
 
 
 def _stop_sequences(task_params: TextGenerationTaskParams) -> list[str]:
@@ -112,6 +114,7 @@ class _PreparedSubmission:
     media_regions: list[MediaRegion]
     is_bench: bool
     on_generation_token: Callable[[], None] | None
+    on_prefill_progress: Callable[[int, int], None] | None
 
 
 @dataclass(eq=False)
@@ -284,6 +287,7 @@ class ExoBatchGenerator:
                     media_regions=media_regions,
                     is_bench=is_bench,
                     on_generation_token=on_generation_token,
+                    on_prefill_progress=on_prefill_progress,
                 ),
             )
             return placeholder
@@ -331,6 +335,7 @@ class ExoBatchGenerator:
             media_regions=media_regions,
             is_bench=is_bench,
             on_generation_token=on_generation_token,
+            on_prefill_progress=on_prefill_progress,
         )
         return self._insert_prefilled(prepared, _prefill_tps, cache_snapshots)
 
@@ -450,6 +455,8 @@ class ExoBatchGenerator:
                 logger.opt(exception=True).warning(
                     "Remote prefill failed, falling back to local prefill"
                 )
+                # With its progress reports: a long local prefill that reports nothing
+                # is taken for a stuck runner. No cancellation callback, as before.
                 prefill_tps, _, cache_snapshots = prefill(
                     self.model,
                     self.tokenizer,
@@ -457,7 +464,7 @@ class ExoBatchGenerator:
                     prepared.prompt_tokens[:-1],
                     prepared.cache,
                     self.group,
-                    None,
+                    prepared.on_prefill_progress,
                     None,
                 )
             prepared = self._revalidate_prefix_match(prepared)
@@ -499,7 +506,22 @@ class ExoBatchGenerator:
             is_exact_hit=prepared.is_exact_hit and current is not None,
         )
 
+    def _report_remote_prefill_progress(self) -> None:
+        """Report how far each background fetch has got, on the engine thread.
+
+        While a request is being fetched these are its only reports; without them a
+        runner whose only request streams its prefill for longer than
+        RUNNER_STALL_TIMEOUT is stopped as stuck.
+        """
+        for handle, prepared in self._pending_remote_prefills.values():
+            if prepared.on_prefill_progress is None:
+                continue
+            progress = handle.take_progress(REMOTE_PREFILL_PROGRESS_INTERVAL_SECONDS)
+            if progress is not None:
+                prepared.on_prefill_progress(*progress)
+
     def step(self) -> list[tuple[int, GenerationResponse]]:
+        self._report_remote_prefill_progress()
         self._insert_fetched_remote_prefills()
         if not self._batch_has_work:
             if self._pending_remote_prefills:

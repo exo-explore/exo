@@ -46,6 +46,7 @@ def _prepared(matched_index: int | None) -> _PreparedSubmission:
         media_regions=[],
         is_bench=False,
         on_generation_token=None,
+        on_prefill_progress=None,
     )
 
 

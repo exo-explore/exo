@@ -1,3 +1,4 @@
+import math
 import threading
 import time
 from collections.abc import Callable
@@ -81,6 +82,11 @@ class RemotePrefillHandle:
     The thread only does socket I/O. MLX is not thread safe, so ingest() must run on
     the engine thread. Errors from the fetch are kept and raised by ingest(), where
     the caller falls back to local prefill.
+
+    The thread also counts what has arrived, and take_progress() hands that to the
+    engine thread to report: the runner supervisor stops a generating runner that
+    reports nothing for RUNNER_STALL_TIMEOUT (90 s), and a remote prefill can stream
+    for longer than that.
     """
 
     def __init__(
@@ -97,6 +103,13 @@ class RemotePrefillHandle:
         self._start_pos = start_pos
         self._result: PrefillResult | None = None
         self._error: Exception | None = None
+        # Written by the fetch thread, read by the engine thread (ints, under the GIL).
+        self.total_tokens = int(prompt_tokens.shape[0])
+        self._num_layers = 0
+        self._layer_tokens = 0
+        self._updates = 0
+        self._reported_updates = 0
+        self._reported_at = -math.inf
         request = PrefillRequest(
             model_id=model_id,
             token_ids=cast(list[int], prompt_tokens.tolist()),
@@ -113,10 +126,43 @@ class RemotePrefillHandle:
 
     def _fetch(self, endpoint: str, request: PrefillRequest) -> None:
         try:
-            self._result = remote_prefill_fetch(endpoint, request)
+            self._result = remote_prefill_fetch(
+                endpoint,
+                request,
+                on_header=self._on_header,
+                on_kv_chunk=self._on_kv_chunk,
+            )
         except Exception as error:
             self._error = error
         self._received = time.perf_counter()
+
+    def _on_header(self, header: Header) -> None:
+        self._num_layers = header.num_layers
+        self._updates += 1
+
+    def _on_kv_chunk(self, chunk: KVChunk, _chunks_received: int) -> None:
+        self._layer_tokens += chunk.num_tokens
+        self._updates += 1
+
+    def take_progress(self, interval: float) -> tuple[int, int] | None:
+        """(tokens received, prompt tokens) if more has arrived since the last report
+        and at least ``interval`` seconds have passed; for the engine thread.
+
+        Tokens received is the tokens of every layer's chunks over the layer count, so
+        it rises with the stream for any chunking and ends at the prompt length.
+        """
+        updates = self._updates
+        now = time.monotonic()
+        if updates == self._reported_updates or now - self._reported_at < interval:
+            return None
+        self._reported_updates = updates
+        self._reported_at = now
+        processed = (
+            min(self._layer_tokens // self._num_layers, self.total_tokens)
+            if self._num_layers > 0
+            else 0
+        )
+        return processed, self.total_tokens
 
     @property
     def done(self) -> bool:

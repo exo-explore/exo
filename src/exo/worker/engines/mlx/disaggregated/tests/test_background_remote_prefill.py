@@ -1,5 +1,7 @@
 import threading
 import time
+from collections.abc import Callable
+from types import SimpleNamespace
 from typing import BinaryIO
 
 import mlx.core as mx
@@ -7,7 +9,14 @@ import numpy as np
 import pytest
 from mlx_lm.models.cache import KVCache
 
+import exo.worker.engines.mlx.generator.batch_generate as batch_generate_module
 from exo.utils.ports import random_ephemeral_port
+from exo.worker.disaggregated.protocol import (
+    Header,
+    write_done,
+    write_header,
+    write_kv_chunk,
+)
 from exo.worker.disaggregated.server import PrefillRequest, PrefillServer
 from exo.worker.engines.mlx.disaggregated.adapter import write_cache_to_wire
 from exo.worker.engines.mlx.generator.batch_generate import ExoBatchGenerator
@@ -178,3 +187,155 @@ def test_cancelled_background_fetch_is_never_inserted_or_answered() -> None:
     finally:
         release.set()
         server.stop()
+
+
+_STREAM_LAYERS = 6
+_STREAM_HEADS = 2
+_STREAM_HEAD_DIM = 4
+
+
+def _slow_stream(gap: float) -> Callable[[PrefillRequest, BinaryIO], bool]:
+    """A prefill node that streams KV as it computes: header and layer 0 at once, then
+    one layer per gap."""
+    blob = bytes(_SEQUENCE_LENGTH * _STREAM_HEADS * _STREAM_HEAD_DIM * 2)
+
+    def resolve(_job: PrefillRequest, wfile: BinaryIO) -> bool:
+        write_header(wfile, Header(num_layers=_STREAM_LAYERS, dtype="bfloat16"))
+        for layer in range(_STREAM_LAYERS):
+            if layer > 0:
+                time.sleep(gap)
+            write_kv_chunk(
+                wfile,
+                layer_idx=layer,
+                num_tokens=_SEQUENCE_LENGTH,
+                n_heads=_STREAM_HEADS,
+                head_dim=_STREAM_HEAD_DIM,
+                dtype="bfloat16",
+                keys=blob,
+                values=blob,
+            )
+            wfile.flush()
+        write_done(wfile, _SEQUENCE_LENGTH)
+        wfile.flush()
+        return True
+
+    return resolve
+
+
+@pytest.mark.slow
+def test_engine_reports_background_fetch_progress_while_it_streams() -> None:
+    # The runner supervisor stops a generating runner that reports nothing for
+    # RUNNER_STALL_TIMEOUT. A request being fetched in the background has no other
+    # reports, so step() relays the fetch's progress while the stream arrives.
+    gap = 0.15
+    port = random_ephemeral_port()
+    server = PrefillServer(resolve=_slow_stream(gap), host="127.0.0.1", port=port)
+    times: list[float] = []
+    reports: list[tuple[int, int]] = []
+    start = time.monotonic()
+
+    def on_progress(processed: int, total: int) -> None:
+        times.append(time.monotonic() - start)
+        reports.append((processed, total))
+
+    try:
+        handle = RemotePrefillHandle(
+            mx.arange(_SEQUENCE_LENGTH),
+            endpoint=f"127.0.0.1:{port}",
+            request_id="request-progress",
+            model_id="m",
+        )
+        gen = _empty_generator()
+        # Only the progress callback of the queued request is used before it is done.
+        gen._pending_remote_prefills[-1] = (  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+            handle,
+            SimpleNamespace(on_prefill_progress=on_progress),
+        )
+        original = batch_generate_module.REMOTE_PREFILL_PROGRESS_INTERVAL_SECONDS
+        batch_generate_module.REMOTE_PREFILL_PROGRESS_INTERVAL_SECONDS = 0.0
+        try:
+            while not handle.done:
+                gen._report_remote_prefill_progress()  # pyright: ignore[reportPrivateUsage]
+                time.sleep(0.002)
+            gen._report_remote_prefill_progress()  # pyright: ignore[reportPrivateUsage]
+        finally:
+            batch_generate_module.REMOTE_PREFILL_PROGRESS_INTERVAL_SECONDS = original
+        end = time.monotonic() - start
+    finally:
+        server.stop()
+
+    assert end > (_STREAM_LAYERS - 1) * gap
+    marks = [0.0, *times, end]
+    silences = [b - a for a, b in zip(marks, marks[1:], strict=False)]
+    assert max(silences) < 2 * gap, silences
+    processed = [p for p, _ in reports]
+    assert processed == sorted(processed)
+    assert reports[-1] == (_SEQUENCE_LENGTH, _SEQUENCE_LENGTH)
+
+
+@pytest.mark.slow
+def test_background_fetch_progress_is_rate_limited() -> None:
+    port = random_ephemeral_port()
+    server = PrefillServer(resolve=_slow_stream(0.0), host="127.0.0.1", port=port)
+    try:
+        handle = RemotePrefillHandle(
+            mx.arange(_SEQUENCE_LENGTH),
+            endpoint=f"127.0.0.1:{port}",
+            request_id="request-rate",
+            model_id="m",
+        )
+        _wait_until_done(handle)
+    finally:
+        server.stop()
+
+    # Everything has arrived: one report, then nothing new until more arrives.
+    assert handle.take_progress(60.0) == (_SEQUENCE_LENGTH, _SEQUENCE_LENGTH)
+    assert handle.take_progress(0.0) is None
+
+
+def test_failed_background_fetch_falls_back_with_progress_reports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The local fallback of a failed fetch reports its progress like any local prefill:
+    # a long prefill without reports is taken for a stuck runner.
+    calls: list[object] = []
+
+    def fake_prefill(*args: object) -> tuple[float, int, list[object]]:
+        calls.append(args[6])
+        return 1.0, _SEQUENCE_LENGTH, []
+
+    class _FailedHandle:
+        done = True
+
+        def ingest(self, _cache: object) -> tuple[float, int, list[object]]:
+            raise ConnectionError("prefill node went away")
+
+    def on_progress(_processed: int, _total: int) -> None:
+        pass
+
+    monkeypatch.setattr(batch_generate_module, "prefill", fake_prefill)
+    gen = _empty_generator()
+    gen.model = None  # pyright: ignore[reportAttributeAccessIssue]
+    gen.tokenizer = None  # pyright: ignore[reportAttributeAccessIssue]
+    gen.group = None
+    gen.kv_prefix_cache = None
+
+    def fake_insert_prefilled(*_args: object) -> int:
+        return 7
+
+    monkeypatch.setattr(gen, "_insert_prefilled", fake_insert_prefilled)
+    gen._pending_remote_prefills[-1] = (  # pyright: ignore[reportPrivateUsage, reportArgumentType]
+        _FailedHandle(),
+        SimpleNamespace(
+            sampler=None,
+            prompt_tokens=mx.arange(_SEQUENCE_LENGTH),
+            cache=[KVCache()],
+            matched_index=None,
+            on_prefill_progress=on_progress,
+        ),
+    )
+
+    gen._insert_fetched_remote_prefills()  # pyright: ignore[reportPrivateUsage]
+
+    assert calls == [on_progress]
+    assert gen._placeholder_by_uid == {7: -1}  # pyright: ignore[reportPrivateUsage]
