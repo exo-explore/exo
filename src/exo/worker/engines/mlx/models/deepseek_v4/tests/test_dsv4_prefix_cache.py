@@ -3,12 +3,15 @@ trim_cache with an empty snapshot and with none, a prompt that shares only a few
 tokens (restored from the 0-token snapshot), shared prefixes that end inside a chunk
 (including one past the first row of the ratio-128 compressor) and an exact hit. Each
 restored cache must continue exactly as the same chunks prefilled without the prefix cache.
-The model has V4's real sliding window and compression ratios, at small widths."""
+The model has V4's real sliding window and compression ratios, at small widths. Also
+DeepSeek V4.1, whose cache only comes back from a snapshot, on test_dsv41_model's tiny
+model: partial hits restored from the snapshot before the shared prefix, twice."""
 
 from collections.abc import Iterator
 from typing import cast
 
 import mlx.core as mx
+import numpy as np
 import pytest
 
 from exo.worker.engines.mlx.cache import (
@@ -20,6 +23,11 @@ from exo.worker.engines.mlx.cache import (
 )
 from exo.worker.engines.mlx.models.deepseek_v4 import model as dsv4
 from exo.worker.engines.mlx.models.deepseek_v4.model import DeepseekV4Cache
+from exo.worker.engines.mlx.models.deepseek_v41 import model as dsv41
+from exo.worker.engines.mlx.models.deepseek_v41.model import LayerCache
+from exo.worker.engines.mlx.models.deepseek_v41.tests.test_dsv41_model import (
+    _tiny_model as tiny_dsv41_model,  # pyright: ignore[reportPrivateUsage]
+)
 from exo.worker.engines.mlx.types import KVCacheType
 from exo.worker.engines.mlx.types import Model as ExoModel
 
@@ -193,3 +201,64 @@ def test_exact_prefix_hit_restores_the_last_kept_snapshot(model: dsv4.Model) -> 
     assert remaining.shape[0] == 300 - 256
     reused = _last_logits(model, remaining, cache)
     assert mx.array_equal(reused, _from_scratch(model, prompt, 256))
+
+
+V41_CHUNK = 8
+
+
+@pytest.fixture(scope="module")
+def dsv41_model() -> Iterator[dsv41.Model]:
+    yield tiny_dsv41_model()
+
+
+def _dsv41_prefill_with_snapshots(
+    model: dsv41.Model, tokens: mx.array, cache: list[LayerCache]
+) -> list[CacheSnapshot]:
+    """As exo's prefill: a snapshot before the first chunk and after every chunk."""
+    snapshots = [snapshot_ssm_states(cast(KVCacheType, cache))]
+    for start in range(0, tokens.shape[0], V41_CHUNK):
+        mx.eval(model(tokens[None, start : start + V41_CHUNK], cache))
+        snapshots.append(snapshot_ssm_states(cast(KVCacheType, cache)))
+    return snapshots
+
+
+def _dsv41_last_logits(
+    model: dsv41.Model, tokens: mx.array, cache: list[LayerCache]
+) -> mx.array:
+    return model(tokens[None], cache)[0, -1]
+
+
+@pytest.mark.parametrize(("shared_tokens", "restore_pos"), [(3, 0), (21, 16), (40, 40)])
+def test_deepseek_v41_prefix_hit_restores_the_snapshot_before_the_shared_prefix(
+    dsv41_model: dsv41.Model, shared_tokens: int, restore_pos: int
+) -> None:
+    """V4.1's LayerCache can't be trimmed, so a partial hit replaces it with a copy of the
+    last snapshot at or before the shared prefix. Continuing from it gives what the same
+    chunks give on a fresh cache, and so does restoring the entry a second time after the
+    first restored copy was used."""
+    rng = np.random.default_rng(4)
+    first_ids = rng.integers(0, 64, size=48)
+    second_ids = first_ids.copy()
+    second_ids[shared_tokens:] = rng.integers(0, 64, size=48 - shared_tokens)
+    first, second = mx.array(first_ids), mx.array(second_ids)
+
+    first_cache = dsv41_model.make_cache()
+    snapshots = _dsv41_prefill_with_snapshots(dsv41_model, first, first_cache)
+    prefix_cache = KVPrefixCache(None)
+    prefix_cache.add_kv_cache(first, cast(KVCacheType, first_cache), snapshots)
+
+    reference = dsv41_model.make_cache()
+    _dsv41_prefill_with_snapshots(dsv41_model, second[:restore_pos], reference)
+    expected = _dsv41_last_logits(dsv41_model, second[restore_pos:], reference)
+
+    for _ in range(2):
+        cache, remaining, matched, exact = prefix_cache.get_kv_cache(
+            cast(ExoModel, cast(object, dsv41_model)), second
+        )
+        assert matched == 0 and not exact
+        assert remaining.shape[0] == second.shape[0] - restore_pos
+        layers = [c for c in cache if isinstance(c, LayerCache)]
+        assert len(layers) == len(cache)
+        assert all(layer.offset == restore_pos for layer in layers)
+        reused = _dsv41_last_logits(dsv41_model, remaining, layers)
+        assert mx.array_equal(reused, expected)
