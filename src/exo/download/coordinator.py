@@ -1,28 +1,37 @@
+"""Model downloads on one node: one state machine per model.
+
+    idle ──Start──> running ──done──> completed
+      ^                │
+      │ Cancel/Delete  │ an error retrying can't fix
+      │                v
+      └─────────── failed ──Start, or a retry after a backoff──> running
+
+Idle models are reported from disk: Completed, or Pending with the bytes already
+there. Cancel and Delete stop a running download and wait for it to end before
+anything else happens. Commands never wait on the network.
+"""
+
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from itertools import count
 from pathlib import Path
 
 import anyio
-from anyio import BrokenResourceError, ClosedResourceError, current_time, to_thread
+from anyio import BrokenResourceError, ClosedResourceError, to_thread
 from loguru import logger
 
-from exo.download.download_utils import (
-    RepoDownloadProgress,
-    delete_model,
-    is_read_only_model_dir,
-    map_repo_download_progress_to_download_progress_data,
-    resolve_existing_model,
-)
-from exo.download.shard_downloader import ShardDownloader
+from exo.download import store, transfer
+from exo.download.hub import Hub, PermanentError, RevisionGoneError
+from exo.download.store import NotEnoughSpaceError
+from exo.download.transfer import DownloadSettings, IntegrityError, Progress
 from exo.routing.event_router import (
     EventRouterBrokenResourceError,
     EventRouterClosedResourceError,
 )
-from exo.shared.constants import EXO_DEFAULT_MODELS_DIR, EXO_MODELS_READ_ONLY_DIRS
 from exo.shared.models import model_cards
-from exo.shared.models.model_cards import ModelId
+from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.commands import (
     CancelDownload,
     DeleteDownload,
@@ -30,10 +39,7 @@ from exo.shared.types.commands import (
     StartDownload,
 )
 from exo.shared.types.common import NodeId
-from exo.shared.types.events import (
-    Event,
-    NodeDownloadProgress,
-)
+from exo.shared.types.events import Event, NodeDownloadProgress
 from exo.shared.types.memory import Memory
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
@@ -41,111 +47,64 @@ from exo.shared.types.worker.downloads import (
     DownloadOngoing,
     DownloadPending,
     DownloadProgress,
+    DownloadProgressData,
 )
 from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
 from exo.utils.channels import Receiver, Sender
 from exo.utils.task_group import TaskGroup
 
-_RESCAN_INTERVAL_SECONDS = 60
-# Each rescan re-announces models with files on this node, so state the master
-# dropped (e.g. after timing this node out) heals within a minute. Models that were
-# never downloaded (the other ~120 known cards) are only announced when they change,
-# and on every this-many-th scan as a safety net.
+# Every rescan re-announces models with files on this node, so a status the master
+# dropped heals within a minute; models never downloaded are announced when they
+# change, and on every this-many-th scan.
 _FULL_RESCAN_EVERY = 10
 
 
-def _has_local_files(status: DownloadProgress) -> bool:
-    return not (isinstance(status, DownloadPending) and status.downloaded.in_bytes == 0)
+@dataclass
+class _Running:
+    progress: Progress
+    scope: anyio.CancelScope = field(default_factory=anyio.CancelScope)
+    done: anyio.Event = field(default_factory=anyio.Event)
+    # held while a progress report is sent, so none can follow the final status
+    reporting: anyio.Lock = field(default_factory=anyio.Lock)
+    stopped: bool = False
+    announced: bool = False
+    # what was on disk when it started, shown until the files are listed
+    initial: DownloadPending | None = None
+
+
+@dataclass
+class _Model:
+    shard: ShardMetadata
+    status: DownloadProgress | None = None
+    running: _Running | None = None
+    # failures in a row, for the retry backoff
+    failures: int = 0
+    # bumped on every change of phase, so stale retry timers and rescans back off
+    generation: int = 0
+
+
+def _full_shard(card: ModelCard) -> ShardMetadata:
+    return PipelineShardMetadata(
+        model_card=card,
+        device_rank=0,
+        world_size=1,
+        start_layer=0,
+        end_layer=card.n_layers,
+        n_layers=card.n_layers,
+    )
 
 
 @dataclass
 class DownloadCoordinator:
     node_id: NodeId
-    shard_downloader: ShardDownloader
+    settings: DownloadSettings
     download_command_receiver: Receiver[ForwarderDownloadCommand]
     event_sender: Sender[Event]
     offline: bool = False
 
-    # Local state
-    download_status: dict[ModelId, DownloadProgress] = field(default_factory=dict)
-    active_downloads: dict[ModelId, anyio.CancelScope] = field(default_factory=dict)
-
+    _models: dict[ModelId, _Model] = field(init=False, default_factory=dict)
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
     _stopped: anyio.Event = field(init=False, default_factory=anyio.Event)
-
-    # Per-model throttle for download progress events
-    _last_progress_time: dict[ModelId, float] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        self.shard_downloader.on_progress(self._download_progress_callback)
-
-    @staticmethod
-    def _default_model_dir(model_id: ModelId) -> str:
-        return str(EXO_DEFAULT_MODELS_DIR / model_id.normalize())
-
-    def _completed_from_path(
-        self,
-        shard: ShardMetadata,
-        found: Path,
-        total: Memory,
-    ) -> DownloadCompleted:
-        return DownloadCompleted(
-            shard_metadata=shard,
-            node_id=self.node_id,
-            total=total,
-            model_directory=str(found),
-            read_only=is_read_only_model_dir(found),
-        )
-
-    async def _download_progress_callback(
-        self, callback_shard: ShardMetadata, progress: RepoDownloadProgress
-    ) -> None:
-        model_id = callback_shard.model_card.model_id
-        throttle_interval_secs = 1.0
-
-        try:
-            if progress.status == "complete":
-                found = await to_thread.run_sync(
-                    resolve_existing_model, model_id, callback_shard.model_card
-                )
-                if found is not None:
-                    completed = self._completed_from_path(
-                        callback_shard, found, progress.total
-                    )
-                else:
-                    completed = DownloadCompleted(
-                        shard_metadata=callback_shard,
-                        node_id=self.node_id,
-                        total=progress.total,
-                        model_directory=self._default_model_dir(model_id),
-                    )
-                self.download_status[model_id] = completed
-                await self.event_sender.send(
-                    NodeDownloadProgress(download_progress=completed)
-                )
-                self._last_progress_time.pop(model_id, None)
-            elif (
-                progress.status == "in_progress"
-                and current_time() - self._last_progress_time.get(model_id, 0.0)
-                > throttle_interval_secs
-            ):
-                ongoing = DownloadOngoing(
-                    node_id=self.node_id,
-                    shard_metadata=callback_shard,
-                    download_progress=map_repo_download_progress_to_download_progress_data(
-                        progress
-                    ),
-                    model_directory=self._default_model_dir(model_id),
-                )
-                self.download_status[model_id] = ongoing
-                await self.event_sender.send(
-                    NodeDownloadProgress(download_progress=ongoing)
-                )
-                self._last_progress_time[model_id] = current_time()
-        except (BrokenResourceError, ClosedResourceError):
-            logger.debug(
-                f"Event stream closed while sending download progress for {model_id}, skipping update"
-            )
 
     async def run(self) -> None:
         logger.info(
@@ -154,349 +113,371 @@ class DownloadCoordinator:
         try:
             async with self._tg as tg:
                 tg.start_soon(self._command_processor)
-                tg.start_soon(self._emit_existing_download_progress)
+                tg.start_soon(self._rescan_loop)
         except* (EventRouterBrokenResourceError, EventRouterClosedResourceError):
-            # Event router has been closed (try-star syntax handles error groups)
             pass
         finally:
-            # don't forget to clean up resources
             self.download_command_receiver.close()
             self.event_sender.close()
-
             self._stopped.set()
 
     async def shutdown(self) -> None:
         self._tg.cancel_tasks()
         await self._stopped.wait()
 
+    async def reannounce(self) -> None:
+        """Send every status again, e.g. to a new master whose state may lack them."""
+        for model in list(self._models.values()):
+            if model.status is not None:
+                await self._send(model.status)
+
+    # --- commands --------------------------------------------------------------------
+
     async def _command_processor(self) -> None:
         with self.download_command_receiver as commands:
-            async for cmd in commands:
-                # Only process commands targeting this node
-                if cmd.command.target_node_id != self.node_id:
+            async for forwarded in commands:
+                command = forwarded.command
+                if command.target_node_id != self.node_id:
                     continue
-
                 try:
-                    match cmd.command:
+                    match command:
                         case StartDownload(shard_metadata=shard):
-                            await self._start_download(shard)
-                        case DeleteDownload(model_id=model_id):
-                            await self._delete_download(model_id)
+                            await self._start(shard)
                         case CancelDownload(model_id=model_id):
-                            await self._cancel_download(model_id)
-                except ValueError as e:
-                    # e.g. a model id that isn't a valid folder name; skip the command,
-                    # don't stop processing downloads
-                    logger.warning(f"Ignoring download command {cmd.command}: {e}")
+                            await self._cancel(model_id)
+                        case DeleteDownload(model_id=model_id):
+                            await self._delete(model_id)
+                except ValueError as error:
+                    # e.g. a model id that isn't a valid folder name
+                    logger.warning(f"Ignoring download command {command}: {error}")
 
-    async def _cancel_download(self, model_id: ModelId) -> None:
-        if model_id in self.active_downloads and model_id in self.download_status:
-            logger.info(f"Cancelling download for {model_id}")
-            self.active_downloads[model_id].cancel()
-            current_status = self.download_status[model_id]
-            downloaded = Memory()
-            total = Memory()
-            if isinstance(current_status, DownloadOngoing):
-                downloaded = current_status.download_progress.downloaded
-                total = current_status.download_progress.total
-            pending = DownloadPending(
-                shard_metadata=current_status.shard_metadata,
-                node_id=self.node_id,
-                model_directory=self._default_model_dir(model_id),
-                downloaded=downloaded,
-                total=total,
-            )
-            self.download_status[model_id] = pending
-            await self.event_sender.send(
-                NodeDownloadProgress(download_progress=pending)
-            )
-
-    async def _start_download(self, shard: ShardMetadata) -> None:
+    async def _start(self, shard: ShardMetadata) -> None:
         model_id = shard.model_card.model_id
-
-        # Check if already downloading, complete, or recently failed
-        if model_id in self.download_status:
-            status = self.download_status[model_id]
-            if isinstance(status, (DownloadOngoing, DownloadCompleted, DownloadFailed)):
-                logger.debug(
-                    f"Download for {model_id} already in progress, complete, or failed, skipping"
-                )
-                # Workers only ask when the cluster state lacks this status (e.g. the
-                # master dropped it after timing this node out), so repeat it.
-                await self.event_sender.send(
-                    NodeDownloadProgress(download_progress=status)
-                )
-                return
-
-        # Check all model directories for pre-existing complete models
-        found_path = await to_thread.run_sync(
-            resolve_existing_model, model_id, shard.model_card
-        )
-        if found_path is not None:
-            logger.info(f"DownloadCoordinator: Model {model_id} found at {found_path}")
-            completed = self._completed_from_path(
-                shard, found_path, shard.model_card.storage_size
-            )
-            self.download_status[model_id] = completed
-            await self.event_sender.send(
-                NodeDownloadProgress(download_progress=completed)
-            )
+        model = self._models.setdefault(model_id, _Model(shard))
+        if model.running is not None or isinstance(model.status, DownloadCompleted):
+            # Workers only ask when the cluster's state lacks this status: repeat it
+            if model.status is not None:
+                await self._send(model.status)
             return
-
-        # Emit pending status
-        progress = DownloadPending(
-            shard_metadata=shard,
-            node_id=self.node_id,
-            model_directory=self._default_model_dir(model_id),
-        )
-        self.download_status[model_id] = progress
-        await self.event_sender.send(NodeDownloadProgress(download_progress=progress))
-
-        # Check initial status from downloader
-        initial_progress = (
-            await self.shard_downloader.get_shard_download_status_for_shard(shard)
-        )
-
-        if initial_progress.status == "complete":
-            found = await to_thread.run_sync(
-                resolve_existing_model, model_id, shard.model_card
+        model.shard = shard
+        model.generation += 1
+        status = await to_thread.run_sync(self._idle_status, model)
+        if isinstance(status, DownloadCompleted):
+            await self._settle(model, status)
+        elif self.offline:
+            await self._fail(
+                model, f"Offline, and {model_id} isn't fully downloaded.", retry=False
             )
-            if found is not None:
-                completed = self._completed_from_path(
-                    shard, found, initial_progress.total
+        else:
+            self._launch(model, status)
+
+    async def _cancel(self, model_id: ModelId) -> None:
+        model = self._models.get(model_id)
+        if model is None:
+            return
+        if model.running is None and not isinstance(model.status, DownloadFailed):
+            return
+        logger.info(f"Cancelling download of {model_id}")
+        await self._stop(model)
+        await self._settle(model, await to_thread.run_sync(self._idle_status, model))
+
+    async def _delete(self, model_id: ModelId) -> None:
+        model = self._models.get(model_id)
+        if (
+            model is not None
+            and isinstance(model.status, DownloadCompleted)
+            and model.status.read_only
+        ):
+            logger.warning(f"Refusing to delete read-only model {model_id}")
+            return
+        if model is not None:
+            await self._stop(model)
+        logger.info(f"Deleting model files for {model_id}")
+        if not await to_thread.run_sync(store.delete, model_id):
+            logger.warning(f"Model {model_id} was not found on disk")
+        if model is not None:
+            await self._settle(
+                model, await to_thread.run_sync(self._idle_status, model)
+            )
+
+    # --- running a download --------------------------------------------------------
+
+    def _launch(self, model: _Model, initial: DownloadProgress) -> None:
+        running = _Running(Progress())
+        if isinstance(initial, DownloadPending):
+            running.initial = initial
+        model.running = running
+        model.generation += 1
+        # announced once the files are listed (or after a progress interval)
+        model.status = self._ongoing(model, running)
+        self._tg.start_soon(self._download, model, running)
+        self._tg.start_soon(self._report, model, running)
+
+    async def _stop(self, model: _Model) -> None:
+        """Stop the running download, if any, and wait until it has ended."""
+        model.generation += 1
+        model.failures = 0
+        running = model.running
+        if running is not None:
+            running.scope.cancel()
+            await running.done.wait()
+
+    async def _download(self, model: _Model, running: _Running) -> None:
+        card = model.shard.model_card
+        outcome: tuple[str, bool] | Path | None = None
+        try:
+            with running.scope:
+                outcome = await self._fetch(model, running)
+        except NotEnoughSpaceError as error:
+            outcome = (error.message, True)
+        except PermanentError as error:
+            outcome = (error.message, not isinstance(error, IntegrityError))
+        except Exception as error:
+            logger.opt(exception=error).error(f"Download of {card.model_id} failed")
+            outcome = (f"Download failed unexpectedly: {type(error).__name__}.", True)
+        finally:
+            running.stopped = True
+            with anyio.CancelScope(shield=True):
+                async with running.reporting:
+                    pass
+            if model.running is running:
+                model.running = None
+            running.done.set()
+        match outcome:
+            case None:
+                pass  # cancelled; whoever cancelled reports the new status
+            case Path() as directory:
+                model.failures = 0
+                await self._settle(model, self._completed(model, directory))
+            case (message, retry):
+                logger.warning(f"Download of {card.model_id} failed: {message}")
+                await self._fail(model, message, retry=retry)
+
+    async def _fetch(self, model: _Model, running: _Running) -> Path:
+        settings = self.settings
+        card, progress = model.shard.model_card, running.progress
+        for attempt in (1, 2):
+            async with Hub.connect(
+                connect_timeout=settings.connect_timeout,
+                idle_timeout=settings.idle_timeout,
+                metadata_timeout=settings.metadata_timeout,
+            ) as hub:
+                try:
+                    parts = await transfer.retrying(
+                        lambda: transfer.plan(
+                            hub, card, progress, lambda: self._reserved(model)
+                        ),
+                        progress,
+                        settings,
+                    )
+                    await self._announce_progress(model, running)
+                    await transfer.download(hub, parts, progress, settings)
+                    return parts[0].model_dir
+                except RevisionGoneError:
+                    if attempt == 2:
+                        raise
+                    logger.warning(
+                        f"{card.model_id}: pinned commit gone, pinning again"
+                    )
+                    await to_thread.run_sync(store.forget_manifests, card)
+                    progress.files.clear()
+        raise AssertionError("unreachable")
+
+    def _reserved(self, excluding: _Model) -> dict[Path, int]:
+        """Bytes other running downloads still need, by models dir."""
+        reserved: dict[Path, int] = {}
+        for model in self._models.values():
+            if model.running is not None and model is not excluding:
+                for root, left in model.running.progress.remaining().items():
+                    reserved[root] = reserved.get(root, 0) + left
+        return reserved
+
+    async def _report(self, model: _Model, running: _Running) -> None:
+        """Send progress at most every ``progress_interval``, and only when it changed."""
+        last_fetched = 0
+        last_speed = 0.0
+        while True:
+            await anyio.sleep(self.settings.progress_interval)
+            if running.stopped:
+                return
+            speed = running.progress.speed()
+            if (
+                running.announced
+                and running.progress.fetched == last_fetched
+                and not (last_speed > 0 and speed == 0)
+            ):
+                continue
+            last_fetched, last_speed = running.progress.fetched, speed
+            await self._announce_progress(model, running, speed)
+
+    async def _announce_progress(
+        self, model: _Model, running: _Running, speed: float = 0.0
+    ) -> None:
+        async with running.reporting:
+            if running.stopped:
+                return
+            running.announced = True
+            model.status = self._ongoing(model, running, speed)
+            await self._send(model.status)
+
+    async def _fail(self, model: _Model, message: str, *, retry: bool) -> None:
+        model.failures += 1
+        model.generation += 1
+        await self._settle(
+            model,
+            DownloadFailed(
+                node_id=self.node_id,
+                shard_metadata=model.shard,
+                error_message=message,
+                model_directory=self._directory(model),
+            ),
+        )
+        if retry:
+            delay = min(
+                self.settings.failed_retry_cap,
+                self.settings.failed_retry_base * 2.0 ** (model.failures - 1),
+            )
+            self._tg.start_soon(self._retry_later, model, model.generation, delay)
+
+    async def _retry_later(self, model: _Model, generation: int, delay: float) -> None:
+        await anyio.sleep(delay)
+        if model.generation == generation and isinstance(model.status, DownloadFailed):
+            logger.info(f"Retrying download of {model.shard.model_card.model_id}")
+            self._launch(model, model.status)
+
+    # --- statuses ----------------------------------------------------------------------
+
+    async def _settle(self, model: _Model, status: DownloadProgress) -> None:
+        model.status = status
+        await self._send(status)
+
+    async def _send(self, status: DownloadProgress) -> None:
+        try:
+            await self.event_sender.send(NodeDownloadProgress(download_progress=status))
+        except (BrokenResourceError, ClosedResourceError):
+            logger.debug("Event stream closed; dropping a download status")
+
+    def _directory(self, model: _Model) -> str:
+        running = model.running
+        if running is not None and running.progress.model_dir is not None:
+            return str(running.progress.model_dir)
+        if model.status is not None and model.status.model_directory:
+            return model.status.model_directory
+        return str(store.default_dir() / model.shard.model_card.model_id.normalize())
+
+    def _completed(self, model: _Model, directory: Path) -> DownloadCompleted:
+        manifest = store.read_manifest(directory)
+        total = (
+            Memory.from_bytes(manifest.total)
+            if manifest is not None
+            else model.shard.model_card.storage_size
+        )
+        return DownloadCompleted(
+            node_id=self.node_id,
+            shard_metadata=model.shard,
+            total=total,
+            model_directory=str(directory),
+            read_only=store.is_read_only(directory),
+        )
+
+    def _idle_status(self, model: _Model) -> DownloadProgress:
+        """Completed or Pending, from what is on disk (blocking)."""
+        card = model.shard.model_card
+        found = store.find_complete(card.model_id, card)
+        if found is not None:
+            return self._completed(model, found)
+        directory = next(
+            (d for d in store.candidates(card.model_id) if not store.is_read_only(d)),
+            None,
+        )
+        downloaded, total = 0, card.storage_size.in_bytes
+        if directory is not None:
+            manifest = store.read_manifest(directory)
+            if manifest is not None:
+                total = manifest.total
+                downloaded = sum(
+                    store.present_bytes(directory, f) for f in manifest.files
                 )
             else:
-                completed = DownloadCompleted(
-                    shard_metadata=shard,
-                    node_id=self.node_id,
-                    total=initial_progress.total,
-                    model_directory=self._default_model_dir(model_id),
-                )
-            self.download_status[model_id] = completed
-            await self.event_sender.send(
-                NodeDownloadProgress(download_progress=completed)
-            )
-            return
-
-        if self.offline:
-            logger.warning(
-                f"Offline mode: model {model_id} is not fully available locally, cannot download"
-            )
-            failed = DownloadFailed(
-                shard_metadata=shard,
-                node_id=self.node_id,
-                error_message=f"Model files not found locally in offline mode: {model_id}",
-                model_directory=self._default_model_dir(model_id),
-            )
-            self.download_status[model_id] = failed
-            await self.event_sender.send(NodeDownloadProgress(download_progress=failed))
-            return
-
-        # Start actual download
-        self._start_download_task(shard, initial_progress)
-
-    def _start_download_task(
-        self, shard: ShardMetadata, initial_progress: RepoDownloadProgress
-    ) -> None:
-        model_id = shard.model_card.model_id
-
-        # Emit ongoing status
-        status = DownloadOngoing(
+                downloaded = min(store.legacy_present_bytes(directory), total)
+        return DownloadPending(
             node_id=self.node_id,
-            shard_metadata=shard,
-            download_progress=map_repo_download_progress_to_download_progress_data(
-                initial_progress
+            shard_metadata=model.shard,
+            model_directory=str(
+                directory or store.default_dir() / card.model_id.normalize()
             ),
-            model_directory=self._default_model_dir(model_id),
+            downloaded=Memory.from_bytes(downloaded),
+            total=Memory.from_bytes(total),
         )
-        self.download_status[model_id] = status
-        self.event_sender.send_nowait(NodeDownloadProgress(download_progress=status))
 
-        async def download_wrapper(cancel_scope: anyio.CancelScope) -> None:
-            try:
-                with cancel_scope:
-                    await self.shard_downloader.ensure_shard(shard)
-            except Exception as e:
-                logger.error(f"Download failed for {model_id}: {e}")
-                failed = DownloadFailed(
-                    shard_metadata=shard,
-                    node_id=self.node_id,
-                    error_message=str(e),
-                    model_directory=self._default_model_dir(model_id),
-                )
-                self.download_status[model_id] = failed
-                await self.event_sender.send(
-                    NodeDownloadProgress(download_progress=failed)
-                )
-            except anyio.get_cancelled_exc_class():
-                # ignore cancellation - let cleanup do its thing
-                pass
-            finally:
-                self.active_downloads.pop(model_id, None)
-
-        scope = anyio.CancelScope()
-        self._tg.start_soon(download_wrapper, scope)
-        self.active_downloads[model_id] = scope
-
-    async def _delete_download(self, model_id: ModelId) -> None:
-        # Protect read-only models from deletion
-        if model_id in self.download_status:
-            current = self.download_status[model_id]
-            if isinstance(current, DownloadCompleted) and current.read_only:
-                logger.warning(f"Refusing to delete read-only model {model_id}")
-                return
-
-        # Cancel if active
-        if model_id in self.active_downloads:
-            logger.info(f"Cancelling active download for {model_id} before deletion")
-            self.active_downloads[model_id].cancel()
-
-        # Delete from disk
-        logger.info(f"Deleting model files for {model_id}")
-        deleted = await delete_model(model_id)
-
-        if deleted:
-            logger.info(f"Successfully deleted model {model_id}")
+    def _ongoing(
+        self, model: _Model, running: _Running, speed: float = 0.0
+    ) -> DownloadOngoing:
+        progress = running.progress
+        now = time.monotonic()
+        if progress.files:
+            total, downloaded = progress.total, progress.downloaded
+        elif running.initial is not None and running.initial.downloaded.in_bytes > 0:
+            total = running.initial.total.in_bytes
+            downloaded = running.initial.downloaded.in_bytes
         else:
-            logger.warning(f"Model {model_id} was not found on disk")
-
-        # Emit pending status to reset UI state, then remove from local tracking
-        if model_id in self.download_status:
-            current_status = self.download_status[model_id]
-            pending = DownloadPending(
-                shard_metadata=current_status.shard_metadata,
-                node_id=self.node_id,
-                model_directory=self._default_model_dir(model_id),
+            total, downloaded = 0, 0  # not listed yet
+        files = {
+            path: DownloadProgressData(
+                total=Memory.from_bytes(file.size),
+                downloaded=Memory.from_bytes(file.downloaded),
+                downloaded_this_session=Memory.from_bytes(file.fetched),
+                completed_files=1 if file.done else 0,
+                total_files=1,
+                speed=file.speed(now),
+                eta_ms=_eta_ms(file.size - file.downloaded, file.speed(now)),
+                files={},
             )
-            await self.event_sender.send(
-                NodeDownloadProgress(download_progress=pending)
-            )
-            del self.download_status[model_id]
+            for path, file in progress.files.items()
+        }
+        return DownloadOngoing(
+            node_id=self.node_id,
+            shard_metadata=model.shard,
+            model_directory=self._directory(model),
+            download_progress=DownloadProgressData(
+                total=Memory.from_bytes(total),
+                downloaded=Memory.from_bytes(min(downloaded, total)),
+                downloaded_this_session=Memory.from_bytes(progress.fetched),
+                completed_files=progress.completed_files,
+                total_files=len(progress.files),
+                speed=speed,
+                eta_ms=_eta_ms(total - downloaded, speed),
+                files=files,
+            ),
+        )
 
-    async def _announce(self, status: DownloadProgress, *, force: bool) -> None:
-        """Record `status`, sending it to the cluster if it changed or `force` is set."""
-        model_id = status.shard_metadata.model_card.model_id
-        changed = self.download_status.get(model_id) != status
-        self.download_status[model_id] = status
-        if changed or force:
-            await self.event_sender.send(NodeDownloadProgress(download_progress=status))
+    # --- the rescan ----------------------------------------------------------------
 
-    async def _emit_existing_download_progress(self) -> None:
+    async def _rescan_loop(self) -> None:
         for scan in count():
-            resend_unchanged = scan % _FULL_RESCAN_EVERY == 0
             try:
-                logger.debug(
-                    "DownloadCoordinator: Fetching and emitting existing download progress..."
-                )
-                async for (
-                    _,
-                    progress,
-                ) in self.shard_downloader.get_shard_download_status():
-                    model_id = progress.shard.model_card.model_id
+                for card in await model_cards.card_cache.list_all():
+                    await self._rescan(card, resend=scan % _FULL_RESCAN_EVERY == 0)
+            except Exception as error:
+                logger.opt(exception=error).error("Download rescan failed")
+            await anyio.sleep(self.settings.rescan_interval)
 
-                    # Active downloads emit progress via the callback — don't overwrite
-                    if model_id in self.active_downloads:
-                        continue
+    async def _rescan(self, card: ModelCard, *, resend: bool) -> None:
+        model = self._models.setdefault(card.model_id, _Model(_full_shard(card)))
+        if model.running is not None or isinstance(model.status, DownloadFailed):
+            return
+        generation = model.generation
+        status = await to_thread.run_sync(self._idle_status, model)
+        if model.generation != generation or model.running is not None:
+            return  # a command got there first
+        changed = status != model.status
+        model.status = status
+        has_files = not (
+            isinstance(status, DownloadPending) and status.downloaded.in_bytes == 0
+        )
+        if changed or resend or has_files:
+            await self._send(status)
 
-                    if progress.status == "complete":
-                        found = await to_thread.run_sync(
-                            resolve_existing_model,
-                            model_id,
-                            progress.shard.model_card,
-                        )
-                        if found is not None:
-                            status: DownloadProgress = self._completed_from_path(
-                                progress.shard, found, progress.total
-                            )
-                        else:
-                            status = DownloadCompleted(
-                                node_id=self.node_id,
-                                shard_metadata=progress.shard,
-                                total=progress.total,
-                                model_directory=self._default_model_dir(model_id),
-                            )
-                    elif progress.status in ["in_progress", "not_started"]:
-                        # TODO(ciaran): temporary solution
-                        # Don't downgrade a model that is already confirmed complete.
-                        if isinstance(
-                            self.download_status.get(model_id), DownloadCompleted
-                        ):
-                            continue
-                        # The per-file size check compares local files against
-                        # the latest HF "main" revision, which is a moving
-                        # target.  When HF updates text files (README, YAML,
-                        # jinja) in a new commit, the cached file list has new
-                        # sizes while local files still match the old revision.
-                        # Fall back to the authoritative completeness check
-                        # (is_model_directory_complete) which validates that all
-                        # safetensors weight files are present.
-                        found = await to_thread.run_sync(
-                            resolve_existing_model,
-                            model_id,
-                            progress.shard.model_card,
-                        )
-                        if found is not None:
-                            status = self._completed_from_path(
-                                progress.shard, found, progress.total
-                            )
-                        elif progress.downloaded_this_session.in_bytes == 0:
-                            status = DownloadPending(
-                                node_id=self.node_id,
-                                shard_metadata=progress.shard,
-                                model_directory=self._default_model_dir(model_id),
-                                downloaded=progress.downloaded,
-                                total=progress.total,
-                            )
-                        else:
-                            status = DownloadOngoing(
-                                node_id=self.node_id,
-                                shard_metadata=progress.shard,
-                                download_progress=map_repo_download_progress_to_download_progress_data(
-                                    progress
-                                ),
-                                model_directory=self._default_model_dir(model_id),
-                            )
-                    else:
-                        continue
 
-                    await self._announce(
-                        status, force=resend_unchanged or _has_local_files(status)
-                    )
-                # Scan read-only directories for pre-downloaded models
-                if EXO_MODELS_READ_ONLY_DIRS:
-                    for card in await model_cards.card_cache.list_all():
-                        mid = card.model_id
-                        if mid in self.active_downloads:
-                            continue
-                        if isinstance(
-                            self.download_status.get(mid),
-                            (DownloadCompleted, DownloadOngoing, DownloadFailed),
-                        ):
-                            continue
-                        found = await to_thread.run_sync(
-                            resolve_existing_model, mid, card
-                        )
-                        if found is not None and is_read_only_model_dir(found):
-                            path_shard = PipelineShardMetadata(
-                                model_card=card,
-                                device_rank=0,
-                                world_size=1,
-                                start_layer=0,
-                                end_layer=card.n_layers,
-                                n_layers=card.n_layers,
-                            )
-                            path_completed: DownloadProgress = (
-                                self._completed_from_path(
-                                    path_shard, found, card.storage_size
-                                )
-                            )
-                            await self._announce(path_completed, force=resend_unchanged)
-
-                logger.debug(
-                    "DownloadCoordinator: Done emitting existing download progress."
-                )
-            except Exception as e:
-                logger.error(
-                    f"DownloadCoordinator: Error emitting existing download progress: {e}"
-                )
-            await anyio.sleep(_RESCAN_INTERVAL_SECONDS)
+def _eta_ms(remaining: int, speed: float) -> int:
+    return int(remaining / speed * 1000) if speed > 0 and remaining > 0 else 0

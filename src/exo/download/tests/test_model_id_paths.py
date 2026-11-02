@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from exo.api.main import API
-from exo.download.download_utils import delete_model
+from exo.download import store
 from exo.shared.types.common import ModelId
 
 
@@ -41,11 +41,11 @@ async def test_deleting_the_parent_directory_is_refused(tmp_path: Path) -> None:
     precious.write_text("not a model")
 
     with (
-        patch("exo.download.download_utils.EXO_MODELS_DIRS", (models,)),
-        patch("exo.download.download_utils.EXO_DEFAULT_MODELS_DIR", models),
+        patch.object(store, "EXO_MODELS_DIRS", (models,)),
+        patch.object(store, "EXO_DEFAULT_MODELS_DIR", models),
         pytest.raises(ValueError),
     ):
-        await delete_model(ModelId(".."))
+        store.delete(ModelId(".."))
 
     assert precious.exists()
     assert (models / "some--model").exists()

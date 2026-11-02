@@ -202,10 +202,6 @@ async def test_short_body_resumes(hub: FakeHub, repo: FakeRepo, tmp_path: Path) 
         assert refetched(hub, repo) <= IN_FLIGHT
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="5 attempts per file that never reset on progress: the 6th reset fails the download",
-)
 async def test_repeated_resets_with_progress_never_fail(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
@@ -240,10 +236,6 @@ async def test_stall_longer_than_the_idle_timeout_is_cut_and_resumed(
         assert refetched(hub, repo) <= IN_FLIGHT
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="each stall uses one of 5 attempts; the 6th fails the download",
-)
 async def test_repeated_stalls_never_fail(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
@@ -264,11 +256,6 @@ async def test_slow_first_byte_is_waited_out(
         assert hub.count(kind="cdn", path=SHARD1) == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="every file request has a total timeout (30 min in production): "
-    "a file slower than that is cut every time and fails after 5 cuts",
-)
 async def test_slow_link_longer_than_the_request_timeout(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
@@ -281,10 +268,6 @@ async def test_slow_link_longer_than_the_request_timeout(
         assert refetched(hub, repo) <= IN_FLIGHT * 2
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="refused connections use up the 5 attempts in well under a second",
-)
 async def test_flapping_link(hub: FakeHub, repo: FakeRepo, tmp_path: Path) -> None:
     hub.bandwidth = 200_000
     async with node_for(hub, repo, tmp_path) as node:
@@ -310,10 +293,6 @@ async def test_rate_limit_burst_is_waited_out(
         assert node.failures(REPO) == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a 429 uses one of the 5 attempts: a longer burst fails the download",
-)
 async def test_long_rate_limit_burst_is_waited_out(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
@@ -332,10 +311,6 @@ async def test_server_error_burst(hub: FakeHub, repo: FakeRepo, tmp_path: Path) 
         assert node.failures(REPO) == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a 5xx uses one of the 5 attempts: a longer burst fails the download",
-)
 async def test_long_server_error_burst(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
@@ -346,11 +321,6 @@ async def test_long_server_error_burst(
         assert node.failures(REPO) == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="when the file list can't be fetched the download ends silently: "
-    "nothing retries it and the status is not Failed",
-)
 async def test_endpoint_down_then_back(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
@@ -373,10 +343,6 @@ async def test_endpoint_down_then_back_with_worker_retrying(
         await assert_complete(node, repo, timeout=15, may_fail=True)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a dead link mid-download uses up the 5 attempts and the download is reported failed",
-)
 async def test_link_dies_mid_download_then_returns(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
@@ -493,11 +459,6 @@ async def test_two_shards_of_one_model_download_once(
         assert refetched(hub, repo) == 0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="download commands are handled one at a time and a start waits for the file "
-    "list, so one unreachable repo holds up every other model's commands",
-)
 async def test_one_slow_model_does_not_hold_up_another(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
@@ -540,11 +501,6 @@ async def test_disk_full_fails_with_the_reason(
         assert "space" in failed.error_message.lower()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="StartDownload is ignored while the status is DownloadFailed, so retrying "
-    "(e.g. the dashboard's download button) does nothing until the next rescan",
-)
 async def test_start_download_retries_a_failed_download(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
@@ -562,11 +518,6 @@ async def test_start_download_retries_a_failed_download(
         assert refetched(hub, repo) <= 2 * IN_FLIGHT
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the periodic rescan replaces DownloadFailed with DownloadPending, so the "
-    "reason for the failure disappears",
-)
 async def test_failure_reason_stays_visible(hub: FakeHub, tmp_path: Path) -> None:
     repo = hub.add_repo(FakeRepo(REPO, model_repo_files(REPO), gated=True))
     async with node_for(hub, repo, tmp_path, worker=False) as node:
@@ -712,11 +663,6 @@ async def test_offline_without_the_model_fails_without_network(
         assert hub.requests == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the revision is 'main', not a pinned commit: the .partial is now longer than "
-    "the file, and every resume gets 416 (hypothesis 2)",
-)
 async def test_upstream_shrinks_a_file_mid_download(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
@@ -736,11 +682,6 @@ async def test_upstream_shrinks_a_file_mid_download(
         assert node.partial_files() == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the revision is 'main': the resumed range is the new file's bytes appended "
-    "to the old file's, which fails the hash and starts the file again",
-)
 async def test_upstream_replaces_a_file_mid_download(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
@@ -760,11 +701,6 @@ async def test_upstream_replaces_a_file_mid_download(
         assert hub.body_bytes(REPO) - total_bytes(repo) <= 2 * IN_FLIGHT
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the revision is 'main': files fetched after a restart come from the new "
-    "commit, the rest from the old one",
-)
 async def test_upstream_change_never_mixes_revisions(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
@@ -815,11 +751,6 @@ async def test_always_corrupt_file_fails_with_the_reason(
         assert node.partial_files() == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="when one file fails, the others keep downloading in the background and "
-    "their progress turns the Failed status back into DownloadOngoing",
-)
 async def test_a_failed_file_stops_the_whole_download(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
@@ -837,11 +768,6 @@ async def test_a_failed_file_stops_the_whole_download(
         assert isinstance(node.status(REPO), DownloadFailed)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="completeness is judged from the file list, so a repo whose index names a "
-    "missing weight file is reported Completed",
-)
 async def test_index_naming_a_missing_file_fails(hub: FakeHub, tmp_path: Path) -> None:
     files = model_repo_files(REPO, shards=3, shard_size=50_000)
     del files["model-00003-of-00003.safetensors"]
@@ -853,11 +779,6 @@ async def test_index_naming_a_missing_file_fails(hub: FakeHub, tmp_path: Path) -
         assert "model-00003-of-00003.safetensors" in failed.error_message
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a model counts as complete once the index and its weights are there, so a "
-    "download interrupted before tokenizer.json is never finished",
-)
 async def test_a_missing_tokenizer_is_downloaded_not_reported_complete(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
@@ -875,11 +796,6 @@ async def test_a_missing_tokenizer_is_downloaded_not_reported_complete(
         await assert_complete(node, repo)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a 404 on HEAD has no ETag and trips an assert, which is retried 5 times and "
-    "reported as 'No remote hash'",
-)
 async def test_file_missing_upstream_fails_fast_and_says_so(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
@@ -914,11 +830,6 @@ async def test_gated_model_fails_with_auth_message(
         assert hub.count(kind="resolve", path=SHARD1) <= 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a 401 on the file list is swallowed: the download ends silently and the "
-    "status stays DownloadOngoing",
-)
 async def test_unknown_repo_fails_and_says_so(hub: FakeHub, tmp_path: Path) -> None:
     repo = FakeRepo(REPO, model_repo_files(REPO))  # not on the hub
     async with node_for(hub, repo, tmp_path, worker=False) as node:
@@ -927,11 +838,6 @@ async def test_unknown_repo_fails_and_says_so(hub: FakeHub, tmp_path: Path) -> N
         assert REPO in failed.error_message
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a 200 answer to a Range request is appended to the .partial: progress goes "
-    "past 100% and the file is fetched twice (hypothesis 3)",
-)
 async def test_server_ignoring_range_restarts_the_file_cleanly(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
@@ -949,10 +855,6 @@ async def test_server_ignoring_range_restarts_the_file_cleanly(
                 assert progress.downloaded.in_bytes <= progress.total.in_bytes
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a .partial longer than the file gets 416 on every resume, forever (hypothesis 2)",
-)
 async def test_oversized_partial_is_discarded(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
@@ -994,11 +896,6 @@ async def test_progress_is_truthful_and_paced(
             assert progress.total.in_bytes == total_bytes(repo)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the file list's cursor pagination isn't followed: files past the first page "
-    "are never downloaded",
-)
 async def test_file_list_pages_are_all_followed(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:

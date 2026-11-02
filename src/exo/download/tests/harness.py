@@ -24,12 +24,8 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
-from typing import BinaryIO, cast, final
+from typing import NamedTuple, final
 from unittest.mock import patch
-
-import aiofiles
-import aiohttp
 
 from exo.download.tests.fake_hub import FakeHub, FakeRepo
 from exo.shared.apply import apply_node_download_progress
@@ -60,6 +56,14 @@ from exo.utils.keyed_backoff import KeyedBackoff
 
 NODE_ID = NodeId("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
 IGNORED_PREFIXES = ("original/", "metal/")
+
+
+class DiskUsage(NamedTuple):
+    """What ``shutil.disk_usage`` returns."""
+
+    total: int
+    used: int
+    free: int
 
 
 @dataclass(frozen=True)
@@ -201,6 +205,11 @@ class DownloadNode:
                 await task
         self._tasks = []
         self._implementation = None
+
+    async def reannounce(self) -> None:
+        """What the node does when a new master is elected."""
+        assert self._implementation is not None
+        await self._implementation.reannounce()
 
     async def restart(self) -> None:
         await self.stop()
@@ -421,10 +430,29 @@ _ENV = (
 # Implementation adapter: how this implementation is built, configured and faulted.
 # ---------------------------------------------------------------------------------
 
-from exo.download import coordinator as _coordinator  # noqa: E402
-from exo.download import download_utils as _download_utils  # noqa: E402
+from exo.download import store as _store  # noqa: E402
+from exo.download import transfer as _transfer  # noqa: E402
 from exo.download.coordinator import DownloadCoordinator  # noqa: E402
-from exo.download.impl_shard_downloader import exo_shard_downloader  # noqa: E402
+from exo.download.transfer import DownloadSettings  # noqa: E402
+
+
+def settings_for(timing: Timing) -> DownloadSettings:
+    scale = timing.backoff_scale
+    production = DownloadSettings()
+    return DownloadSettings(
+        idle_timeout=timing.stall_timeout,
+        connect_timeout=timing.connect_timeout,
+        metadata_timeout=timing.metadata_timeout,
+        retry_base=production.retry_base * scale,
+        retry_cap=production.retry_cap * scale,
+        rate_limit_cap=production.rate_limit_cap * scale,
+        server_wait_scale=scale,
+        give_up_after=production.give_up_after * scale,
+        failed_retry_base=production.failed_retry_base * scale,
+        failed_retry_cap=production.failed_retry_cap * scale,
+        rescan_interval=timing.rescan_interval,
+        # file_request_timeout has no equivalent: there is no cap on a whole file
+    )
 
 
 @final
@@ -437,7 +465,7 @@ class _Implementation:
     ) -> None:
         self.coordinator = DownloadCoordinator(
             NODE_ID,
-            exo_shard_downloader(offline=node.offline),
+            settings_for(node.timing),
             download_command_receiver=commands,
             event_sender=events,
             offline=node.offline,
@@ -449,36 +477,23 @@ class _Implementation:
     async def shutdown(self) -> None:
         await self.coordinator.shutdown()
 
+    async def reannounce(self) -> None:
+        await self.coordinator.reannounce()
+
 
 @contextlib.contextmanager
 def _implementation_patches(node: DownloadNode) -> Iterator[None]:
-    timing = node.timing
+    real_write_at = _transfer._write_at  # pyright: ignore[reportPrivateUsage]
 
-    def create_http_session(
-        auto_decompress: bool = False, timeout_profile: str = "long"
-    ) -> aiohttp.ClientSession:
-        long = timeout_profile == "long"
-        return aiohttp.ClientSession(
-            auto_decompress=auto_decompress,
-            timeout=aiohttp.ClientTimeout(
-                total=timing.file_request_timeout if long else timing.metadata_timeout,
-                connect=timing.connect_timeout,
-                sock_read=timing.stall_timeout if long else timing.metadata_timeout,
-                sock_connect=timing.connect_timeout,
-            ),
-        )
-
-    async def scaled_sleep(delay: float) -> None:
-        await asyncio.sleep(delay * timing.backoff_scale)
-
-    scaled_asyncio = SimpleNamespace(
-        **{
-            name: getattr(asyncio, name)
-            for name in dir(asyncio)
-            if not name.startswith("__")
-        }
-    )
-    scaled_asyncio.sleep = scaled_sleep
+    def write_at(
+        descriptor: int, data: bytes, offset: int, hasher: _transfer.Hasher
+    ) -> None:
+        budget = node.write_budget
+        if budget is not None:
+            if budget < len(data):
+                raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+            node.write_budget = budget - len(data)
+        real_write_at(descriptor, data, offset, hasher)
 
     def disk_usage(path: str | os.PathLike[str]) -> object:
         usage = _real_disk_usage(path)
@@ -488,65 +503,16 @@ def _implementation_patches(node: DownloadNode) -> Iterator[None]:
         )
         if free is None:
             return usage
-        return shutil._ntuple_diskusage(  # pyright: ignore[reportPrivateUsage]
-            usage.total, usage.total - free, free
-        )
+        return DiskUsage(usage.total, usage.total - free, free)
 
     with (
-        patch.object(_download_utils, "EXO_MODELS_DIRS", node.models_dirs),
-        patch.object(_download_utils, "EXO_DEFAULT_MODELS_DIR", node.models_dir),
-        patch.object(_download_utils, "EXO_MODELS_READ_ONLY_DIRS", node.read_only_dirs),
-        patch.object(_coordinator, "EXO_DEFAULT_MODELS_DIR", node.models_dir),
-        patch.object(_coordinator, "EXO_MODELS_READ_ONLY_DIRS", node.read_only_dirs),
-        patch.object(_coordinator, "_RESCAN_INTERVAL_SECONDS", timing.rescan_interval),
-        patch.object(_download_utils, "create_http_session", create_http_session),
-        patch.object(_download_utils, "asyncio", scaled_asyncio),
-        patch.object(_download_utils, "aiofiles", _FaultyFiles(node)),
+        patch.object(_store, "EXO_MODELS_DIRS", node.models_dirs),
+        patch.object(_store, "EXO_DEFAULT_MODELS_DIR", node.models_dir),
+        patch.object(_store, "EXO_MODELS_READ_ONLY_DIRS", node.read_only_dirs),
+        patch.object(_transfer, "_write_at", write_at),
         patch("shutil.disk_usage", disk_usage),
     ):
         yield
 
 
 _real_disk_usage = shutil.disk_usage
-
-
-@final
-class _FaultyFiles:
-    """``aiofiles`` whose binary writes run out of disk space once
-    ``node.write_budget`` is spent."""
-
-    def __init__(self, node: DownloadNode) -> None:
-        self._node = node
-
-    def open(self, file: Path, mode: str = "r") -> object:
-        if "b" in mode and ("w" in mode or "a" in mode):
-            return _BudgetedFile(self._node, file, mode)
-        return aiofiles.open(file, mode)  # pyright: ignore[reportUnknownVariableType, reportCallIssue, reportArgumentType]
-
-
-@final
-class _BudgetedFile:
-    def __init__(self, node: DownloadNode, path: Path, mode: str) -> None:
-        self._node = node
-        self._path = path
-        self._mode = mode
-        self._file: BinaryIO | None = None
-
-    async def __aenter__(self) -> _BudgetedFile:
-        self._file = cast(
-            BinaryIO, await asyncio.to_thread(open, self._path, self._mode)
-        )
-        return self
-
-    async def __aexit__(self, *_: object) -> None:
-        if self._file is not None:
-            await asyncio.to_thread(self._file.close)
-
-    async def write(self, data: bytes) -> int:
-        assert self._file is not None
-        budget = self._node.write_budget
-        if budget is not None:
-            if budget < len(data):
-                raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
-            self._node.write_budget = budget - len(data)
-        return await asyncio.to_thread(self._file.write, data)
