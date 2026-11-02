@@ -1351,7 +1351,9 @@ class DeepseekV4Cache:
             and all(o == offsets[0] for o in offsets)
             and all(s == sizes[0] for s in sizes)
         )
-        if not uniform:
+        # exo fix: empty single-row caches merge to a batch cache, which keeps the batch
+        # size in its offsets (a RotatingKVCache without keys counts as one row)
+        if not uniform or (sizes[0] == 0 and len(locals_) > 1):
             if hasattr(locals_[0], "merge"):
                 return locals_[0].merge(locals_)
             return BatchRotatingKVCache.merge(locals_)
