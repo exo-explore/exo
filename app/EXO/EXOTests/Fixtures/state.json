@@ -1,0 +1,704 @@
+{
+  "instances": {
+    "i1": {
+      "MlxRingInstance": {
+        "instanceId": "i1",
+        "shardAssignments": {
+          "modelId": "mlx-community/Llama-3.2-3B-Instruct-4bit",
+          "runnerToShard": {
+            "r1": {
+              "PipelineShardMetadata": {
+                "modelCard": {
+                  "modelId": "mlx-community/Llama-3.2-3B-Instruct-4bit",
+                  "storageSize": {
+                    "inBytes": 104857600000
+                  },
+                  "memorySize": null,
+                  "nLayers": 32,
+                  "hiddenSize": 2048,
+                  "supportsTensor": false,
+                  "numKeyValueHeads": null,
+                  "tasks": [
+                    "TextGeneration"
+                  ],
+                  "components": null,
+                  "family": "",
+                  "modelType": null,
+                  "quantization": "",
+                  "baseModel": "",
+                  "capabilities": [],
+                  "backends": [
+                    "MlxMetal"
+                  ],
+                  "reasoningDialect": "none",
+                  "contextLength": 0,
+                  "usesCfg": false,
+                  "trustRemoteCode": true,
+                  "isCustom": false,
+                  "vision": null,
+                  "samplingDefaults": {
+                    "temperature": null,
+                    "topP": null,
+                    "topK": null,
+                    "minP": null,
+                    "repetitionPenalty": null,
+                    "presencePenalty": null,
+                    "frequencyPenalty": null,
+                    "thinking": null,
+                    "nonThinking": null
+                  }
+                },
+                "deviceRank": 0,
+                "worldSize": 2,
+                "immediateException": false,
+                "shouldTimeout": null,
+                "startLayer": 0,
+                "endLayer": 32,
+                "nLayers": 32
+              }
+            },
+            "r2": {
+              "PipelineShardMetadata": {
+                "modelCard": {
+                  "modelId": "mlx-community/Llama-3.2-3B-Instruct-4bit",
+                  "storageSize": {
+                    "inBytes": 104857600000
+                  },
+                  "memorySize": null,
+                  "nLayers": 32,
+                  "hiddenSize": 2048,
+                  "supportsTensor": false,
+                  "numKeyValueHeads": null,
+                  "tasks": [
+                    "TextGeneration"
+                  ],
+                  "components": null,
+                  "family": "",
+                  "modelType": null,
+                  "quantization": "",
+                  "baseModel": "",
+                  "capabilities": [],
+                  "backends": [
+                    "MlxMetal"
+                  ],
+                  "reasoningDialect": "none",
+                  "contextLength": 0,
+                  "usesCfg": false,
+                  "trustRemoteCode": true,
+                  "isCustom": false,
+                  "vision": null,
+                  "samplingDefaults": {
+                    "temperature": null,
+                    "topP": null,
+                    "topK": null,
+                    "minP": null,
+                    "repetitionPenalty": null,
+                    "presencePenalty": null,
+                    "frequencyPenalty": null,
+                    "thinking": null,
+                    "nonThinking": null
+                  }
+                },
+                "deviceRank": 1,
+                "worldSize": 2,
+                "immediateException": false,
+                "shouldTimeout": null,
+                "startLayer": 0,
+                "endLayer": 32,
+                "nLayers": 32
+              }
+            }
+          },
+          "nodeToRunner": {
+            "this": "r1",
+            "other": "r2"
+          }
+        },
+        "hostsByNode": {},
+        "ephemeralPort": 50000
+      }
+    },
+    "i2": {
+      "MlxRingInstance": {
+        "instanceId": "i2",
+        "shardAssignments": {
+          "modelId": "mlx-community/Qwen3-30B-A3B-4bit",
+          "runnerToShard": {
+            "r3": {
+              "PipelineShardMetadata": {
+                "modelCard": {
+                  "modelId": "mlx-community/Qwen3-30B-A3B-4bit",
+                  "storageSize": {
+                    "inBytes": 104857600000
+                  },
+                  "memorySize": null,
+                  "nLayers": 32,
+                  "hiddenSize": 2048,
+                  "supportsTensor": false,
+                  "numKeyValueHeads": null,
+                  "tasks": [
+                    "TextGeneration"
+                  ],
+                  "components": null,
+                  "family": "",
+                  "modelType": null,
+                  "quantization": "",
+                  "baseModel": "",
+                  "capabilities": [],
+                  "backends": [
+                    "MlxMetal"
+                  ],
+                  "reasoningDialect": "none",
+                  "contextLength": 0,
+                  "usesCfg": false,
+                  "trustRemoteCode": true,
+                  "isCustom": false,
+                  "vision": null,
+                  "samplingDefaults": {
+                    "temperature": null,
+                    "topP": null,
+                    "topK": null,
+                    "minP": null,
+                    "repetitionPenalty": null,
+                    "presencePenalty": null,
+                    "frequencyPenalty": null,
+                    "thinking": null,
+                    "nonThinking": null
+                  }
+                },
+                "deviceRank": 0,
+                "worldSize": 1,
+                "immediateException": false,
+                "shouldTimeout": null,
+                "startLayer": 0,
+                "endLayer": 32,
+                "nLayers": 32
+              }
+            }
+          },
+          "nodeToRunner": {
+            "other": "r3"
+          }
+        },
+        "hostsByNode": {},
+        "ephemeralPort": 50000
+      }
+    }
+  },
+  "runners": {
+    "r1": {
+      "RunnerReady": {
+        "prefillServerPort": null
+      }
+    },
+    "r2": {
+      "RunnerRunning": {}
+    },
+    "r3": {
+      "RunnerIdle": {}
+    }
+  },
+  "downloads": {
+    "this": [
+      {
+        "DownloadCompleted": {
+          "nodeId": "this",
+          "shardMetadata": {
+            "PipelineShardMetadata": {
+              "modelCard": {
+                "modelId": "mlx-community/Llama-3.2-3B-Instruct-4bit",
+                "storageSize": {
+                  "inBytes": 104857600000
+                },
+                "memorySize": null,
+                "nLayers": 32,
+                "hiddenSize": 2048,
+                "supportsTensor": false,
+                "numKeyValueHeads": null,
+                "tasks": [
+                  "TextGeneration"
+                ],
+                "components": null,
+                "family": "",
+                "modelType": null,
+                "quantization": "",
+                "baseModel": "",
+                "capabilities": [],
+                "backends": [
+                  "MlxMetal"
+                ],
+                "reasoningDialect": "none",
+                "contextLength": 0,
+                "usesCfg": false,
+                "trustRemoteCode": true,
+                "isCustom": false,
+                "vision": null,
+                "samplingDefaults": {
+                  "temperature": null,
+                  "topP": null,
+                  "topK": null,
+                  "minP": null,
+                  "repetitionPenalty": null,
+                  "presencePenalty": null,
+                  "frequencyPenalty": null,
+                  "thinking": null,
+                  "nonThinking": null
+                }
+              },
+              "deviceRank": 0,
+              "worldSize": 2,
+              "immediateException": false,
+              "shouldTimeout": null,
+              "startLayer": 0,
+              "endLayer": 32,
+              "nLayers": 32
+            }
+          },
+          "modelDirectory": "/models/Llama-3.2-3B-Instruct-4bit",
+          "total": {
+            "inBytes": 1000
+          },
+          "readOnly": false
+        }
+      },
+      {
+        "DownloadFailed": {
+          "nodeId": "this",
+          "shardMetadata": {
+            "PipelineShardMetadata": {
+              "modelCard": {
+                "modelId": "mlx-community/Some-Other-Model",
+                "storageSize": {
+                  "inBytes": 104857600000
+                },
+                "memorySize": null,
+                "nLayers": 32,
+                "hiddenSize": 2048,
+                "supportsTensor": false,
+                "numKeyValueHeads": null,
+                "tasks": [
+                  "TextGeneration"
+                ],
+                "components": null,
+                "family": "",
+                "modelType": null,
+                "quantization": "",
+                "baseModel": "",
+                "capabilities": [],
+                "backends": [
+                  "MlxMetal"
+                ],
+                "reasoningDialect": "none",
+                "contextLength": 0,
+                "usesCfg": false,
+                "trustRemoteCode": true,
+                "isCustom": false,
+                "vision": null,
+                "samplingDefaults": {
+                  "temperature": null,
+                  "topP": null,
+                  "topK": null,
+                  "minP": null,
+                  "repetitionPenalty": null,
+                  "presencePenalty": null,
+                  "frequencyPenalty": null,
+                  "thinking": null,
+                  "nonThinking": null
+                }
+              },
+              "deviceRank": 0,
+              "worldSize": 1,
+              "immediateException": false,
+              "shouldTimeout": null,
+              "startLayer": 0,
+              "endLayer": 32,
+              "nLayers": 32
+            }
+          },
+          "modelDirectory": "",
+          "errorMessage": "Connection lost"
+        }
+      }
+    ],
+    "other": [
+      {
+        "DownloadOngoing": {
+          "nodeId": "other",
+          "shardMetadata": {
+            "PipelineShardMetadata": {
+              "modelCard": {
+                "modelId": "mlx-community/Qwen3-30B-A3B-4bit",
+                "storageSize": {
+                  "inBytes": 104857600000
+                },
+                "memorySize": null,
+                "nLayers": 32,
+                "hiddenSize": 2048,
+                "supportsTensor": false,
+                "numKeyValueHeads": null,
+                "tasks": [
+                  "TextGeneration"
+                ],
+                "components": null,
+                "family": "",
+                "modelType": null,
+                "quantization": "",
+                "baseModel": "",
+                "capabilities": [],
+                "backends": [
+                  "MlxMetal"
+                ],
+                "reasoningDialect": "none",
+                "contextLength": 0,
+                "usesCfg": false,
+                "trustRemoteCode": true,
+                "isCustom": false,
+                "vision": null,
+                "samplingDefaults": {
+                  "temperature": null,
+                  "topP": null,
+                  "topK": null,
+                  "minP": null,
+                  "repetitionPenalty": null,
+                  "presencePenalty": null,
+                  "frequencyPenalty": null,
+                  "thinking": null,
+                  "nonThinking": null
+                }
+              },
+              "deviceRank": 0,
+              "worldSize": 1,
+              "immediateException": false,
+              "shouldTimeout": null,
+              "startLayer": 0,
+              "endLayer": 32,
+              "nLayers": 32
+            }
+          },
+          "modelDirectory": "",
+          "downloadProgress": {
+            "total": {
+              "inBytes": 1000
+            },
+            "downloaded": {
+              "inBytes": 425
+            },
+            "downloadedThisSession": {
+              "inBytes": 425
+            },
+            "completedFiles": 0,
+            "totalFiles": 1,
+            "speed": 1000.0,
+            "etaMs": 575,
+            "files": {
+              "model.safetensors": {
+                "total": {
+                  "inBytes": 1000
+                },
+                "downloaded": {
+                  "inBytes": 425
+                },
+                "downloadedThisSession": {
+                  "inBytes": 425
+                },
+                "completedFiles": 0,
+                "totalFiles": 1,
+                "speed": 1000.0,
+                "etaMs": 575,
+                "files": {}
+              }
+            }
+          }
+        }
+      },
+      {
+        "DownloadOngoing": {
+          "nodeId": "other",
+          "shardMetadata": {
+            "PipelineShardMetadata": {
+              "modelCard": {
+                "modelId": "mlx-community/Some-Other-Model",
+                "storageSize": {
+                  "inBytes": 104857600000
+                },
+                "memorySize": null,
+                "nLayers": 32,
+                "hiddenSize": 2048,
+                "supportsTensor": false,
+                "numKeyValueHeads": null,
+                "tasks": [
+                  "TextGeneration"
+                ],
+                "components": null,
+                "family": "",
+                "modelType": null,
+                "quantization": "",
+                "baseModel": "",
+                "capabilities": [],
+                "backends": [
+                  "MlxMetal"
+                ],
+                "reasoningDialect": "none",
+                "contextLength": 0,
+                "usesCfg": false,
+                "trustRemoteCode": true,
+                "isCustom": false,
+                "vision": null,
+                "samplingDefaults": {
+                  "temperature": null,
+                  "topP": null,
+                  "topK": null,
+                  "minP": null,
+                  "repetitionPenalty": null,
+                  "presencePenalty": null,
+                  "frequencyPenalty": null,
+                  "thinking": null,
+                  "nonThinking": null
+                }
+              },
+              "deviceRank": 0,
+              "worldSize": 1,
+              "immediateException": false,
+              "shouldTimeout": null,
+              "startLayer": 0,
+              "endLayer": 32,
+              "nLayers": 32
+            }
+          },
+          "modelDirectory": "",
+          "downloadProgress": {
+            "total": {
+              "inBytes": 1000
+            },
+            "downloaded": {
+              "inBytes": 1
+            },
+            "downloadedThisSession": {
+              "inBytes": 1
+            },
+            "completedFiles": 0,
+            "totalFiles": 1,
+            "speed": 1000.0,
+            "etaMs": 575,
+            "files": {
+              "model.safetensors": {
+                "total": {
+                  "inBytes": 1000
+                },
+                "downloaded": {
+                  "inBytes": 1
+                },
+                "downloadedThisSession": {
+                  "inBytes": 1
+                },
+                "completedFiles": 0,
+                "totalFiles": 1,
+                "speed": 1000.0,
+                "etaMs": 575,
+                "files": {}
+              }
+            }
+          }
+        }
+      },
+      {
+        "DownloadPending": {
+          "nodeId": "other",
+          "shardMetadata": {
+            "PipelineShardMetadata": {
+              "modelCard": {
+                "modelId": "mlx-community/Llama-3.2-1B-Instruct-4bit",
+                "storageSize": {
+                  "inBytes": 104857600000
+                },
+                "memorySize": null,
+                "nLayers": 32,
+                "hiddenSize": 2048,
+                "supportsTensor": false,
+                "numKeyValueHeads": null,
+                "tasks": [
+                  "TextGeneration"
+                ],
+                "components": null,
+                "family": "",
+                "modelType": null,
+                "quantization": "",
+                "baseModel": "",
+                "capabilities": [],
+                "backends": [
+                  "MlxMetal"
+                ],
+                "reasoningDialect": "none",
+                "contextLength": 0,
+                "usesCfg": false,
+                "trustRemoteCode": true,
+                "isCustom": false,
+                "vision": null,
+                "samplingDefaults": {
+                  "temperature": null,
+                  "topP": null,
+                  "topK": null,
+                  "minP": null,
+                  "repetitionPenalty": null,
+                  "presencePenalty": null,
+                  "frequencyPenalty": null,
+                  "thinking": null,
+                  "nonThinking": null
+                }
+              },
+              "deviceRank": 0,
+              "worldSize": 1,
+              "immediateException": false,
+              "shouldTimeout": null,
+              "startLayer": 0,
+              "endLayer": 32,
+              "nLayers": 32
+            }
+          },
+          "modelDirectory": "",
+          "downloaded": {
+            "inBytes": 0
+          },
+          "total": {
+            "inBytes": 0
+          }
+        }
+      }
+    ]
+  },
+  "tasks": {
+    "t1": {
+      "TextGeneration": {
+        "taskId": "t1",
+        "taskStatus": "Running",
+        "instanceId": "i1",
+        "commandId": "c1",
+        "taskParams": {
+          "model": "mlx-community/Llama-3.2-3B-Instruct-4bit",
+          "input": [
+            {
+              "role": "user",
+              "content": "hi"
+            }
+          ],
+          "instructions": null,
+          "max_output_tokens": null,
+          "temperature": null,
+          "top_p": null,
+          "stream": false,
+          "tools": null,
+          "bench": false,
+          "use_prefix_cache": false,
+          "top_k": null,
+          "stop": null,
+          "seed": null,
+          "chat_template_messages": null,
+          "reasoning_effort": null,
+          "enable_thinking": null,
+          "logprobs": false,
+          "top_logprobs": null,
+          "min_p": null,
+          "repetition_penalty": null,
+          "repetition_context_size": null,
+          "presence_penalty": null,
+          "frequency_penalty": null,
+          "images": [],
+          "image_hashes": {},
+          "prefill_endpoint": null
+        },
+        "errorType": null,
+        "errorMessage": null
+      }
+    }
+  },
+  "lastSeen": {
+    "this": "2026-01-01T00:00:00Z",
+    "other": "2026-01-01T00:00:00Z"
+  },
+  "topology": {
+    "nodes": [
+      "other",
+      "this"
+    ],
+    "connections": {
+      "this": {
+        "other": [
+          {
+            "sourceRdmaIface": "rdma_en2",
+            "sinkRdmaIface": "rdma_en2"
+          }
+        ]
+      }
+    }
+  },
+  "lastEventAppliedIdx": 18,
+  "nodeIdentities": {
+    "this": {
+      "modelId": "Mac Studio",
+      "chipId": "Apple M3 Ultra",
+      "friendlyName": "Studio",
+      "osVersion": "26.0",
+      "osBuildVersion": "25A354"
+    },
+    "other": {
+      "modelId": "Mac mini",
+      "chipId": "Apple M4 Pro",
+      "friendlyName": "Unknown",
+      "osVersion": "26.0",
+      "osBuildVersion": "25A354"
+    }
+  },
+  "nodeMemory": {
+    "this": {
+      "ramTotal": {
+        "inBytes": 206158430208
+      },
+      "ramAvailable": {
+        "inBytes": 162135015424
+      },
+      "swapTotal": {
+        "inBytes": 0
+      },
+      "swapAvailable": {
+        "inBytes": 0
+      },
+      "gpuWorkingSet": null
+    },
+    "other": {
+      "ramTotal": {
+        "inBytes": 68719476736
+      },
+      "ramAvailable": {
+        "inBytes": 55834574848
+      },
+      "swapTotal": {
+        "inBytes": 0
+      },
+      "swapAvailable": {
+        "inBytes": 0
+      },
+      "gpuWorkingSet": null
+    }
+  },
+  "nodeDisk": {},
+  "nodeSystem": {},
+  "nodeNetwork": {},
+  "nodeThunderbolt": {},
+  "nodeThunderboltBridge": {
+    "this": {
+      "enabled": false,
+      "exists": true,
+      "serviceName": "Thunderbolt Bridge"
+    }
+  },
+  "nodeRdmaCtl": {
+    "this": {
+      "enabled": true
+    }
+  },
+  "nodeBackends": {},
+  "thunderboltBridgeCycles": [],
+  "instanceLinks": {},
+  "prefillServerPorts": {},
+  "customModelCards": {}
+}

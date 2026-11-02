@@ -334,57 +334,108 @@ struct MenuBarMenuTests {
 
 // MARK: - Cluster state to menu rows
 
-private func decodeState(_ json: String) throws -> ClusterState {
-    let decoder = JSONDecoder()
-    decoder.keyDecodingStrategy = .convertFromSnakeCase
-    return try decoder.decode(ClusterState.self, from: Data(json.utf8))
+/// A /state answer from exo: two Macs, "this" and "other", running Llama
+/// together while "other" downloads Qwen (42%), with a download in every
+/// status. src/exo/api/tests/test_app_state_fixture.py writes it from exo's
+/// own types and fails when they no longer produce it.
+private func stateFixture() throws -> Data {
+    try Data(
+        contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/state.json"))
 }
 
-private let stateJSON = """
-    {
-      "instances": {
-        "i1": {"MlxRingInstance": {"instanceId": "i1", "shardAssignments": {
-          "modelId": "mlx-community/Llama-3.2-3B-Instruct-4bit",
-          "nodeToRunner": {"this": "r1", "other": "r2"}}}},
-        "i2": {"MlxRingInstance": {"instanceId": "i2", "shardAssignments": {
-          "modelId": "mlx-community/Qwen3-30B-A3B-4bit",
-          "nodeToRunner": {"other": "r3"}}}}
-      },
-      "runners": {
-        "r1": {"RunnerReady": {}}, "r2": {"RunnerRunning": {}}, "r3": {"RunnerIdle": {}}
-      },
-      "downloads": {
-        "other": [
-          {"DownloadOngoing": {"nodeId": "other",
-            "shardMetadata": {"PipelineShardMetadata": {"modelCard": {"modelId": "mlx-community/Qwen3-30B-A3B-4bit"}}},
-            "downloadProgress": {"totalBytes": {"inBytes": 1000}, "downloadedBytes": {"inBytes": 425}}}},
-          {"DownloadOngoing": {"nodeId": "other",
-            "shardMetadata": {"PipelineShardMetadata": {"modelCard": {"modelId": "mlx-community/Some-Other-Model"}}},
-            "downloadProgress": {"totalBytes": {"inBytes": 1000}, "downloadedBytes": {"inBytes": 1}}}}
-        ]
-      },
-      "nodeIdentities": {
-        "this": {"modelId": "Mac Studio", "chipId": "M3 Ultra", "friendlyName": "Studio"},
-        "other": {"modelId": "Mac mini", "chipId": "M4 Pro", "friendlyName": "Unknown"}
-      },
-      "nodeMemory": {
-        "this": {"ramTotal": {"inBytes": 206158430208}, "ramAvailable": {"inBytes": 162135015424}},
-        "other": {"ramTotal": {"inBytes": 68719476736}, "ramAvailable": {"inBytes": 55834574848}}
-      }
+private func decodeState(_ json: Data) throws -> ClusterState {
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+    return try decoder.decode(ClusterState.self, from: json)
+}
+
+/// `json` with the value at `path` (keys, or indexes into arrays, joined by
+/// "/") replaced by the JSON `value`, or removed when `value` is nil.
+private func editing(_ json: Data, at path: String, to value: String?) throws -> Data {
+    func edit(_ node: Any, _ steps: ArraySlice<Substring>) throws -> Any? {
+        guard let step = steps.first else {
+            return try value.map {
+                try JSONSerialization.jsonObject(
+                    with: Data($0.utf8), options: .fragmentsAllowed)
+            }
+        }
+        if var array = node as? [Any], let index = Int(step) {
+            array[index] = try edit(array[index], steps.dropFirst()) ?? NSNull()
+            return array
+        }
+        var object = try #require(node as? [String: Any])
+        object[String(step)] = try edit(object[String(step)] ?? NSNull(), steps.dropFirst())
+        return object
     }
-    """
+    let root = try JSONSerialization.jsonObject(with: json)
+    let steps = path.split(separator: "/")[...]
+    return try JSONSerialization.data(withJSONObject: try #require(try edit(root, steps)))
+}
+
+private let llamaId = "mlx-community/Llama-3.2-3B-Instruct-4bit"
+private let qwenId = "mlx-community/Qwen3-30B-A3B-4bit"
+private let someOtherId = "mlx-community/Some-Other-Model"
+private let notStartedId = "mlx-community/Llama-3.2-1B-Instruct-4bit"
 
 struct ClusterSummaryTests {
 
     @Test func runningModelsUseDisplayNamesAndTheGlossaryStatuses() throws {
-        let state = try decodeState(stateJSON)
+        let state = try decodeState(stateFixture())
         let models = state.runningModels(
-            localNodeId: "this",
-            displayNames: ["mlx-community/Llama-3.2-3B-Instruct-4bit": "Llama 3.2 3B"])
+            localNodeId: "this", displayNames: [llamaId: "Llama 3.2 3B"])
         #expect(models.map(\.displayName) == ["Llama 3.2 3B", "Qwen3-30B-A3B-4bit"])
         #expect(models.map(\.status) == [.ready, .downloading(percent: 42)])
         #expect(models.map(\.runsOnThisMac) == [true, false])
         #expect(models[1].status.label == "Downloading 42%")
+    }
+
+    @Test func downloadsInEveryStatusAreRead() throws {
+        let json = try stateFixture()
+        let text = String(decoding: json, as: UTF8.self)
+        let statuses = [
+            "DownloadPending", "DownloadOngoing", "DownloadCompleted", "DownloadFailed",
+        ]
+        for status in statuses {
+            #expect(text.contains("\"\(status)\""), "the fixture has no \(status)")
+        }
+        let downloads = try decodeState(json).downloads
+        #expect(downloads["this"]?.map(\.modelId) == [llamaId, someOtherId])
+        #expect(downloads["other"]?.map(\.modelId) == [qwenId, someOtherId, notStartedId])
+        // Only an ongoing download has progress.
+        #expect(downloads["this"]?.allSatisfy { $0.progress == nil } == true)
+        let progress = downloads["other"]?.map {
+            $0.progress.map { [$0.downloaded.inBytes, $0.total.inBytes] }
+        }
+        #expect(progress == [[425, 1000], [1, 1000], nil])
+    }
+
+    /// Qwen's download, the first of "other"'s, made unreadable in each way.
+    @Test(
+        arguments: [
+            ("downloadProgress/total", nil),
+            ("downloadProgress/downloaded/inBytes", #""425""#),
+            ("downloadProgress", "[]"),
+            ("shardMetadata", "[]"),
+            ("nodeId", "7"),
+        ] as [(String, String?)])
+    func aDownloadTheAppCantReadIsLeftOut(field: String, value: String?) throws {
+        let json = try editing(
+            stateFixture(), at: "downloads/other/0/DownloadOngoing/\(field)", to: value)
+        let state = try decodeState(json)
+        #expect(state.downloads["other"]?.map(\.modelId) == [someOtherId, notStartedId])
+        #expect(state.downloads["this"]?.count == 2)
+        let models = state.runningModels(localNodeId: "this", displayNames: [:])
+        #expect(models.map(\.status) == [.ready, .starting])
+        #expect(state.devices(localNodeId: "this").count == 2)
+    }
+
+    @Test func downloadsTheAppCantReadAtAllLeaveTheRestOfTheState() throws {
+        let state = try decodeState(editing(stateFixture(), at: "downloads", to: "[]"))
+        #expect(state.downloads.isEmpty)
+        #expect(state.instances.count == 2)
+        #expect(state.devices(localNodeId: "this").count == 2)
     }
 
     @Test(
@@ -406,7 +457,7 @@ struct ClusterSummaryTests {
     }
 
     @Test func devicesListThisMacFirstWithMemoryInUse() throws {
-        let devices = try decodeState(stateJSON).devices(localNodeId: "this")
+        let devices = try decodeState(stateFixture()).devices(localNodeId: "this")
         #expect(devices.map(\.name) == ["Studio", "Mac mini"])
         #expect(devices.map(\.isThisMac) == [true, false])
         #expect(devices.map(\.memoryInUse) == ["41 of 192 GB", "12 of 64 GB"])
@@ -415,10 +466,9 @@ struct ClusterSummaryTests {
     @Test func stateWithChatTasksStillDecodes() throws {
         // The menu bar no longer shows prompts, so the state's tasks (which
         // carry other people's messages) aren't read at all.
-        let withTasks = stateJSON.replacingOccurrences(
-            of: "\"runners\": {",
-            with: "\"tasks\": {\"t\": {\"TextGeneration\": {\"taskId\": \"t\"}}}, \"runners\": {")
-        #expect(try decodeState(withTasks).instances.count == 2)
+        let json = try stateFixture()
+        #expect(String(decoding: json, as: UTF8.self).contains("\"TextGeneration\""))
+        #expect(try decodeState(json).instances.count == 2)
     }
 }
 

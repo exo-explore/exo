@@ -89,8 +89,8 @@ extension ClusterState {
             for download in downloads[nodeId] ?? [] where download.modelId == modelId {
                 guard let progress = download.progress else { continue }
                 isDownloading = true
-                downloaded += progress.downloadedBytes.inBytes
-                total += progress.totalBytes.inBytes
+                downloaded += progress.downloaded.inBytes
+                total += progress.total.inBytes
             }
         }
         guard isDownloading else { return nil }

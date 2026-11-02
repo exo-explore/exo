@@ -43,9 +43,11 @@ struct ClusterState: Decodable {
         self.instances = rawInstances.mapValues(\.instance)
         self.runners = try container.decode([String: RunnerStatusSummary].self, forKey: .runners)
         self.topology = try container.decodeIfPresent(Topology.self, forKey: .topology)
+        // Downloads only add a percentage to the menu, so downloads the app
+        // can't read cost that, not the whole state.
         let rawDownloads =
-            try container.decodeIfPresent([String: [TaggedNodeDownload]].self, forKey: .downloads)
-            ?? [:]
+            (try? container.decodeIfPresent(
+                [String: [TaggedNodeDownload]].self, forKey: .downloads)) ?? [:]
         self.downloads = rawDownloads.mapValues { $0.compactMap(\.status) }
         self.thunderboltBridgeCycles =
             try container.decodeIfPresent([[String]].self, forKey: .thunderboltBridgeCycles) ?? []
@@ -233,13 +235,16 @@ struct TopologyConnection {
 
 // MARK: - Downloads
 
+/// One of a node's downloads, tagged by status, e.g. {"DownloadOngoing": {...}}.
+/// One the app can't read is left out instead of failing the whole state.
 private struct TaggedNodeDownload: Decodable {
     let status: NodeDownloadStatus?
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-        let payloads = try container.decode([String: NodeDownloadPayload].self)
-        guard let entry = payloads.first else {
+        guard let payloads = try? container.decode([String: NodeDownloadPayload].self),
+            let entry = payloads.first
+        else {
             status = nil
             return
         }
@@ -282,23 +287,13 @@ struct NodeDownloadStatus {
     }
 }
 
+/// An ongoing download's progress (exo's DownloadProgressData). The app reads
+/// only the byte counts.
 struct DownloadProgress: Decodable {
-    let totalBytes: ByteValue
-    let downloadedBytes: ByteValue
-    let speed: Double?
-    let etaMs: Int64?
-    let completedFiles: Int?
-    let totalFiles: Int?
-    let files: [String: FileDownloadProgress]?
+    let total: ByteValue
+    let downloaded: ByteValue
 }
 
 struct ByteValue: Decodable {
     let inBytes: Int64
-}
-
-struct FileDownloadProgress: Decodable {
-    let totalBytes: ByteValue
-    let downloadedBytes: ByteValue
-    let speed: Double?
-    let etaMs: Int64?
 }
