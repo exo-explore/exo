@@ -329,3 +329,43 @@ def test_extending_with_a_row_at_the_same_position_and_another_buffer(
         np.testing.assert_allclose(
             np.concatenate([step[i : i + 1] for step in batched]), alone, atol=1e-4
         )
+
+
+# Equal mod 4 (the overlapping layers' ratio), so both rows carry the same number of tokens
+# into the next window while their pools hold different numbers of rows.
+@pytest.mark.parametrize("lengths", [(8, 24), (21, 37), (22, 150)])
+@pytest.mark.parametrize("first_step", [1, 4])
+@pytest.mark.parametrize("join", ["merge", "extend"])
+def test_batched_rows_with_equal_carries_and_different_pools_match_each_row_alone(
+    tiny_model: Model, lengths: tuple[int, int], first_step: int, join: str
+) -> None:
+    """When every row carries the same number of tokens, a step takes the uniform paths
+    (one-token decode, or a multi-token step without padding). Those appended the new pool
+    rows after the longest pool and dropped the per-row pool lengths, so a row with a
+    shorter pool attended to its padding as compressed rows. Before the fix the rows
+    differed from running alone by up to 0.56 nats."""
+    rng = np.random.default_rng(5)
+    prompts = [rng.integers(0, 256, size=n).astype(np.int32) for n in lengths]
+    first = rng.integers(0, 256, size=(len(prompts), first_step)).astype(np.int32)
+    steps = rng.integers(0, 256, size=(len(prompts), DECODE_STEPS, 1)).astype(np.int32)
+    alone = [
+        _alone(tiny_model, prompt, [first[i], *steps[i]])
+        for i, prompt in enumerate(prompts)
+    ]
+
+    caches = [_prefilled(tiny_model, prompt) for prompt in prompts]
+    if join == "merge":
+        batch = _merged(caches)
+    else:
+        batch = caches[0]
+        _extend(batch, caches[1])
+    batched = [_log_probs(tiny_model(mx.array(first), cache=batch)[:, -1])]
+    for t in range(DECODE_STEPS):
+        batched.append(
+            _log_probs(tiny_model(mx.array(steps[:, t]), cache=batch)[:, -1])
+        )
+
+    for i in range(len(prompts)):
+        np.testing.assert_allclose(
+            np.concatenate([step[i : i + 1] for step in batched]), alone[i], atol=1e-4
+        )
