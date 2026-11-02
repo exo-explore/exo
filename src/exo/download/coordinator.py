@@ -4,15 +4,18 @@
       ^                │
       │ Cancel/Delete  │ an error retrying can't fix
       │                v
-      └─────────── failed ──Start, or a retry after a backoff──> running
+      └─────────── failed ──Start──> running
 
 Idle models are reported from disk: Completed, or Pending with the bytes already
 there. Cancel and Delete stop a running download and wait for it to end before
-anything else happens. Commands never wait on the network.
+anything else happens. Commands never wait on the network. A failed download is
+retried by the next StartDownload; the worker sends those, with a backoff, for
+as long as an instance on this node needs the model.
 """
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 from itertools import count
@@ -25,7 +28,12 @@ from loguru import logger
 from exo.download import store, transfer
 from exo.download.hub import Hub, PermanentError, RevisionGoneError
 from exo.download.store import NotEnoughSpaceError
-from exo.download.transfer import DownloadSettings, IntegrityError, Progress
+from exo.download.transfer import (
+    DownloadSettings,
+    Locks,
+    Progress,
+    disk_error_message,
+)
 from exo.routing.event_router import (
     EventRouterBrokenResourceError,
     EventRouterClosedResourceError,
@@ -67,7 +75,8 @@ class _Running:
     # held while a progress report is sent, so none can follow the final status
     reporting: anyio.Lock = field(default_factory=anyio.Lock)
     stopped: bool = False
-    announced: bool = False
+    # progress is reported once the files are listed and the dir chosen
+    planned: bool = False
     # what was on disk when it started, shown until the files are listed
     initial: DownloadPending | None = None
 
@@ -77,9 +86,7 @@ class _Model:
     shard: ShardMetadata
     status: DownloadProgress | None = None
     running: _Running | None = None
-    # failures in a row, for the retry backoff
-    failures: int = 0
-    # bumped on every change of phase, so stale retry timers and rescans back off
+    # bumped on every change of phase, so a rescan that raced a command backs off
     generation: int = 0
 
 
@@ -103,6 +110,7 @@ class DownloadCoordinator:
     offline: bool = False
 
     _models: dict[ModelId, _Model] = field(init=False, default_factory=dict)
+    _locks: Locks = field(init=False, default_factory=Locks)
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
     _stopped: anyio.Event = field(init=False, default_factory=anyio.Event)
 
@@ -150,6 +158,13 @@ class DownloadCoordinator:
                 except ValueError as error:
                     # e.g. a model id that isn't a valid folder name
                     logger.warning(f"Ignoring download command {command}: {error}")
+                except (BrokenResourceError, ClosedResourceError):
+                    raise
+                except Exception as error:
+                    # one model's trouble must never stop the others
+                    logger.opt(exception=error).error(
+                        f"Download command {type(command).__name__} failed"
+                    )
 
     async def _start(self, shard: ShardMetadata) -> None:
         model_id = shard.model_card.model_id
@@ -161,13 +176,16 @@ class DownloadCoordinator:
             return
         model.shard = shard
         model.generation += 1
-        status = await to_thread.run_sync(self._idle_status, model)
+        try:
+            status = await to_thread.run_sync(self._idle_status, model)
+        except OSError as error:
+            logger.opt(exception=error).warning(f"Can't read {model_id} on disk")
+            await self._fail(model, disk_error_message(error, f"reading {model_id}"))
+            return
         if isinstance(status, DownloadCompleted):
             await self._settle(model, status)
         elif self.offline:
-            await self._fail(
-                model, f"Offline, and {model_id} isn't fully downloaded.", retry=False
-            )
+            await self._fail(model, f"Offline, and {model_id} isn't fully downloaded.")
         else:
             self._launch(model, status)
 
@@ -179,7 +197,7 @@ class DownloadCoordinator:
             return
         logger.info(f"Cancelling download of {model_id}")
         await self._stop(model)
-        await self._settle(model, await to_thread.run_sync(self._idle_status, model))
+        await self._settle_idle(model)
 
     async def _delete(self, model_id: ModelId) -> None:
         model = self._models.get(model_id)
@@ -193,12 +211,30 @@ class DownloadCoordinator:
         if model is not None:
             await self._stop(model)
         logger.info(f"Deleting model files for {model_id}")
-        if not await to_thread.run_sync(store.delete, model_id):
-            logger.warning(f"Model {model_id} was not found on disk")
+        try:
+            if not await to_thread.run_sync(store.delete, model_id):
+                logger.warning(f"Model {model_id} was not found on disk")
+        except OSError as error:
+            logger.opt(exception=error).warning(f"Couldn't delete {model_id}")
+            if model is not None:
+                reason = os.strerror(error.errno) if error.errno else str(error)
+                await self._fail(model, f"Couldn't delete all of {model_id}: {reason}.")
+            return
         if model is not None:
-            await self._settle(
-                model, await to_thread.run_sync(self._idle_status, model)
+            await self._settle_idle(model)
+
+    async def _settle_idle(self, model: _Model) -> None:
+        """Report what is on disk now (Pending or Completed)."""
+        try:
+            status = await to_thread.run_sync(self._idle_status, model)
+        except OSError as error:
+            card = model.shard.model_card
+            logger.opt(exception=error).warning(f"Can't read {card.model_id} on disk")
+            await self._fail(
+                model, disk_error_message(error, f"reading {card.model_id}")
             )
+            return
+        await self._settle(model, status)
 
     # --- running a download --------------------------------------------------------
 
@@ -208,15 +244,13 @@ class DownloadCoordinator:
             running.initial = initial
         model.running = running
         model.generation += 1
-        # announced once the files are listed (or after a progress interval)
-        model.status = self._ongoing(model, running)
+        # the status stays as it was until the files are listed and the dir chosen
         self._tg.start_soon(self._download, model, running)
         self._tg.start_soon(self._report, model, running)
 
     async def _stop(self, model: _Model) -> None:
         """Stop the running download, if any, and wait until it has ended."""
         model.generation += 1
-        model.failures = 0
         running = model.running
         if running is not None:
             running.scope.cancel()
@@ -224,17 +258,17 @@ class DownloadCoordinator:
 
     async def _download(self, model: _Model, running: _Running) -> None:
         card = model.shard.model_card
-        outcome: tuple[str, bool] | Path | None = None
+        outcome: str | Path | None = None
         try:
             with running.scope:
                 outcome = await self._fetch(model, running)
         except NotEnoughSpaceError as error:
-            outcome = (error.message, True)
+            outcome = error.message
         except PermanentError as error:
-            outcome = (error.message, not isinstance(error, IntegrityError))
+            outcome = error.message
         except Exception as error:
             logger.opt(exception=error).error(f"Download of {card.model_id} failed")
-            outcome = (f"Download failed unexpectedly: {type(error).__name__}.", True)
+            outcome = f"Download failed unexpectedly: {type(error).__name__}."
         finally:
             running.stopped = True
             with anyio.CancelScope(shield=True):
@@ -247,11 +281,10 @@ class DownloadCoordinator:
             case None:
                 pass  # cancelled; whoever cancelled reports the new status
             case Path() as directory:
-                model.failures = 0
                 await self._settle(model, self._completed(model, directory))
-            case (message, retry):
+            case str() as message:
                 logger.warning(f"Download of {card.model_id} failed: {message}")
-                await self._fail(model, message, retry=retry)
+                await self._fail(model, message)
 
     async def _fetch(self, model: _Model, running: _Running) -> Path:
         settings = self.settings
@@ -265,22 +298,27 @@ class DownloadCoordinator:
                 try:
                     parts = await transfer.retrying(
                         lambda: transfer.plan(
-                            hub, card, progress, lambda: self._reserved(model)
+                            hub,
+                            card,
+                            progress,
+                            self._locks,
+                            lambda: self._reserved(model),
                         ),
                         progress,
                         settings,
+                        give_up_after=settings.unreachable_after,
+                        giving_up="Can't reach Hugging Face",
                     )
+                    running.planned = True
                     await self._announce_progress(model, running)
-                    await transfer.download(hub, parts, progress, settings)
+                    await transfer.download(hub, parts, progress, settings, self._locks)
                     return parts[0].model_dir
-                except RevisionGoneError:
+                except RevisionGoneError as error:
                     if attempt == 2:
                         raise
-                    logger.warning(
-                        f"{card.model_id}: pinned commit gone, pinning again"
-                    )
-                    await to_thread.run_sync(store.forget_manifests, card)
-                    progress.files.clear()
+                    logger.warning(f"{error.repo}: pinned commit gone, pinning again")
+                    await to_thread.run_sync(store.forget_manifest, error.repo)
+                    progress.reset()
         raise AssertionError("unreachable")
 
     def _reserved(self, excluding: _Model) -> dict[Path, int]:
@@ -301,14 +339,18 @@ class DownloadCoordinator:
             if running.stopped:
                 return
             speed = running.progress.speed()
-            if (
-                running.announced
-                and running.progress.fetched == last_fetched
+            if not running.planned or (
+                running.progress.fetched == last_fetched
                 and not (last_speed > 0 and speed == 0)
             ):
                 continue
             last_fetched, last_speed = running.progress.fetched, speed
-            await self._announce_progress(model, running, speed)
+            try:
+                await self._announce_progress(model, running, speed)
+            except (BrokenResourceError, ClosedResourceError):
+                raise
+            except Exception as error:
+                logger.opt(exception=error).error("Reporting download progress failed")
 
     async def _announce_progress(
         self, model: _Model, running: _Running, speed: float = 0.0
@@ -316,12 +358,12 @@ class DownloadCoordinator:
         async with running.reporting:
             if running.stopped:
                 return
-            running.announced = True
             model.status = self._ongoing(model, running, speed)
             await self._send(model.status)
 
-    async def _fail(self, model: _Model, message: str, *, retry: bool) -> None:
-        model.failures += 1
+    async def _fail(self, model: _Model, message: str) -> None:
+        """Report a failure. It is retried by the next StartDownload: the worker
+        sends one, with a backoff, while an instance on this node needs the model."""
         model.generation += 1
         await self._settle(
             model,
@@ -332,18 +374,6 @@ class DownloadCoordinator:
                 model_directory=self._directory(model),
             ),
         )
-        if retry:
-            delay = min(
-                self.settings.failed_retry_cap,
-                self.settings.failed_retry_base * 2.0 ** (model.failures - 1),
-            )
-            self._tg.start_soon(self._retry_later, model, model.generation, delay)
-
-    async def _retry_later(self, model: _Model, generation: int, delay: float) -> None:
-        await anyio.sleep(delay)
-        if model.generation == generation and isinstance(model.status, DownloadFailed):
-            logger.info(f"Retrying download of {model.shard.model_card.model_id}")
-            self._launch(model, model.status)
 
     # --- statuses ----------------------------------------------------------------------
 
@@ -456,10 +486,20 @@ class DownloadCoordinator:
     async def _rescan_loop(self) -> None:
         for scan in count():
             try:
-                for card in await model_cards.card_cache.list_all():
-                    await self._rescan(card, resend=scan % _FULL_RESCAN_EVERY == 0)
+                cards = await model_cards.card_cache.list_all()
             except Exception as error:
-                logger.opt(exception=error).error("Download rescan failed")
+                logger.opt(exception=error).error("Download rescan can't list models")
+                cards = []
+            for card in cards:
+                try:
+                    await self._rescan(card, resend=scan % _FULL_RESCAN_EVERY == 0)
+                except (BrokenResourceError, ClosedResourceError):
+                    raise
+                except Exception as error:
+                    # one unreadable model must not hide the others
+                    logger.opt(exception=error).warning(
+                        f"Download rescan of {card.model_id} failed"
+                    )
             await anyio.sleep(self.settings.rescan_interval)
 
     async def _rescan(self, card: ModelCard, *, resend: bool) -> None:

@@ -324,10 +324,26 @@ async def test_long_server_error_burst(
 async def test_endpoint_down_then_back(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
+    # an outage of a few minutes shows as Failed with the reason; asking again
+    # (an instance needing it, or the user) completes it once the Hub is back
     async with node_for(hub, repo, tmp_path, worker=False) as node:
         await hub.go_down()
         await node.start_download(REPO)
         await asyncio.sleep(2)
+        await hub.come_up()
+        failed = await node.wait_for_failure(REPO)
+        assert failed.error_message.startswith("Can't reach Hugging Face")
+        await node.start_download(REPO)
+        await assert_complete(node, repo, timeout=6, may_fail=True)
+
+
+async def test_short_outage_at_the_start_is_not_a_failure(
+    hub: FakeHub, repo: FakeRepo, tmp_path: Path
+) -> None:
+    async with node_for(hub, repo, tmp_path, worker=False) as node:
+        await hub.go_down()
+        await node.start_download(REPO)
+        await asyncio.sleep(0.5)
         await hub.come_up()
         await assert_complete(node, repo, timeout=6)
 

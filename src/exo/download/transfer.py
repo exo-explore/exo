@@ -6,13 +6,14 @@ Network trouble is retried for as long as bytes keep coming (the backoff resets
 after every attempt that made progress); only a long stretch with no progress at
 all, or an error retrying can't fix, ends the download.
 
-Writes are addressed by offset, so a large file could later be fetched as
-several ranges in parallel.
+File I/O runs in worker threads that a cancellation waits for, so nothing is
+written, created or closed behind the back of whoever cancelled. Writes are
+addressed by offset, so a large file could later be fetched as several ranges in
+parallel.
 """
 
 from __future__ import annotations
 
-import asyncio
 import errno
 import hashlib
 import json
@@ -23,9 +24,12 @@ from collections import deque
 from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import aclosing, contextmanager
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Protocol, final
 
+import anyio
+from anyio import to_thread
 from loguru import logger
 
 from exo.download import store
@@ -57,11 +61,11 @@ class DownloadSettings:
     # Longest wait asked for by a 429, and a multiplier on such waits (for tests).
     rate_limit_cap: float = 300.0
     server_wait_scale: float = 1.0
-    # A download with no new bytes for this long fails with the last error.
+    # Failing to reach the Hub before any file for this long fails the download
+    # (and it is retried later); once files flow, only no new bytes for
+    # ``give_up_after`` does.
+    unreachable_after: float = 120.0
     give_up_after: float = 30 * 60.0
-    # A failed download is retried after this, doubling up to the cap.
-    failed_retry_base: float = 60.0
-    failed_retry_cap: float = 600.0
     progress_interval: float = 1.0
     rescan_interval: float = 60.0
     chunk_size: int = 1 << 20
@@ -69,6 +73,19 @@ class DownloadSettings:
 
 class IntegrityError(PermanentError):
     """A file failed its hash check twice."""
+
+
+@final
+class Locks:
+    """What concurrent downloads on one node must not do at the same time:
+    choose a models dir (and reserve its space), and write the same repo dir."""
+
+    def __init__(self) -> None:
+        self.space = anyio.Lock()
+        self._dirs: dict[Path, anyio.Lock] = {}
+
+    def directory(self, path: Path) -> anyio.Lock:
+        return self._dirs.setdefault(path, anyio.Lock())
 
 
 # --- progress ------------------------------------------------------------------------
@@ -100,7 +117,7 @@ class Progress:
         self.last_progress = clock()
         self.last_error: str | None = None
         self.model_dir: Path | None = None
-        # the bytes each running download still needs, by models dir
+        # the bytes this download still needed in each models dir when it started
         self.needed: dict[Path, int] = {}
         self._samples: deque[tuple[float, int]] = deque([(self.clock(), 0)])
 
@@ -115,6 +132,10 @@ class Progress:
     @property
     def completed_files(self) -> int:
         return sum(1 for f in self.files.values() if f.done)
+
+    def reset(self) -> None:
+        self.files.clear()
+        self.needed.clear()
 
     def remaining(self) -> dict[Path, int]:
         left = max(0, sum(self.needed.values()) - self.fetched)
@@ -173,28 +194,22 @@ async def plan(
     hub: Hub,
     card: ModelCard,
     progress: Progress,
+    locks: Locks,
     reserved: Callable[[], Mapping[Path, int]],
 ) -> list[Part]:
     """Pin each repo of the model to a commit and pick where it goes.
 
-    A repo with a manifest resumes its commit; otherwise ``main`` is resolved now
-    and the manifest is written before any file is fetched.
+    A repo with a manifest resumes its commit and files; otherwise ``main`` is
+    resolved now. The dir is chosen, and its space reserved, under ``locks.space``,
+    and the manifest is written there before any file is fetched.
     """
+    progress.reset()
     result: list[Part] = []
     for repo, only in parts_of(card):
-        existing = next(
-            (
-                (d, manifest)
-                for d in store.candidates(repo)
-                if not store.is_read_only(d) and (manifest := store.read_manifest(d))
-            ),
-            None,
-        )
+        with _disk_errors(repo):
+            existing = await to_thread.run_sync(_existing_manifest, repo)
         if existing is not None:
-            model_dir, manifest = existing
-            root, needed = await asyncio.to_thread(
-                store.choose_root, repo, manifest.files, reserved(), model_dir.parent
-            )
+            commit, files = existing.commit, existing.files
         else:
             commit = await hub.resolve_commit(repo)
             files = store.wanted_files(
@@ -204,71 +219,102 @@ async def plan(
             )
             if not files:
                 raise PermanentError(f"{repo} has no files to download.")
-            root, needed = await asyncio.to_thread(
-                store.choose_root, repo, files, reserved()
-            )
+        manifest = Manifest(repo=str(repo), commit=commit, files=files)
+        with _disk_errors(repo):
+            async with locks.space:
+                root, needed = await to_thread.run_sync(
+                    store.choose_root, repo, files, reserved()
+                )
+                progress.needed[root] = progress.needed.get(root, 0) + needed
             model_dir = root / repo.normalize()
-            manifest = Manifest(repo=str(repo), commit=commit, files=files)
-            await asyncio.to_thread(store.write_manifest, model_dir, manifest)
-        progress.needed[root] = progress.needed.get(root, 0) + needed
+            current = await to_thread.run_sync(store.read_manifest, model_dir)
+            if current is None or (current.commit, current.files) != (commit, files):
+                await to_thread.run_sync(store.write_manifest, model_dir, manifest)
+            present = await to_thread.run_sync(_present, model_dir, files)
         prefix = "" if repo == card.model_id else f"{repo}/"
         check_index = only is None and not store.is_image_model(card)
         result.append(Part(repo, model_dir, manifest, prefix, check_index))
-        for file in manifest.files:
+        for file, downloaded in zip(files, present, strict=True):
             progress.files[prefix + file.path] = FileProgress(
-                size=file.size,
-                downloaded=await asyncio.to_thread(
-                    store.present_bytes, model_dir, file
-                ),
+                size=file.size, downloaded=downloaded
             )
     progress.model_dir = result[0].model_dir
     return result
+
+
+def _existing_manifest(repo: ModelId) -> Manifest | None:
+    for model_dir in store.candidates(repo):
+        if not store.is_read_only(model_dir) and (
+            manifest := store.read_manifest(model_dir)
+        ):
+            return manifest
+    return None
+
+
+def _present(model_dir: Path, files: list[RepoFile]) -> list[int]:
+    return [store.present_bytes(model_dir, f) for f in files]
 
 
 # --- downloading ---------------------------------------------------------------------
 
 
 async def download(
-    hub: Hub, parts: list[Part], progress: Progress, settings: DownloadSettings
+    hub: Hub,
+    parts: list[Part],
+    progress: Progress,
+    settings: DownloadSettings,
+    locks: Locks,
 ) -> None:
     """Fetch every file of every part; mark each manifest complete when done.
 
-    The first error retrying can't fix cancels the other files.
+    Only one download writes a repo dir at a time (models can share a vision
+    weights repo). The first error retrying can't fix cancels the other files.
     """
-    semaphore = asyncio.Semaphore(settings.parallel_files)
+    semaphore = anyio.Semaphore(settings.parallel_files)
 
     async def one(part: Part, file: RepoFile) -> None:
         async with semaphore:
-            await _fetch_file(hub, part, file, progress, settings)
+            await fetch_file(hub, part, file, progress, settings)
 
-    try:
-        async with asyncio.TaskGroup() as group:
-            for part in parts:
+    async def whole(part: Part) -> None:
+        async with locks.directory(part.model_dir):
+            async with anyio.create_task_group() as group:
                 # small files first: the index is checked before the weights arrive
                 for file in sorted(part.manifest.files, key=lambda f: f.size):
-                    group.create_task(one(part, file))
+                    group.start_soon(one, part, file)
+            with _disk_errors(part.repo):
+                await to_thread.run_sync(
+                    store.write_manifest,
+                    part.model_dir,
+                    part.manifest.model_copy(update={"complete": True}),
+                )
+
+    try:
+        async with anyio.create_task_group() as group:
+            for part in parts:
+                group.start_soon(whole, part)
     except BaseExceptionGroup as group_error:
         raise _first_error(group_error) from None
-    for part in parts:
-        await asyncio.to_thread(
-            store.write_manifest,
-            part.model_dir,
-            part.manifest.model_copy(update={"complete": True}),
-        )
 
 
 async def retrying[T](
     operation: Callable[[], Awaitable[T]],
     progress: Progress,
     settings: DownloadSettings,
+    *,
+    give_up_after: float,
+    giving_up: str,
 ) -> T:
     """Run ``operation`` until it succeeds, retrying network trouble.
 
     The wait between tries doubles from ``retry_base`` to ``retry_cap`` and starts
     over after a try that made progress; a 429 waits as long as Hugging Face asks.
-    Gives up only when the whole download got no bytes for ``give_up_after``.
+    Gives up when nothing new arrived for ``give_up_after`` (counting from the
+    first try or the last new byte, whichever is later), with ``giving_up`` and the
+    last error as the message.
     """
     delay = settings.retry_base
+    started = progress.clock()
     while True:
         before = progress.fetched
         try:
@@ -288,24 +334,23 @@ async def retrying[T](
                 delay = settings.retry_base
             wait = delay
             delay = min(delay * 2, settings.retry_cap)
-        if progress.clock() - progress.last_progress > settings.give_up_after:
-            raise PermanentError(
-                f"No progress for {_duration(settings.give_up_after)}: {progress.last_error}."
-            )
+        quiet_since = max(started, progress.last_progress)
+        if progress.clock() - quiet_since > give_up_after:
+            raise PermanentError(f"{giving_up}: {progress.last_error}.")
         logger.info(f"{progress.last_error}; retrying in {wait:.1f}s")
-        await asyncio.sleep(wait * random.uniform(0.8, 1.2))
+        await anyio.sleep(wait * random.uniform(0.8, 1.2))
 
 
 def _first_error(group_error: BaseExceptionGroup[BaseException]) -> BaseException:
     for error in group_error.exceptions:
         if isinstance(error, BaseExceptionGroup):
             return _first_error(error)  # pyright: ignore[reportUnknownArgumentType]
-        if not isinstance(error, asyncio.CancelledError):
+        if not isinstance(error, anyio.get_cancelled_exc_class()):
             return error
     return group_error.exceptions[0]
 
 
-def _duration(seconds: float) -> str:
+def duration(seconds: float) -> str:
     return f"{seconds / 60:.0f} minutes" if seconds >= 120 else f"{seconds:.0f} seconds"
 
 
@@ -326,6 +371,22 @@ def _expected_hash(file: RepoFile) -> str:
     return file.sha256 if file.sha256 is not None else file.git_sha1
 
 
+@dataclass
+class FileState:
+    """What one file's attempts share: the hash of the ``.partial`` so far."""
+
+    file: RepoFile
+    hasher: Hasher
+    hashed: int = 0
+    # the attempt's bytes all came from this attempt's responses
+    fetched_whole: bool = True
+    mismatches: int = 0
+
+    def restart(self) -> None:
+        self.hasher = _new_hasher(self.file)
+        self.hashed = 0
+
+
 class _MismatchError(Exception):
     pass
 
@@ -334,70 +395,91 @@ class _StartOverError(Exception):
     """The partial file is useless; fetch the file from the beginning, now."""
 
 
-async def _fetch_file(
+async def fetch_file(
     hub: Hub, part: Part, file: RepoFile, progress: Progress, settings: DownloadSettings
 ) -> None:
+    """Make ``file`` of ``part`` present and verified in its dir."""
     key = part.key_prefix + file.path
     final = part.model_dir / file.path
-    partial = part.model_dir / (file.path + PARTIAL_SUFFIX)
+    partial_path = part.model_dir / (file.path + PARTIAL_SUFFIX)
+    progress.files.setdefault(key, FileProgress(size=file.size))
     with _disk_errors(part.repo):
-        there = await asyncio.to_thread(_already_there, final, file)
+        there = await to_thread.run_sync(_already_there, final, file)
     if not there:
-        mismatches = 0
+        state = FileState(file, _new_hasher(file))
 
         async def attempt() -> None:
-            nonlocal mismatches
             while True:
                 try:
                     with _disk_errors(part.repo):
                         await _fetch_once(
-                            hub, part, file, partial, key, progress, settings
+                            hub, part, state, partial_path, key, progress, settings
                         )
-                        await asyncio.to_thread(os.replace, partial, final)
+                        await to_thread.run_sync(_rename, partial_path, final, file)
                     return
                 except _MismatchError:
-                    mismatches += 1
-                    logger.warning(f"{part.repo}/{file.path} failed its hash check")
-                    if mismatches >= 2:
-                        await asyncio.to_thread(_remove, partial)
+                    # bytes resumed from an earlier .partial (a power cut, another
+                    # revision's leftovers) aren't the server's fault: don't count them
+                    if state.fetched_whole:
+                        state.mismatches += 1
+                    logger.warning(
+                        f"{part.repo}/{file.path} failed its hash check"
+                        f" ({state.mismatches} bad downloads)"
+                    )
+                    if state.mismatches >= 2:
+                        await to_thread.run_sync(_remove, partial_path)
                         progress.rewind(key)
                         raise IntegrityError(
                             f"{file.path} failed its hash check twice. Try again later."
                         ) from None
                 except _StartOverError:
                     pass
-                await asyncio.to_thread(_remove, partial)
+                await to_thread.run_sync(_remove, partial_path)
+                state.restart()
                 progress.rewind(key)
 
-        await retrying(attempt, progress, settings)
+        await retrying(
+            attempt,
+            progress,
+            settings,
+            give_up_after=settings.give_up_after,
+            giving_up=f"No progress for {duration(settings.give_up_after)}",
+        )
     progress.files[key].downloaded = file.size
     progress.files[key].done = True
     if file.path.endswith(".safetensors.index.json"):
-        await asyncio.to_thread(_check_index, part, final)
+        await to_thread.run_sync(_check_index, part, final)
 
 
 async def _fetch_once(
     hub: Hub,
     part: Part,
-    file: RepoFile,
-    partial: Path,
+    state: FileState,
+    partial_path: Path,
     key: str,
     progress: Progress,
     settings: DownloadSettings,
 ) -> None:
-    """One attempt: bring ``partial`` up to the whole file and verify it."""
-    offset = await asyncio.to_thread(store.file_size, partial) or 0
+    """One attempt: bring the ``.partial`` up to the whole file and verify it."""
+    file = state.file
+    offset = await to_thread.run_sync(store.file_size, partial_path) or 0
     if offset > file.size:
         raise _StartOverError()
+    if offset < state.hashed:
+        state.restart()  # shorter than what was hashed: it changed under us
+    state.fetched_whole = offset == 0
     progress.files[key].downloaded = offset
-    await asyncio.to_thread(partial.parent.mkdir, parents=True, exist_ok=True)
-    descriptor = await asyncio.to_thread(
-        os.open, partial, os.O_RDWR | os.O_CREAT, 0o644
+    await to_thread.run_sync(
+        partial(partial_path.parent.mkdir, parents=True, exist_ok=True)
+    )
+    # not abandoned on cancel: the descriptor is always ours to close
+    descriptor = await to_thread.run_sync(
+        os.open, partial_path, os.O_RDWR | os.O_CREAT, 0o644
     )
     try:
-        hasher = _new_hasher(file)
-        if offset > 0:
-            await asyncio.to_thread(_hash_existing, descriptor, offset, hasher)
+        while state.hashed < offset:
+            # in steps, so a cancellation waits for one step at most
+            await to_thread.run_sync(_hash_range, descriptor, state, offset)
         if offset < file.size:
             async with hub.open(
                 part.repo, part.manifest.commit, file.path, offset
@@ -410,10 +492,11 @@ async def _fetch_once(
                     raise _StartOverError()
                 if response.status == 200 and offset > 0:
                     # the server ignored the Range: take its bytes from the start
-                    await asyncio.to_thread(os.ftruncate, descriptor, 0)
+                    await to_thread.run_sync(os.ftruncate, descriptor, 0)
                     progress.rewind(key)
                     offset = 0
-                    hasher = _new_hasher(file)
+                    state.restart()
+                    state.fetched_whole = True
                 elif response.status == 206 and not _range_starts_at(
                     response.headers.get("Content-Range", ""), offset
                 ):
@@ -426,37 +509,40 @@ async def _fetch_once(
                     async for chunk in body:
                         if offset + len(chunk) > file.size:
                             raise _MismatchError()
-                        await asyncio.to_thread(
-                            _write_at, descriptor, chunk, offset, hasher
+                        await to_thread.run_sync(
+                            _write_at, descriptor, chunk, offset, state
                         )
                         offset += len(chunk)
                         progress.advance(key, len(chunk))
         if offset != file.size:
             raise TransientError("the connection was cut")
-        if hasher.hexdigest() != _expected_hash(file):
+        if state.hasher.hexdigest() != _expected_hash(file):
             raise _MismatchError()
-        await asyncio.to_thread(os.fsync, descriptor)
+        await to_thread.run_sync(os.fsync, descriptor)
     finally:
-        await asyncio.to_thread(os.close, descriptor)
+        with anyio.CancelScope(shield=True):
+            await to_thread.run_sync(os.close, descriptor)
 
 
-def _write_at(descriptor: int, data: bytes, offset: int, hasher: Hasher) -> None:
+def _write_at(descriptor: int, data: bytes, offset: int, state: FileState) -> None:
     view = memoryview(data)
+    position = offset
     while view:
-        written = os.pwrite(descriptor, view, offset)
+        written = os.pwrite(descriptor, view, position)
         view = view[written:]
-        offset += written
-    hasher.update(data)
+        position += written
+    if state.hashed == offset:
+        state.hasher.update(data)
+        state.hashed = offset + len(data)
 
 
-def _hash_existing(descriptor: int, length: int, hasher: Hasher) -> None:
-    position = 0
-    while position < length:
-        block = os.pread(descriptor, min(8 << 20, length - position), position)
-        if not block:
-            break
-        hasher.update(block)
-        position += len(block)
+def _hash_range(descriptor: int, state: FileState, end: int) -> None:
+    """Hash up to 64 MiB more of the ``.partial``, towards ``end``."""
+    block = os.pread(descriptor, min(64 << 20, end - state.hashed), state.hashed)
+    if not block:
+        raise _StartOverError()
+    state.hasher.update(block)
+    state.hashed += len(block)
 
 
 def _range_starts_at(content_range: str, offset: int) -> bool:
@@ -477,6 +563,15 @@ def _already_there(final: Path, file: RepoFile) -> bool:
         return True
     final.unlink()
     return False
+
+
+def _rename(partial_path: Path, final: Path, file: RepoFile) -> None:
+    try:
+        os.replace(partial_path, final)
+    except FileNotFoundError:
+        # someone else (fetching the same commit) got there first
+        if store.file_size(final) != file.size:
+            raise
 
 
 def _git_sha1(path: Path, size: int) -> str:
@@ -518,13 +613,15 @@ def _disk_errors(repo: ModelId) -> Iterator[None]:
         raise
     except OSError as error:
         logger.opt(exception=error).warning(f"Disk error downloading {repo}")
-        if error.errno in (errno.ENOSPC, errno.EDQUOT):
-            raise PermanentError(
-                f"Ran out of disk space downloading {repo}."
-            ) from error
-        reason = os.strerror(error.errno) if error.errno is not None else str(error)
-        if error.errno in (errno.EROFS, errno.EACCES, errno.EPERM):
-            raise PermanentError(
-                f"Can't write to the models folder: {reason}."
-            ) from error
-        raise PermanentError(f"Disk error downloading {repo}: {reason}.") from error
+        raise PermanentError(
+            disk_error_message(error, f"downloading {repo}")
+        ) from error
+
+
+def disk_error_message(error: OSError, doing: str) -> str:
+    if error.errno in (errno.ENOSPC, errno.EDQUOT):
+        return f"Ran out of disk space {doing}."
+    reason = os.strerror(error.errno) if error.errno is not None else str(error)
+    if error.errno in (errno.EROFS, errno.EACCES, errno.EPERM):
+        return f"Can't write to the models folder {doing}: {reason}."
+    return f"Disk error {doing}: {reason}."

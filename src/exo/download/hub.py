@@ -65,6 +65,10 @@ class NotFoundError(PermanentError):
 class RevisionGoneError(NotFoundError):
     """The commit a download was pinned to no longer exists upstream."""
 
+    def __init__(self, message: str, repo: ModelId) -> None:
+        super().__init__(message)
+        self.repo = repo
+
 
 def new_session(
     *,
@@ -73,7 +77,7 @@ def new_session(
     total_timeout: float | None = None,
     auto_decompress: bool = False,
 ) -> aiohttp.ClientSession:
-    """A session honouring SSL_CERT_FILE and HTTP(S)_PROXY.
+    """A session honouring SSL_CERT_FILE and the usual proxy variables.
 
     ``idle_timeout`` is the longest wait for the next bytes; there is no limit on
     a whole request unless ``total_timeout`` is given.
@@ -84,7 +88,8 @@ def new_session(
     return aiohttp.ClientSession(
         auto_decompress=auto_decompress,
         connector=aiohttp.TCPConnector(ssl=ssl_context),
-        proxy=os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY") or None,
+        # HTTP(S)_PROXY in either case, and NO_PROXY
+        trust_env=True,
         timeout=aiohttp.ClientTimeout(
             total=total_timeout,
             sock_connect=connect_timeout,
@@ -151,9 +156,12 @@ def _raise_for_status(
         )
     if status >= 500:
         raise TransientError(f"Hugging Face server error {status}")
+    if response.url.host != urlsplit(get_hf_endpoint()).hostname:
+        # the storage server a file redirects to: an expired link, most likely
+        raise TransientError(f"the file server refused {path} ({status})")
     if code == "RevisionNotFound":
         raise RevisionGoneError(
-            f"The revision exo was downloading is gone from {repo}."
+            f"The revision exo was downloading is gone from {repo}.", repo
         )
     if code == "GatedRepo" and status == 401:
         raise PermanentError(
@@ -172,6 +180,18 @@ def _raise_for_status(
     if status == 404:
         raise NotFoundError(f"{path} is listed in {repo} but was not found (404).")
     raise PermanentError(f"Hugging Face refused to send {path or repo} ({status}).")
+
+
+def is_safe_path(path: str) -> bool:
+    """A relative path that stays inside the folder it is joined to."""
+    parts = path.split("/")
+    return (
+        bool(path)
+        and not path.startswith("/")
+        and "\\" not in path
+        and "\0" not in path
+        and all(part not in ("", ".", "..") for part in parts)
+    )
 
 
 class _Lfs(BaseModel):
@@ -256,16 +276,21 @@ class Hub:
                 raise TransientError(
                     "Hugging Face sent an unreadable file list"
                 ) from error
-            files += [
-                RepoFile(
-                    path=entry.path,
-                    size=entry.size,
-                    sha256=entry.lfs.oid if entry.lfs is not None else None,
-                    git_sha1=entry.oid,
+            for entry in entries:
+                if entry.type != "file":
+                    continue
+                if not is_safe_path(entry.path):
+                    raise PermanentError(
+                        f"{repo} lists a file exo won't write: {entry.path!r}."
+                    )
+                files.append(
+                    RepoFile(
+                        path=entry.path,
+                        size=entry.size,
+                        sha256=entry.lfs.oid if entry.lfs is not None else None,
+                        git_sha1=entry.oid,
+                    )
                 )
-                for entry in entries
-                if entry.type == "file"
-            ]
         return files
 
     @asynccontextmanager

@@ -137,7 +137,19 @@ async def test_reannounce_keeps_the_download_going(
         assert hub.count(kind="tree") == 1
 
 
-async def test_a_failed_download_is_retried_by_itself(
+async def test_a_failed_download_an_instance_needs_is_retried_until_it_succeeds(
+    hub: FakeHub, repo: FakeRepo, tmp_path: Path
+) -> None:
+    async with DownloadNode(hub, tmp_path, [card_for(repo)]) as node:
+        node.want(REPO)  # as the worker does for a placed instance
+        node.write_budget = 100_000
+        await node.wait_for(REPO, DownloadFailed)
+        node.write_budget = None
+        await node.wait_for(REPO, DownloadCompleted, timeout=10)
+        assert node.files_on_disk(REPO) == expected_files(repo)
+
+
+async def test_a_failed_download_nothing_needs_is_not_retried(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
     async with DownloadNode(hub, tmp_path, [card_for(repo)], worker=False) as node:
@@ -145,12 +157,16 @@ async def test_a_failed_download_is_retried_by_itself(
         await node.start_download(REPO)
         await node.wait_for(REPO, DownloadFailed)
         node.write_budget = None
-        # no new command: the coordinator retries after its backoff
+        fetched = hub.body_bytes(REPO)
+        await asyncio.sleep(3)  # five minutes and more, at this timing
+        assert isinstance(node.status(REPO), DownloadFailed)
+        assert hub.body_bytes(REPO) == fetched
+        # a new request (the dashboard's download button) retries it at once
+        await node.start_download(REPO)
         await node.wait_for(REPO, DownloadCompleted, timeout=10)
-        assert node.files_on_disk(REPO) == expected_files(repo)
 
 
-async def test_cancelling_a_failed_download_stops_its_retries(
+async def test_cancelling_a_failed_download_shows_what_is_on_disk(
     hub: FakeHub, tmp_path: Path
 ) -> None:
     repo = hub.add_repo(FakeRepo(REPO, model_repo_files(REPO), gated=True))
@@ -159,9 +175,6 @@ async def test_cancelling_a_failed_download_stops_its_retries(
         await node.wait_for(REPO, DownloadFailed)
         await node.cancel(REPO)
         await node.wait_for(REPO, DownloadPending)
-        requests = len(hub.requests)
-        await asyncio.sleep(3 * node.timing.backoff_scale * 60)
-        assert len(hub.requests) == requests
 
 
 async def test_cancel_of_an_unknown_model_does_nothing(

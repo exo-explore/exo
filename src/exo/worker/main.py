@@ -58,7 +58,7 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.text_generation import Base64Image, Base64ImageHash
 from exo.shared.types.topology import Connection, SocketConnection
-from exo.shared.types.worker.downloads import DownloadCompleted
+from exo.shared.types.worker.downloads import DownloadCompleted, DownloadFailed
 from exo.shared.types.worker.instances import InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerReady
 from exo.utils.channels import Receiver, Sender, channel
@@ -112,6 +112,10 @@ class Worker:
         self._inputs_lost: set[TaskId] = set()
 
         self._download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(base=0.5, cap=10.0)
+        # a failed download is asked for again after 30 s, doubling up to 5 min
+        self._failed_download_backoff: KeyedBackoff[ModelId] = KeyedBackoff(
+            base=30.0, cap=300.0
+        )
         self._instance_backoff: KeyedBackoff[InstanceId] = KeyedBackoff(
             base=0.5, cap=10.0
         )
@@ -339,6 +343,7 @@ class Worker:
                 self.state.tasks,
                 self._instance_backoff,
                 self._download_backoff,
+                self._failed_download_backoff,
             )
             if task is None:
                 continue
@@ -389,6 +394,12 @@ class Worker:
                 case DownloadModel(shard_metadata=shard):
                     model_id = shard.model_card.model_id
                     self._download_backoff.record_attempt(model_id)
+                    if any(
+                        isinstance(download, DownloadFailed)
+                        and download.shard_metadata.model_card.model_id == model_id
+                        for download in self.state.downloads.get(self.node_id, [])
+                    ):
+                        self._failed_download_backoff.record_attempt(model_id)
 
                     found_path = await to_thread.run_sync(
                         resolve_existing_model, model_id, shard.model_card
@@ -518,6 +529,7 @@ class Worker:
                     if (instance := self.state.instances.get(instance_id)) is not None:
                         model_id = instance.shard_assignments.model_id
                         self._download_backoff.reset(model_id)
+                        self._failed_download_backoff.reset(model_id)
 
                     await self._start_runner_task(task)
                 case task:

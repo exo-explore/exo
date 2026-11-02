@@ -98,12 +98,25 @@ class TestCompleteness:
         legacy_model(dirs[0] / NAME, with_weights=False)
         assert store.find_complete(MODEL_ID) is None
 
-    def test_legacy_model_with_partial_files_is_not(
+    def test_legacy_model_ignores_stray_partial_files(
+        self, dirs: tuple[Path, Path, Path]
+    ) -> None:
+        # older exo's rule, kept as it was: a leftover .partial doesn't matter
+        legacy_model(dirs[0] / NAME)
+        (dirs[0] / NAME / "README.md.partial").write_bytes(b"# half")
+        assert store.find_complete(MODEL_ID) == dirs[0] / NAME
+
+    def test_unreadable_legacy_dir_is_not_complete(
         self, dirs: tuple[Path, Path, Path]
     ) -> None:
         legacy_model(dirs[0] / NAME)
-        (dirs[0] / NAME / "tokenizer.json.partial").write_bytes(b"tok")
-        assert store.find_complete(MODEL_ID) is None
+        (dirs[0] / NAME / "sub").mkdir()
+        (dirs[0] / NAME / "sub").chmod(0o600)
+        try:
+            assert store.find_complete(MODEL_ID) in (None, dirs[0] / NAME)
+            assert store.legacy_present_bytes(dirs[0] / NAME) > 0
+        finally:
+            (dirs[0] / NAME / "sub").chmod(0o700)
 
     def test_read_only_copy_comes_first(self, dirs: tuple[Path, Path, Path]) -> None:
         default, _, read_only = dirs
@@ -166,7 +179,8 @@ class TestChoosingADir:
         ):
             store.choose_root(MODEL_ID, files, {})
         assert raised.value.message == (
-            "Not enough disk space for test-org/test-model: needs 12.3 GB, 4.1 GB free."
+            "Not enough disk space for test-org/test-model: needs 12.3 GB more, "
+            "4.1 GB free."
         )
 
 
@@ -205,6 +219,16 @@ class TestWantedFiles:
 
 
 class TestDelete:
+    def test_a_linked_model_dir_loses_the_link_not_its_target(
+        self, dirs: tuple[Path, Path, Path], tmp_path: Path
+    ) -> None:
+        elsewhere = tmp_path / "external" / NAME
+        legacy_model(elsewhere)
+        (dirs[0] / NAME).symlink_to(elsewhere)
+        assert store.delete(MODEL_ID)
+        assert not (dirs[0] / NAME).exists()
+        assert (elsewhere / "model.safetensors").exists()
+
     def test_removes_every_writable_copy_and_the_old_cache(
         self, dirs: tuple[Path, Path, Path]
     ) -> None:

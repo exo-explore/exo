@@ -52,6 +52,7 @@ def plan(
     tasks: Mapping[TaskId, Task],
     instance_backoff: KeyedBackoff[InstanceId],
     download_backoff: KeyedBackoff[ModelId],
+    failed_download_backoff: KeyedBackoff[ModelId] | None = None,
 ) -> Task | None:
     # A runner that has yet to pick up the last task sent to it still has the status from
     # before that task: starting the next phase from it would send the task again. Such a
@@ -68,7 +69,11 @@ def plan(
         or _kill_runner(runners, all_runners, instances)
         or _create_runner(node_id, runners, all_runners, instances, instance_backoff)
         or _model_needs_download(
-            node_id, runners, global_download_status, download_backoff
+            node_id,
+            runners,
+            global_download_status,
+            download_backoff,
+            failed_download_backoff or download_backoff,
         )
         or _init_distributed_backend(settled, all_runners)
         or _load_model(settled, all_runners, global_download_status)
@@ -146,26 +151,37 @@ def _model_needs_download(
     runners: Mapping[RunnerId, RunnerSupervisor],
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
     download_backoff: KeyedBackoff[ModelId],
+    failed_download_backoff: KeyedBackoff[ModelId],
 ) -> DownloadModel | None:
+    """Ask for the model of each local runner that hasn't loaded it, until it is
+    downloaded.
+
+    That includes runners already connecting to the rest of their instance (a
+    multi-node instance connects before its downloads finish). A download that
+    isn't running (never started, stopped, or failed) is asked for again; a failed
+    one with a slower backoff. Models no instance on this node needs are never
+    asked for.
+    """
     local_downloads = global_download_status.get(node_id, [])
     download_status = {
         dp.shard_metadata.model_card.model_id: dp for dp in local_downloads
     }
 
     for runner in runners.values():
-        model_id = runner.bound_instance.bound_shard.model_card.model_id
-        if (
-            isinstance(runner.status, RunnerIdle)
-            and (
-                model_id not in download_status
-                or not isinstance(
-                    download_status[model_id],
-                    (DownloadOngoing, DownloadCompleted, DownloadFailed),
-                )
-            )
-            and download_backoff.should_proceed(model_id)
+        if not isinstance(
+            runner.status, (RunnerIdle, RunnerConnecting, RunnerConnected)
         ):
-            # We don't invalidate download_status randomly in case a file gets deleted on disk
+            continue  # loading or past it: the model is on disk
+        model_id = runner.bound_instance.bound_shard.model_card.model_id
+        status = download_status.get(model_id)
+        if isinstance(status, (DownloadOngoing, DownloadCompleted)):
+            continue
+        backoff = (
+            failed_download_backoff
+            if isinstance(status, DownloadFailed)
+            else download_backoff
+        )
+        if backoff.should_proceed(model_id):
             return DownloadModel(
                 instance_id=runner.bound_instance.instance.instance_id,
                 shard_metadata=runner.bound_instance.bound_shard,

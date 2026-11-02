@@ -1,19 +1,19 @@
 """Model-file helpers for the rest of exo: finding a model on disk, fetching a
 single file (model cards), and an HTTP session for other callers."""
 
-import asyncio
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
 import aiohttp
-from loguru import logger
+from anyio import to_thread
 
-from exo.download import store
-from exo.download.hub import Hub, NotFoundError, TransientError, chunks, new_session
+from exo.download import store, transfer
+from exo.download.hub import Hub, NotFoundError, new_session
+from exo.download.store import Manifest
+from exo.download.transfer import DownloadSettings, Part, Progress
 from exo.shared.models.model_cards import ModelCard
 from exo.shared.types.common import ModelId
-from exo.shared.types.worker.downloads import FileListEntry
 
 
 def resolve_existing_model(
@@ -34,8 +34,8 @@ def build_model_path(model_id: ModelId) -> Path:
 
 async def resolve_model_dir(model_id: ModelId) -> Path:
     """The model's dir (a complete copy, else the default one), created if needed."""
-    target = await asyncio.to_thread(build_model_path, model_id)
-    await asyncio.to_thread(target.mkdir, parents=True, exist_ok=True)
+    target = await to_thread.run_sync(build_model_path, model_id)
+    await to_thread.run_sync(lambda: target.mkdir(parents=True, exist_ok=True))
     return target
 
 
@@ -61,52 +61,49 @@ async def download_file_with_retry(
     path: str,
     target_dir: Path,
     on_progress: Callable[[int, int, bool], None] = lambda _, __, ___: None,
-    attempts: int = 3,
 ) -> Path:
-    """Fetch one (small) file into ``target_dir`` unless it is already there.
+    """Fetch one file of the repo into ``target_dir`` unless it is already there,
+    the same way a model download does (resumed, hash-checked, renamed into place).
 
+    Uses the commit a download of this model pinned, if any, else ``revision``.
     Raises ``FileNotFoundError`` when the Hub doesn't have it.
     """
     target = target_dir / path
-    if await asyncio.to_thread(target.exists):
+    if await to_thread.run_sync(target.exists):
         return target
-    partial = target_dir / (path + store.PARTIAL_SUFFIX)
-    for attempt in range(1, attempts + 1):
+    settings = DownloadSettings()
+    progress = Progress()
+    async with Hub.connect(
+        connect_timeout=settings.connect_timeout,
+        idle_timeout=settings.idle_timeout,
+        metadata_timeout=settings.metadata_timeout,
+    ) as hub:
+
+        async def locate() -> Manifest:
+            pinned = await to_thread.run_sync(store.read_manifest, target_dir)
+            if pinned is not None:
+                return pinned
+            commit = await hub.resolve_commit(model_id, revision)
+            return Manifest(
+                repo=str(model_id),
+                commit=commit,
+                files=await hub.list_files(model_id, commit),
+            )
+
         try:
-            async with Hub.connect(
-                connect_timeout=30, idle_timeout=60, metadata_timeout=60
-            ) as hub:
-                received = 0
-                await asyncio.to_thread(
-                    partial.parent.mkdir, parents=True, exist_ok=True
-                )
-                async with hub.open(model_id, revision, path) as response:
-                    total = response.content_length or 0
-                    with open(partial, "wb") as file:  # noqa: ASYNC230 - small files
-                        async for chunk in chunks(response, 1 << 20):
-                            file.write(chunk)
-                            received += len(chunk)
-                            on_progress(received, total, False)
-            await asyncio.to_thread(partial.replace, target)
-            on_progress(received, received, True)
-            return target
+            manifest = await transfer.retrying(
+                locate,
+                progress,
+                settings,
+                give_up_after=settings.unreachable_after,
+                giving_up="Can't reach Hugging Face",
+            )
+            file = next((f for f in manifest.files if f.path == path), None)
+            if file is None:
+                raise FileNotFoundError(f"{path} is not in {model_id}.")
+            part = Part(model_id, target_dir, manifest, check_index=False)
+            await transfer.fetch_file(hub, part, file, progress, settings)
         except NotFoundError as error:
             raise FileNotFoundError(error.message) from error
-        except TransientError as error:
-            if attempt == attempts:
-                raise
-            logger.info(f"Fetching {model_id}/{path}: {error.message}; retrying")
-            await asyncio.sleep(attempt)
-    raise AssertionError("unreachable")
-
-
-async def fetch_file_list_with_cache(
-    model_id: ModelId, revision: str = "main", recursive: bool = True
-) -> list[FileListEntry]:
-    """Every file of the repo at ``revision``."""
-    del recursive  # the listing is always recursive
-    async with Hub.connect(
-        connect_timeout=30, idle_timeout=60, metadata_timeout=60
-    ) as hub:
-        files = await hub.list_files(model_id, revision)
-    return [FileListEntry(type="file", path=f.path, size=f.size) for f in files]
+    on_progress(file.size, file.size, True)
+    return target

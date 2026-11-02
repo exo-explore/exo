@@ -5,8 +5,9 @@ A :class:`DownloadNode` is one node's download side: the real
 events applied to a ``State`` with the real ``apply`` function, so tests see what
 the cluster would see. With ``worker=True`` it also asks for the models it
 :meth:`~DownloadNode.want`, the way the worker does for a placed instance: it sends
-``StartDownload`` while the model has no status or a ``DownloadPending`` one,
-with the worker's backoff.
+``StartDownload`` while the model has no status or a ``DownloadPending`` one, with
+the worker's backoff, and while it is ``DownloadFailed``, with the worker's slower
+backoff for failed downloads.
 
 Everything that depends on how the downloader is built lives in the
 "implementation adapter" section, so the scenarios don't change when the
@@ -87,6 +88,9 @@ class Timing:
     # The worker's backoff between StartDownload requests (0.5 s doubling to 10 s).
     worker_backoff_base: float = 0.005
     worker_backoff_cap: float = 0.1
+    # ... and between StartDownload requests for a failed download (30 s to 5 min)
+    worker_failed_backoff_base: float = 0.3
+    worker_failed_backoff_cap: float = 3.0
 
 
 def card_for(repo: FakeRepo, n_layers: int = 2) -> ModelCard:
@@ -164,6 +168,10 @@ class DownloadNode:
         self.free_space: dict[Path, int] = {}
         self._backoff: KeyedBackoff[ModelId] = KeyedBackoff(
             base=self.timing.worker_backoff_base, cap=self.timing.worker_backoff_cap
+        )
+        self._failed_backoff: KeyedBackoff[ModelId] = KeyedBackoff(
+            base=self.timing.worker_failed_backoff_base,
+            cap=self.timing.worker_failed_backoff_cap,
         )
         self._command_sender: Sender[ForwarderDownloadCommand] | None = None
         self._tasks: list[asyncio.Task[None]] = []
@@ -370,10 +378,14 @@ class DownloadNode:
             await asyncio.sleep(0.01)
             for model_id, shard in list(self.wanted.items()):
                 status = self.status(model_id)
-                if (
-                    status is None or isinstance(status, DownloadPending)
-                ) and self._backoff.should_proceed(model_id):
+                if isinstance(status, (DownloadOngoing, DownloadCompleted)):
+                    continue
+                failed = isinstance(status, DownloadFailed)
+                backoff = self._failed_backoff if failed else self._backoff
+                if backoff.should_proceed(model_id):
                     self._backoff.record_attempt(model_id)
+                    if failed:
+                        self._failed_backoff.record_attempt(model_id)
                     await self.send(
                         StartDownload(target_node_id=NODE_ID, shard_metadata=shard)
                     )
@@ -448,9 +460,8 @@ def settings_for(timing: Timing) -> DownloadSettings:
         rate_limit_cap=production.rate_limit_cap * scale,
         server_wait_scale=scale,
         give_up_after=production.give_up_after * scale,
-        failed_retry_base=production.failed_retry_base * scale,
-        failed_retry_cap=production.failed_retry_cap * scale,
         rescan_interval=timing.rescan_interval,
+        unreachable_after=production.unreachable_after * scale,
         # file_request_timeout has no equivalent: there is no cap on a whole file
     )
 
@@ -486,14 +497,14 @@ def _implementation_patches(node: DownloadNode) -> Iterator[None]:
     real_write_at = _transfer._write_at  # pyright: ignore[reportPrivateUsage]
 
     def write_at(
-        descriptor: int, data: bytes, offset: int, hasher: _transfer.Hasher
+        descriptor: int, data: bytes, offset: int, state: _transfer.FileState
     ) -> None:
         budget = node.write_budget
         if budget is not None:
             if budget < len(data):
                 raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
             node.write_budget = budget - len(data)
-        real_write_at(descriptor, data, offset, hasher)
+        real_write_at(descriptor, data, offset, state)
 
     def disk_usage(path: str | os.PathLike[str]) -> object:
         usage = _real_disk_usage(path)
