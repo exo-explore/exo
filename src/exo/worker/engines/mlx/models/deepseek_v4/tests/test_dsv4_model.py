@@ -5,7 +5,8 @@ path equals the unsplit one, rows of different lengths batched together give wha
 gives alone, and the reference's rounding helpers. Real-weight comparisons with DeepSeek's
 reference implementation are in the PR's report."""
 
-from collections.abc import Iterator
+import math
+from collections.abc import Callable, Iterator
 from typing import cast
 
 import mlx.core as mx
@@ -329,3 +330,132 @@ def test_extending_with_a_row_at_the_same_position_and_another_buffer(
         np.testing.assert_allclose(
             np.concatenate([step[i : i + 1] for step in batched]), alone, atol=1e-4
         )
+
+
+def _broadcast_selected(topk: mx.array, compressed_len: int) -> mx.array:
+    """The prefill top-k mask as it was built before the scatter: equal to
+    dsv4._topk_selected, through a [B, S, k, compressed_len] intermediate."""
+    k_range = mx.arange(compressed_len, dtype=mx.int32)
+    return mx.equal(topk[..., None], k_range[None, None, None, :]).any(axis=-2)
+
+
+# (batch, queries, k, compressed rows): k below, equal to and above the row count, one row,
+# one query.
+TOPK_SHAPES = ((1, 1, 1, 1), (1, 7, 4, 1), (2, 9, 8, 8), (3, 33, 8, 37), (2, 5, 64, 20))
+
+
+@pytest.mark.parametrize("shape", TOPK_SHAPES)
+def test_topk_mask_scatter_equals_the_broadcast_comparison(
+    shape: tuple[int, int, int, int],
+) -> None:
+    """Any int32 indices, including repeats, -1 and other negatives, and indices at or past
+    the row count (which select nothing in the comparison)."""
+    batch, queries, k, rows = shape
+    rng = np.random.default_rng(sum(shape))
+    for _ in range(20):
+        topk = mx.array(
+            rng.integers(-3, rows + 3, size=(batch, queries, k)).astype(np.int32)
+        )
+        scattered = dsv4._topk_selected(topk, rows)  # pyright: ignore[reportPrivateUsage]
+        assert scattered.shape == (batch, queries, rows)
+        assert scattered.dtype == mx.bool_
+        assert mx.array_equal(scattered, _broadcast_selected(topk, rows))
+
+
+@pytest.mark.parametrize("offsets", [[0], [37], [0, 13, 96], [150, 4]])
+def test_topk_mask_scatter_keeps_the_causal_cut_off(offsets: list[int]) -> None:
+    """Indices chosen as the indexer chooses them in a multi-token step (top-k over scores
+    with the rows that complete after the query at -inf, and padded pool rows at -1e30),
+    for rows of a batch at different positions: the attention mask over the compressed rows
+    is the same with the scatter. Queries that see fewer than k rows still get k indices,
+    some of them future rows, which the causal visibility removes in both."""
+    ratio, k, queries = 4, 8, 24
+    rows = (max(offsets) + queries) // ratio
+    batch = len(offsets)
+    offset = mx.array(offsets, dtype=mx.int32) if batch > 1 else offsets[0]
+    visible = dsv4._compressed_visibility(batch, queries, offset, rows, ratio)  # pyright: ignore[reportPrivateUsage]
+    pool_lengths = mx.array([(o + queries) // ratio for o in offsets], dtype=mx.int32)
+    mx.random.seed(len(offsets))
+    score = mx.random.normal((batch, queries, rows))
+    valid = mx.arange(rows)[None, None, :] < pool_lengths[:, None, None]
+    score = mx.where(valid, score, -1e30)
+    score = mx.where(visible[:, 0], score, -math.inf)
+    topk = mx.argpartition(-score, kth=min(k, rows) - 1, axis=-1)[..., : min(k, rows)]
+    topk = topk.astype(mx.int32)
+
+    scattered = visible & dsv4._topk_selected(topk, rows)[:, None]  # pyright: ignore[reportPrivateUsage]
+    compared = visible & _broadcast_selected(topk, rows)[:, None]
+    assert mx.array_equal(scattered, compared)
+    # each query keeps min(k, rows it can see) rows
+    seen = mx.minimum(visible.sum(axis=-1), k)
+    assert mx.array_equal(scattered.sum(axis=-1), seen)
+
+
+def _batched_prefill_step(model: Model) -> np.ndarray:
+    """Log-probs of a right-padded multi-token step (offsets per row) over merged caches of
+    prompts of different lengths, long enough for the indexer's top-k to bind."""
+    rng = np.random.default_rng(5)
+    prompts = [rng.integers(0, 256, size=n).astype(np.int32) for n in (23, 70, 150)]
+    lengths = [40, 9, 33]
+    width = max(lengths)
+    padded = np.zeros((len(prompts), width), dtype=np.int32)
+    for i, n in enumerate(lengths):
+        padded[i, :n] = rng.integers(0, 256, size=n)
+    batch = _merged([_prefilled(model, prompt) for prompt in prompts])
+    for cache in batch:
+        cache.prepare(lengths=lengths, right_padding=[width - n for n in lengths])
+    logits = model(mx.array(padded), cache=batch)
+    for cache in batch:
+        cache.finalize()
+    return _log_probs(logits)
+
+
+def test_prefill_logits_are_identical_with_the_scatter_mask(
+    tiny_model: Model, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One-shot prefill, chunked prefill and a batched right-padded step give bit-identical
+    log-probs with the scatter mask and with the broadcast comparison, and the steps do go
+    through the mask with the selection binding (k < compressed rows)."""
+    calls: list[tuple[int, int]] = []
+    scatter = dsv4._topk_selected  # pyright: ignore[reportPrivateUsage]
+
+    def counted(topk: mx.array, compressed_len: int) -> mx.array:
+        calls.append((topk.shape[-1], compressed_len))
+        return scatter(topk, compressed_len)
+
+    def run() -> list[np.ndarray]:
+        return [
+            _logits(tiny_model, _prompt(), PROMPT_TOKENS),
+            _logits(tiny_model, _prompt(), 48),
+            _batched_prefill_step(tiny_model),
+        ]
+
+    monkeypatch.setattr(dsv4, "_topk_selected", counted)
+    with_scatter = run()
+    assert any(k < rows for k, rows in calls)
+    monkeypatch.setattr(dsv4, "_topk_selected", _broadcast_selected)
+    with_comparison = run()
+    for new, old in zip(with_scatter, with_comparison, strict=True):
+        assert np.array_equal(new, old)
+
+
+def _peak_bytes(build: Callable[[], mx.array]) -> int:
+    mx.synchronize()
+    base = mx.get_active_memory()
+    mx.reset_peak_memory()
+    mx.eval(build())
+    return mx.get_peak_memory() - base
+
+
+def test_topk_mask_scatter_does_not_materialise_the_comparison() -> None:
+    """At 256 queries, k = 256 and 2048 rows the comparison's intermediate is 128 MiB; the
+    scatter needs about its 0.5 MiB output."""
+    batch, queries, k, rows = 1, 256, 256, 2048
+    mx.random.seed(6)
+    topk = mx.argsort(mx.random.uniform(shape=(batch, queries, rows)), axis=-1)[..., :k]
+    topk = topk.astype(mx.int32)
+    mx.eval(topk)
+    comparison = _peak_bytes(lambda: _broadcast_selected(topk, rows))
+    scatter = _peak_bytes(lambda: dsv4._topk_selected(topk, rows))  # pyright: ignore[reportPrivateUsage]
+    assert comparison >= batch * queries * k * rows
+    assert scatter < batch * queries * k * rows // 16
