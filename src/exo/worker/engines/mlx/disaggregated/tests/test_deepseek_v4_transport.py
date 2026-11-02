@@ -1,21 +1,31 @@
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
 # pyright: reportUnknownArgumentType=false
 import io
+import time
+from typing import BinaryIO
 
 import mlx.core as mx
 import numpy as np
 import pytest
 from mlx_lm.models.cache import CacheList, QuantizedKVCache
 
+import exo.worker.engines.mlx.generator.remote_prefill as remote_prefill_module
+from exo.utils.ports import random_ephemeral_port
 from exo.worker.disaggregated.protocol import (
     ArraysState,
     Done,
+    Header,
     KVChunk,
     read_header,
     read_message,
+    write_arrays_state,
+    write_done,
+    write_header,
 )
+from exo.worker.disaggregated.server import PrefillRequest, PrefillServer
 from exo.worker.engines.mlx.disaggregated.adapter import (
     _window_arrays,  # pyright: ignore[reportPrivateUsage]
+    deepseek_v4_cache_to_blobs,
     write_cache_to_wire,
 )
 from exo.worker.engines.mlx.disaggregated.client import (
@@ -224,3 +234,60 @@ def test_deepseek_v4_decode_after_transport_matches_local_prefill() -> None:
         cache._branches["indexer"] = CompressorBranch()
     damaged_logits, _ = _greedy(model, prompt[-1:], damaged_received, 0)
     assert not bool(mx.array_equal(damaged_logits, reference_logits))
+
+
+@pytest.mark.slow
+def test_deepseek_v4_stream_reports_progress_as_layers_arrive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A DeepSeek V4 stream has no KV chunks, only one ArraysState per layer. The runner
+    supervisor stops a generating runner that reports nothing for RUNNER_STALL_TIMEOUT,
+    so a slow stream must report progress as its layers arrive, not only at the end."""
+    layers, tokens, gap = 5, 21, 0.15
+    blobs = deepseek_v4_cache_to_blobs(_synthetic_cache(window=8, tokens=tokens))
+
+    def resolve(_job: PrefillRequest, wfile: BinaryIO) -> bool:
+        write_header(wfile, Header(num_layers=layers, dtype="bfloat16"))
+        for layer in range(layers):
+            if layer > 0:
+                time.sleep(gap)
+            write_arrays_state(wfile, layer, blobs)
+            wfile.flush()
+        write_done(wfile, 0)
+        wfile.flush()
+        return True
+
+    monkeypatch.setattr(remote_prefill_module, "PROGRESS_INTERVAL_SECONDS", gap / 3)
+    port = random_ephemeral_port()
+    server = PrefillServer(resolve=resolve, host="127.0.0.1", port=port)
+    times: list[float] = []
+    reports: list[tuple[int, int]] = []
+    start = time.monotonic()
+
+    def on_progress(processed: int, total: int) -> None:
+        times.append(time.monotonic() - start)
+        reports.append((processed, total))
+
+    try:
+        caches = [DeepseekV4Cache(8) for _ in range(layers)]
+        _, num_tokens, _ = remote_prefill_module.remote_prefill(
+            mx.arange(tokens),
+            list(caches),
+            on_progress,
+            endpoint=f"127.0.0.1:{port}",
+            request_id="dsv4-progress",
+            model_id="m",
+        )
+        end = time.monotonic() - start
+    finally:
+        server.stop()
+
+    assert num_tokens == tokens
+    assert end > (layers - 1) * gap
+    marks = [0.0, *times, end]
+    silences = [b - a for a, b in zip(marks[1:], marks[2:], strict=False)]
+    # Between the first layer and the return, nothing goes unreported for two gaps.
+    assert times and max(silences, default=0.0) < 2 * gap, (times, end)
+    processed = [p for p, _ in reports]
+    assert processed == sorted(processed)
+    assert reports[-1] == (tokens, tokens)

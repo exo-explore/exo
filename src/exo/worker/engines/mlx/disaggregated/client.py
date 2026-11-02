@@ -56,6 +56,7 @@ def remote_prefill_fetch(
     on_header: Callable[[Header], None] | None = None,
     on_kv_chunk: Callable[[KVChunk, int], None] | None = None,
     timeout_secs: float = _SOCKET_TIMEOUT_SECS,
+    on_arrays_state: Callable[[ArraysState, int], None] | None = None,
 ) -> PrefillResult:
     host, port = _parse_endpoint(endpoint)
     logger.info(
@@ -81,6 +82,7 @@ def remote_prefill_fetch(
         result = PrefillResult(header=header)
         kv_by_layer: dict[int, list[KVChunk]] = defaultdict(list)
         chunks_received = 0
+        arrays_received = 0
 
         while True:
             msg = read_message(stream)
@@ -93,6 +95,9 @@ def remote_prefill_fetch(
                     on_kv_chunk(msg, chunks_received)
             elif isinstance(msg, ArraysState):
                 result.arrays[msg.layer_idx] = msg.arrays
+                arrays_received += 1
+                if on_arrays_state is not None:
+                    on_arrays_state(msg, arrays_received)
             elif isinstance(msg, Done):
                 result.total_tokens = msg.total_tokens
                 break

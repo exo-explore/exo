@@ -1,3 +1,4 @@
+import math
 import time
 from collections.abc import Callable
 from typing import cast
@@ -5,7 +6,7 @@ from typing import cast
 import mlx.core as mx
 from mlx_lm.models.cache import ArraysCache, KVCache, RotatingKVCache
 
-from exo.worker.disaggregated.protocol import Header, KVChunk
+from exo.worker.disaggregated.protocol import ArraysState, Header, KVChunk
 from exo.worker.disaggregated.server import PrefillRequest
 from exo.worker.engines.mlx.cache import CacheSnapshot, snapshot_ssm_states
 from exo.worker.engines.mlx.disaggregated.client import (
@@ -15,6 +16,12 @@ from exo.worker.engines.mlx.disaggregated.client import (
 from exo.worker.engines.mlx.models.deepseek_v4.model import DeepseekV4Cache
 from exo.worker.engines.mlx.types import KVCacheType
 from exo.worker.runner.bootstrap import logger
+
+# A DeepSeek V4 stream sends every layer as an ArraysState and no KV chunks, so its
+# progress is reported as those arrive, at most once per this many seconds. The runner
+# supervisor stops a generating runner that reports nothing for RUNNER_STALL_TIMEOUT
+# (90 s), and a long or cold remote prefill can stream for longer than that.
+PROGRESS_INTERVAL_SECONDS = 1.0
 
 
 def remote_prefill(
@@ -46,6 +53,24 @@ def remote_prefill(
                 total_prompt_tokens,
             )
 
+    last_arrays_report = -math.inf
+
+    def _on_arrays_state(_state: ArraysState, states_received: int) -> None:
+        # One ArraysState per layer: report the share of layers received.
+        nonlocal last_arrays_report
+        if on_prefill_progress is None or num_layers <= 0:
+            return
+        now = time.monotonic()
+        if now - last_arrays_report < PROGRESS_INTERVAL_SECONDS:
+            return
+        last_arrays_report = now
+        on_prefill_progress(
+            min(
+                states_received * total_prompt_tokens // num_layers, total_prompt_tokens
+            ),
+            total_prompt_tokens,
+        )
+
     request = PrefillRequest(
         model_id=model_id,
         token_ids=cast(list[int], prompt_tokens.tolist()),
@@ -53,7 +78,11 @@ def remote_prefill(
         request_id=request_id,
     )
     result = remote_prefill_fetch(
-        endpoint, request, on_header=_on_header, on_kv_chunk=_on_chunk
+        endpoint,
+        request,
+        on_header=_on_header,
+        on_kv_chunk=_on_chunk,
+        on_arrays_state=_on_arrays_state,
     )
     t_received = time.perf_counter()
 
