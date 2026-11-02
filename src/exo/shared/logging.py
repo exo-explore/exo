@@ -1,8 +1,9 @@
 import logging
+import os
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TextIO
+from typing import TYPE_CHECKING, Any, Literal, TextIO
 
 import zstandard
 from hypercorn import Config
@@ -64,6 +65,77 @@ class _InterceptHandler(logging.Handler):
 
 type ConsoleLogLevel = Literal["WARNING", "INFO", "DEBUG"]
 
+VALID_LOG_LEVELS: set[str] = {
+    "TRACE",
+    "DEBUG",
+    "INFO",
+    "SUCCESS",
+    "WARNING",
+    "ERROR",
+    "CRITICAL",
+}
+
+
+def parse_module_log_filters(filter_str: str | None) -> dict[str, str]:
+    """Parse comma-separated module log filters, e.g.
+    'exo.routing=DEBUG,exo.master=INFO,exo.download=WARNING'.
+    Returns a dict mapping module name prefix to log level name in uppercase.
+    """
+    if not filter_str:
+        return {}
+    filters: dict[str, str] = {}
+    for part in filter_str.split(","):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        module, level = part.split("=", 1)
+        module = module.strip()
+        level = level.strip().upper()
+        if module and level in VALID_LOG_LEVELS:
+            filters[module] = level
+    return filters
+
+
+def create_module_log_filter(
+    module_levels: Mapping[str, str] | None,
+    base_level: str,
+) -> Callable[[dict[str, Any]], bool]:
+    """Create a filter function that checks if a log record meets the per-module or base level threshold.
+    Hierarchical prefix matching is applied: 'exo.routing' matches 'exo.routing.router'.
+    The most specific (longest) matching prefix wins.
+    """
+    normalized_filters: dict[str, int] = {}
+    if module_levels:
+        for mod, lvl in module_levels.items():
+            lvl_name = lvl.upper()
+            if lvl_name in VALID_LOG_LEVELS:
+                normalized_filters[mod] = logger.level(lvl_name).no
+
+    base_level_no = logger.level(base_level.upper()).no
+
+    def log_filter(record: dict[str, Any]) -> bool:
+        extra = record.get("extra", {})
+        record_name = (
+            extra.get("name") or extra.get("module") or record.get("name") or ""
+        )
+        level_obj = record.get("level")
+        record_level_no = getattr(level_obj, "no", base_level_no)
+
+        # Find longest matching prefix
+        matched_level_no: int | None = None
+        longest_prefix_len = -1
+        for mod, min_lvl_no in normalized_filters.items():
+            if (record_name == mod or record_name.startswith(mod + ".")) and len(
+                mod
+            ) > longest_prefix_len:
+                longest_prefix_len = len(mod)
+                matched_level_no = min_lvl_no
+
+        threshold = matched_level_no if matched_level_no is not None else base_level_no
+        return record_level_no >= threshold
+
+    return log_filter
+
 
 def console_log_level(verbosity: int) -> ConsoleLogLevel:
     """The lowest level shown on the console: -q (verbosity -1) shows warnings and errors only,
@@ -75,40 +147,60 @@ def console_log_level(verbosity: int) -> ConsoleLogLevel:
     return "DEBUG"
 
 
-def logger_setup(log_file: Path | None, verbosity: int = 0):
+def logger_setup(
+    log_file: Path | None,
+    verbosity: int = 0,
+    module_levels: Mapping[str, str] | None = None,
+    file_log_level: str = "DEBUG",
+):
     """Set up logging for this process - formatting, file handles, verbosity and output"""
+    if module_levels is None:
+        module_levels = parse_module_log_filters(os.getenv("EXO_LOG_MODULES"))
 
-    logging.getLogger("exo_rs").setLevel(logging.INFO)
-    logging.getLogger("networking").setLevel(logging.INFO)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    # Suppress noisy stdlib / third-party loggers
+    for noisy_module in (
+        "exo_rs",
+        "networking",
+        "httpx",
+        "httpcore",
+        "urllib3",
+        "asyncio",
+        "anyio",
+        "zenoh",
+        "hpack",
+    ):
+        logging.getLogger(noisy_module).setLevel(logging.WARNING)
 
     logger.remove()
 
     # replace all stdlib loggers with _InterceptHandlers that log to loguru
     logging.basicConfig(handlers=[_InterceptHandler()], level=0)
 
-    if verbosity <= 0:
-        logger.add(
-            sys.__stderr__,  # type: ignore
-            format="[ {time:hh:mm:ss.SSSSA} | <level>{level: <8}</level>] <level>{message}</level>",
-            level=console_log_level(verbosity),
-            colorize=True,
-            enqueue=True,
-        )
-    else:
-        logger.add(
-            sys.__stderr__,  # type: ignore
-            format="[ {time:YYYY-MM-DD HH:mm:ss.SSS} | <level>{level: <8}</level> | {name}:{function}:{line} ] <level>{message}</level>",
-            level=console_log_level(verbosity),
-            colorize=True,
-            enqueue=True,
-        )
+    console_base = console_log_level(verbosity)
+    console_filter = create_module_log_filter(module_levels, console_base)
+    file_filter = create_module_log_filter(module_levels, file_log_level)
+
+    console_format = (
+        "[ {time:hh:mm:ss.SSSSA} | <level>{level: <8}</level>] <level>{message}</level>"
+        if verbosity <= 0
+        else "[ {time:YYYY-MM-DD HH:mm:ss.SSS} | <level>{level: <8}</level> | {name}:{function}:{line} ] <level>{message}</level>"
+    )
+
+    logger.add(
+        sys.__stderr__,  # type: ignore
+        format=console_format,
+        level="DEBUG",
+        filter=console_filter,
+        colorize=True,
+        enqueue=True,
+    )
+
     if log_file:
         logger.add(
             log_file,
             format="[ {time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} ] {message}",
-            level="DEBUG" if verbosity > 0 else "INFO",
+            level="DEBUG",
+            filter=file_filter,
             colorize=False,
             enqueue=True,
             rotation=_rotate_at_start_and_by_size(_MAX_LOG_BYTES),

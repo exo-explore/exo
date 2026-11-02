@@ -1,10 +1,14 @@
 import argparse
 import multiprocessing as mp
 import os
-import resource
 import shutil
 import signal
 import sys
+
+try:
+    import resource
+except ImportError:
+    resource = None  # type: ignore[assignment]
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import partial
@@ -13,8 +17,30 @@ from typing import Self
 import anyio
 from anyio import to_thread
 from anyio.lowlevel import checkpoint as anyio_checkpoint
-from daemon import DaemonContext  # pyright: ignore[reportMissingTypeStubs]
-from exo_rs import Pidfile, PidfileError
+
+try:
+    from daemon import DaemonContext  # pyright: ignore[reportMissingTypeStubs]
+except ImportError:
+    DaemonContext = None  # type: ignore[assignment, misc]
+
+try:
+    from exo_rs import Pidfile, PidfileError
+except ImportError:
+
+    class Pidfile:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def write(self):
+            pass
+
+        def close(self):
+            pass
+
+    class PidfileError(Exception):
+        pass  # type: ignore[no-redef]
+
+
 from loguru import logger
 from pydantic import PositiveInt
 
@@ -34,7 +60,11 @@ from exo.shared.constants import (
     EXO_PID_FILE,
 )
 from exo.shared.election import Election, ElectionResult
-from exo.shared.logging import logger_cleanup, logger_setup
+from exo.shared.logging import (
+    logger_cleanup,
+    logger_setup,
+    parse_module_log_filters,
+)
 from exo.shared.types.common import NodeId, SessionId
 from exo.shared.types.state import State
 from exo.utils import STDIO_FDS
@@ -351,14 +381,15 @@ def main():
 
 
 def main_inner(args: "Args"):
-    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    target = min(max(soft, 65535), hard)
-    resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+    if resource is not None:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        target = min(max(soft, 65535), hard)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
     mp.set_start_method("spawn", force=True)
 
-    # TODO: Refactor the current verbosity system
-    logger_setup(EXO_LOG, args.verbosity)
+    module_filters = parse_module_log_filters(args.log_modules)
+    logger_setup(EXO_LOG, args.verbosity, module_levels=module_filters)
 
     logger.info(f"pid = {os.getpid()}")
     if os.getenv("EXO_LIBP2P_NAMESPACE"):
@@ -433,6 +464,7 @@ class Args(FrozenModel):
     namespace: str
     zenoh_port: int
     discovery_port: int
+    log_modules: str = ""
 
     @classmethod
     def parse(cls) -> Self:
@@ -541,6 +573,13 @@ class Args(FrozenModel):
             default=52413,
             dest="discovery_port",
             help="UDP port used to find other nodes on the network (default: %(default)s)",
+        )
+        parser.add_argument(
+            "--log-modules",
+            type=str,
+            default=os.getenv("EXO_LOG_MODULES", ""),
+            dest="log_modules",
+            help="Per-module log levels (comma-separated, e.g. 'exo.routing=DEBUG,exo.master=INFO')",
         )
         fast_synch_group = parser.add_mutually_exclusive_group()
         fast_synch_group.add_argument(
