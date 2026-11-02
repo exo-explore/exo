@@ -214,12 +214,14 @@ class DownloadCoordinator:
     async def _start_download(self, shard: ShardMetadata) -> None:
         model_id = shard.model_card.model_id
 
-        # Check if already downloading, complete, or recently failed
+        # Check if already downloading or complete
         if model_id in self.download_status:
             status = self.download_status[model_id]
-            if isinstance(status, (DownloadOngoing, DownloadCompleted, DownloadFailed)):
+            if model_id in self.active_downloads or isinstance(
+                status, DownloadCompleted
+            ):
                 logger.debug(
-                    f"Download for {model_id} already in progress, complete, or failed, skipping"
+                    f"Download for {model_id} already in progress or complete, skipping"
                 )
                 # Workers only ask when the cluster state lacks this status (e.g. the
                 # master dropped it after timing this node out), so repeat it.
@@ -227,6 +229,12 @@ class DownloadCoordinator:
                     NodeDownloadProgress(download_progress=status)
                 )
                 return
+            if isinstance(status, DownloadFailed):
+                logger.info(
+                    f"DownloadCoordinator: Retrying download for previously failed model {model_id}"
+                )
+                self.download_status.pop(model_id, None)
+                self._last_progress_time.pop(model_id, None)
 
         # Check all model directories for pre-existing complete models
         found_path = await to_thread.run_sync(

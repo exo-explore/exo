@@ -2,10 +2,9 @@
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import timedelta
 from pathlib import Path
-from typing import Callable
 from unittest.mock import AsyncMock, patch
 
 from exo.download.coordinator import DownloadCoordinator
@@ -22,7 +21,7 @@ from exo.shared.types.commands import (
 from exo.shared.types.common import NodeId, SystemId
 from exo.shared.types.events import Event, NodeDownloadProgress
 from exo.shared.types.memory import Memory
-from exo.shared.types.worker.downloads import DownloadCompleted
+from exo.shared.types.worker.downloads import DownloadCompleted, DownloadFailed
 from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
 from exo.utils.channels import Receiver, Sender, channel
 
@@ -53,7 +52,8 @@ class FakeShardDownloader(ShardDownloader):
     """Fake downloader that simulates a successful download by firing the
     progress callback with status='complete' when ensure_shard is called."""
 
-    def __init__(self) -> None:
+    def __init__(self, fail_count: int = 0) -> None:
+        self.fail_count = fail_count
         self._progress_callbacks: list[
             Callable[[ShardMetadata, RepoDownloadProgress], Awaitable[None]]
         ] = []
@@ -67,8 +67,11 @@ class FakeShardDownloader(ShardDownloader):
     async def ensure_shard(
         self,
         shard: ShardMetadata,
-        config_only: bool = False,  # noqa: ARG002
+        config_only: bool = False,
     ) -> Path:
+        if self.fail_count > 0:
+            self.fail_count -= 1
+            raise RuntimeError("Simulated download failure")
         # Simulate a completed download by firing the progress callback
         progress = RepoDownloadProgress(
             repo_id=str(shard.model_card.model_id),
@@ -90,7 +93,7 @@ class FakeShardDownloader(ShardDownloader):
     async def get_shard_download_status(
         self,
     ) -> AsyncIterator[tuple[Path, RepoDownloadProgress]]:
-        if False:  # noqa: SIM108  # empty async generator
+        if False:  # empty async generator
             yield (
                 Path(),
                 RepoDownloadProgress(  # pyright: ignore[reportUnreachable]
@@ -211,3 +214,70 @@ async def _wait_for_download_completed(
                     return event.download_progress
     except TimeoutError:
         return None
+
+
+async def _wait_for_download_failed(
+    event_recv: Receiver[Event], model_id: ModelId, timeout: float = 2.0
+) -> DownloadFailed | None:
+    """Drain events until we see a DownloadFailed for the given model, or timeout."""
+    try:
+        async with asyncio.timeout(timeout):
+            while True:
+                event = await event_recv.receive()
+                if (
+                    isinstance(event, NodeDownloadProgress)
+                    and isinstance(event.download_progress, DownloadFailed)
+                    and event.download_progress.shard_metadata.model_card.model_id
+                    == model_id
+                ):
+                    return event.download_progress
+    except TimeoutError:
+        return None
+
+
+async def test_re_download_after_failure() -> None:
+    """A download that previously failed can be retried and completes successfully."""
+    cmd_send, cmd_recv = channel[ForwarderDownloadCommand]()
+    event_send, event_recv = channel[Event]()
+
+    downloader = FakeShardDownloader(fail_count=1)
+    wrapped_downloader = SingletonShardDownloader(downloader)
+    coordinator = DownloadCoordinator(
+        node_id=NODE_ID,
+        shard_downloader=wrapped_downloader,
+        download_command_receiver=cmd_recv,
+        event_sender=event_send,
+    )
+
+    shard = _make_shard()
+    origin = SystemId("test")
+
+    coordinator_task = asyncio.create_task(coordinator.run())
+
+    try:
+        # 1. Start first download — expected to fail
+        await cmd_send.send(
+            ForwarderDownloadCommand(
+                origin=origin,
+                command=StartDownload(target_node_id=NODE_ID, shard_metadata=shard),
+            )
+        )
+
+        failed = await _wait_for_download_failed(event_recv, MODEL_ID)
+        assert failed is not None, "First download should fail"
+
+        # 2. Re-download (retry) the same model — should succeed now
+        await cmd_send.send(
+            ForwarderDownloadCommand(
+                origin=origin,
+                command=StartDownload(target_node_id=NODE_ID, shard_metadata=shard),
+            )
+        )
+
+        completed = await _wait_for_download_completed(event_recv, MODEL_ID)
+        assert completed is not None, "Retry after failure should complete"
+    finally:
+        await coordinator.shutdown()
+        coordinator_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await coordinator_task
