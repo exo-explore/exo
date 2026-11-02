@@ -276,7 +276,11 @@ def test_a_later_stage_norms_its_input_as_the_previous_layer_does() -> None:
 
 def test_the_layers_own_input_norm_rounds_differently_at_full_width() -> None:
     """Why a later stage doesn't use the layer's own input norm: at Muse Spark's width it
-    rounds a few values differently from the fused kernel, while pre_norm doesn't."""
+    rounds a few values differently from the fused kernel, while pre_norm doesn't.
+
+    mlx-lm launches its norm kernels with 1024 threads per row at this width. A GPU that
+    can't run them that wide can't run Muse Spark at all, so the test skips there: the
+    macOS CI runner's virtual GPU allows 704."""
     mx.random.seed(2)
     width = 8192
     norm = nn.RMSNorm(width, eps=1e-5)
@@ -295,6 +299,11 @@ def test_the_layers_own_input_norm_rounds_differently_at_full_width() -> None:
     assert fused is not None
     stage_input = pre_norm(new_stream, norm, dtype=mx.bfloat16)
     own_norm = norm(new_stream).astype(mx.bfloat16)
-    mx.eval(fused, stage_input, own_norm)
+    try:
+        mx.eval(fused, stage_input, own_norm)
+    except ValueError as error:
+        if "maximum allowed threads per threadgroup" not in str(error):
+            raise
+        pytest.skip(f"this GPU can't run mlx-lm's Muse Spark norm kernels: {error}")
     assert mx.array_equal(stage_input, fused).item()
     assert not mx.array_equal(own_norm, fused).item()
