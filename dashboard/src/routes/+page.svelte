@@ -32,6 +32,7 @@
     instances,
     runners,
     downloads,
+    nodeDisk,
     placementPreviews,
     selectedPreviewModelId,
     isLoadingPreviews,
@@ -94,7 +95,6 @@
   import { tweened } from "svelte/motion";
   import { cubicInOut, cubicOut } from "svelte/easing";
   import { onMount } from "svelte";
-  import { getNodesWithModelDownloaded } from "$lib/utils/downloads";
   import {
     DEVICE_SILENCE_MS,
     checkInstanceHealth,
@@ -111,6 +111,15 @@
     estimateRemainingMs,
     isStalled,
   } from "$lib/utils/download_activity";
+  import {
+    getNodesWithModelDownloaded,
+    indexModelDownloads,
+  } from "$lib/utils/downloads";
+  import {
+    checkDiskFit,
+    describeDiskFit,
+    type DiskFit,
+  } from "$lib/utils/disk_fit";
   import type { ChatUploadedFile } from "$lib/types/files";
 
   const chatStarted = $derived(hasStartedChat());
@@ -120,6 +129,7 @@
   const instanceData = $derived(instances());
   const runnersData = $derived(runners());
   const downloadsData = $derived(downloads());
+  const nodeDiskData = $derived(nodeDisk());
   const previewsData = $derived(placementPreviews());
   const selectedModelId = $derived(selectedPreviewModelId());
   const loadingPreviews = $derived(isLoadingPreviews());
@@ -1066,6 +1076,8 @@
   >([]);
   type ModelMemoryFitStatus =
     | "fits_now"
+    // Fits in memory, but its devices haven't the disk space to download it
+    | "no_disk_space"
     | "fits_cluster_capacity"
     | "too_large";
 
@@ -1539,6 +1551,54 @@
     );
   });
 
+  // What each device has of each model, indexed once per /state poll, and
+  // the disk fits worked out from it: a model's fit is asked for several
+  // times per poll (picker, recommendations, sorting)
+  const modelDownloadIndex = $derived(indexModelDownloads(downloadsData));
+  const diskFitMemo = $derived.by(() => {
+    void data;
+    void nodeDiskData;
+    void modelDownloadIndex;
+    return new Map<string, DiskFit>();
+  });
+
+  // Whether a model can be downloaded on the devices it would run on: each
+  // device downloads it into its models directory (see disk_fit.ts)
+  function getModelDiskFit(model: {
+    id: string;
+    name?: string;
+    storage_size_megabytes?: number;
+  }): DiskFit {
+    if (!data) return { fits: true };
+    const memoized = diskFitMemo.get(model.id);
+    if (memoized) return memoized;
+    const onDevices = modelDownloadIndex.get(model.id);
+    const fit = checkDiskFit(
+      getModelSizeGB(model) * 1024 * 1024 * 1024,
+      Object.entries(data.nodes).map(([nodeId, node]) => {
+        const total =
+          node.macmon_info?.memory?.ram_total ?? node.system_info?.memory ?? 0;
+        const used = node.macmon_info?.memory?.ram_usage ?? 0;
+        const has = onDevices?.get(nodeId);
+        return {
+          name: node.friendly_name || nodeId.slice(0, 8),
+          freeDiskBytes: nodeDiskData[nodeId]?.available?.inBytes ?? null,
+          freeMemoryBytes: total - used,
+          hasModel: has?.completed ?? false,
+          downloadedBytes: has?.downloadedBytes ?? 0,
+        };
+      }),
+    );
+    diskFitMemo.set(model.id, fit);
+    return fit;
+  }
+
+  // Why a model doesn't fit, when memory isn't the reason
+  function getModelFitNote(modelId: string): string | null {
+    const model = models.find((m) => m.id === modelId);
+    return model ? describeDiskFit(getModelDiskFit(model)) : null;
+  }
+
   function getModelMemoryFitStatus(model: {
     id: string;
     name?: string;
@@ -1546,12 +1606,21 @@
   }): ModelMemoryFitStatus {
     const modelSizeGB = getModelSizeGB(model);
     if (modelSizeGB <= availableMemoryGB()) {
-      return "fits_now";
+      return getModelDiskFit(model).fits ? "fits_now" : "no_disk_space";
     }
     if (modelSizeGB <= clusterTotalMemoryGB()) {
       return "fits_cluster_capacity";
     }
     return "too_large";
+  }
+
+  // Whether the devices have the disk space to download a model (or have it)
+  function canDownloadModel(model: {
+    id: string;
+    name?: string;
+    storage_size_megabytes?: number;
+  }): boolean {
+    return getModelDiskFit(model).fits;
   }
 
   // Check if a model has enough memory to run
@@ -4074,7 +4143,11 @@
     }));
     const autoModel = chosenModelId
       ? (modelInfos.find((m) => m.id === chosenModelId) ?? null)
-      : pickAutoModel(modelInfos, totalMem);
+      : // Only models the devices have the disk space to download
+        pickAutoModel(
+          modelInfos.filter((m) => canDownloadModel(m)),
+          totalMem,
+        );
 
     if (!autoModel) {
       addToast({
@@ -6227,6 +6300,7 @@
           const model = models.find((m) => m.id === modelId);
           return model ? getModelMemoryFitStatus(model) : "too_large";
         }}
+        {getModelFitNote}
         onSelect={(modelId) => {
           isModelPickerOpen = false;
           onboardingLaunchModel(modelId);
@@ -7697,7 +7771,7 @@
               class="flex-1 overflow-y-auto flex items-center justify-center px-8 py-6"
             >
               <ChatModelSelector
-                models={models.map((m) => ({
+                models={models.filter(canDownloadModel).map((m) => ({
                   id: m.id,
                   name: m.name ?? "",
                   base_model: m.base_model ?? "",
@@ -8301,6 +8375,7 @@
       const model = models.find((m) => m.id === modelId);
       return model ? getModelMemoryFitStatus(model) : "too_large";
     }}
+    {getModelFitNote}
     onSelect={(modelId) => {
       if (modelPickerContext === "chat") {
         handleChatPickerSelect(modelId);

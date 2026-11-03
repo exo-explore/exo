@@ -50,7 +50,11 @@
     tags: string[];
   }
 
-  type ModelFitStatus = "fits_now" | "fits_cluster_capacity" | "too_large";
+  type ModelFitStatus =
+    | "fits_now"
+    | "no_disk_space"
+    | "fits_cluster_capacity"
+    | "too_large";
 
   export type InstanceStatus = {
     status: string;
@@ -67,6 +71,8 @@
     existingModelIds: Set<string>;
     canModelFit: (modelId: string) => boolean;
     getModelFitStatus: (modelId: string) => ModelFitStatus;
+    /** Why a model doesn't fit, when it's not memory (e.g. disk space) */
+    getModelFitNote?: (modelId: string) => string | null;
     onSelect: (modelId: string) => void;
     onClose: () => void;
     onToggleFavorite: (baseModelId: string) => void;
@@ -96,6 +102,7 @@
     existingModelIds,
     canModelFit,
     getModelFitStatus,
+    getModelFitNote,
     onSelect,
     onClose,
     onToggleFavorite,
@@ -594,7 +601,10 @@
         for (const variant of group.variants) {
           const fitStatus = getModelFitStatus(variant.id);
           if (fitStatus === "fits_now") return 0;
-          if (fitStatus === "fits_cluster_capacity") {
+          if (
+            fitStatus === "fits_cluster_capacity" ||
+            fitStatus === "no_disk_space"
+          ) {
             hasClusterCapacityOnly = true;
           }
         }
@@ -968,6 +978,7 @@
                 {selectedModelId}
                 {canModelFit}
                 {getModelFitStatus}
+                {getModelFitNote}
                 onToggleExpand={() => toggleGroupExpanded(group.id)}
                 onSelectModel={handleSelect}
                 {onToggleFavorite}
@@ -1025,7 +1036,7 @@
                 >Recommended for your cluster</span
               >
               <span class="text-xs font-mono text-green-400/50"
-                >— fits in available memory</span
+                >— fits in memory and disk</span
               >
             </div>
           {/if}
@@ -1039,6 +1050,7 @@
               {selectedModelId}
               {canModelFit}
               {getModelFitStatus}
+              {getModelFitNote}
               onToggleExpand={() => toggleGroupExpanded(group.id)}
               onSelectModel={handleSelect}
               {onToggleFavorite}
@@ -1068,6 +1080,7 @@
               {selectedModelId}
               {canModelFit}
               {getModelFitStatus}
+              {getModelFitNote}
               onToggleExpand={() => toggleGroupExpanded(group.id)}
               onSelectModel={handleSelect}
               {onToggleFavorite}
