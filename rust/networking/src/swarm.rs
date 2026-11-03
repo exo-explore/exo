@@ -25,8 +25,8 @@ use zenoh::sample::Sample;
 use zenoh::sample::SampleKind;
 
 use crate::membership::{
-    ALIVE_KEY_PREFIX, GRACE, Member, Membership, Now, PROBE_FIRST_ASK_DELAY, PROBE_TIMEOUT,
-    Snapshot, TICK,
+    ALIVE_KEY_PREFIX, GRACE, HOLD_OFF, Member, Membership, Now, PROBE_FIRST_ASK_DELAY,
+    PROBE_TIMEOUT, REJOIN, Snapshot, TICK,
 };
 
 #[derive(Debug)]
@@ -63,13 +63,22 @@ pub enum FromSwarm {
     Membership(Member),
 }
 
-/// This node's view of the cluster, readable at any time
+/// This node's view of the cluster, readable at any time.
+///
+/// Python reads it (`NetworkingHandle.members()`), so nothing may log, call into Python or wait
+/// while holding its lock: a log record can wait for Python's GIL, and a Python thread reading
+/// the snapshot would then wait for the lock with the GIL held, for good. `with` keeps the lock
+/// to the closure; log after it.
 #[derive(Clone)]
 pub struct Members(Arc<Mutex<Membership>>);
 
 impl Members {
     pub fn snapshot(&self) -> Snapshot {
-        self.0.lock().snapshot()
+        self.with(|membership| membership.snapshot())
+    }
+
+    fn with<T>(&self, update: impl FnOnce(&mut Membership) -> T) -> T {
+        update(&mut self.0.lock())
     }
 }
 
@@ -183,15 +192,28 @@ async fn drive_membership(
     let mut tick = tokio::time::interval(TICK);
     // After a stall, one late tick rather than a burst of them
     tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    let own = members.0.lock().own();
+    let own = members.with(|membership| membership.own());
     if changes.send(own).is_err() {
         return;
     }
+    // Every log call below is outside `members.with` (see `Members`)
     loop {
         let reported: Vec<Member> = tokio::select! {
             // The tick first: after a stall it tells us so before any queued input is handled
             biased;
-            _ = tick.tick() => members.0.lock().tick(Now::read()),
+            _ = tick.tick() => {
+                let (changes, stalled_for) = members.with(|membership| {
+                    (membership.tick(Now::read()), membership.take_stall())
+                });
+                if let Some(late) = stalled_for {
+                    log::warn!(
+                        "this node was unresponsive for {late:.0?}; resuming for {:?} before it \
+                         times any lost peer",
+                        HOLD_OFF + REJOIN
+                    );
+                }
+                changes
+            }
             token = tokens.recv_async() => {
                 // The session is closed
                 let Ok(token) = token else { return };
@@ -201,15 +223,14 @@ async fn drive_membership(
                     continue;
                 };
                 let now = Now::read();
-                let mut membership = members.0.lock();
                 let change = match token.kind() {
                     SampleKind::Put => {
                         log::info!("token of {zid} declared");
-                        membership.token_put(zid, now)
+                        members.with(|membership| membership.token_put(zid, now))
                     }
                     SampleKind::Delete => {
                         log::info!("token of {zid} deleted");
-                        membership.token_deleted(zid, now)
+                        members.with(|membership| membership.token_deleted(zid, now))
                     }
                 };
                 change.into_iter().collect()
@@ -220,11 +241,14 @@ async fn drive_membership(
                 match event.kind() {
                     SampleKind::Put => {
                         log::info!("connected to {zid}");
-                        members.0.lock().connection_opened(zid, Now::read()).into_iter().collect()
+                        members
+                            .with(|membership| membership.connection_opened(zid, Now::read()))
+                            .into_iter()
+                            .collect()
                     }
                     SampleKind::Delete => {
                         log::info!("connection to {zid} closed");
-                        if members.0.lock().connection_closed(zid) {
+                        if members.with(|membership| membership.connection_closed(zid)) {
                             let session = session.clone();
                             let probe_results = probe_results.clone();
                             tokio::spawn(async move {
@@ -237,7 +261,8 @@ async fn drive_membership(
                 }
             }
             Some((zid, answered)) = finished_probes.recv() => {
-                let change = members.0.lock().probe_finished(zid, answered, Now::read());
+                let change = members
+                    .with(|membership| membership.probe_finished(zid, answered, Now::read()));
                 if answered {
                     log::info!("{zid} is still reachable after its connection closed");
                 } else if change.is_some() {

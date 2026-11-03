@@ -33,7 +33,7 @@
 //! timed toward Gone, because losing them says nothing about them.
 //!
 //! The state machine reads no clock: every input carries the time ([`Now`]), so it is tested
-//! with made-up times.
+//! with made-up times. It doesn't log either (its caller does, see [`Membership::take_stall`]).
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -204,6 +204,8 @@ pub struct Membership {
     /// When this node's latest stall stops counting: until then it is Resuming, and a peer's
     /// grace (or wedge timeout) is counted from no earlier than this
     resumed_at: Option<Instant>,
+    /// How late the latest tick was, when that was a stall, until `take_stall` reads it
+    stalled_for: Option<Duration>,
 }
 
 impl Membership {
@@ -217,6 +219,7 @@ impl Membership {
             peers: BTreeMap::new(),
             last_tick: now,
             resumed_at: None,
+            stalled_for: None,
         }
     }
 
@@ -317,11 +320,7 @@ impl Membership {
         let late = elapsed(self.last_tick, now).saturating_sub(TICK);
         self.last_tick = now;
         if late >= STALL_THRESHOLD {
-            log::warn!(
-                "this node was unresponsive for {late:.0?}; resuming for {:?} before it times \
-                 any lost peer",
-                HOLD_OFF + REJOIN
-            );
+            self.stalled_for = Some(late);
             self.resumed_at = Some(now.monotonic + HOLD_OFF + REJOIN);
             if self.own_state != MemberState::Resuming {
                 changes.push(self.set_own(MemberState::Resuming, now));
@@ -360,6 +359,13 @@ impl Membership {
                 .map(|(node, state)| self.set(node, state, now)),
         );
         changes
+    }
+
+    /// How late the latest tick was, if it was a stall that hasn't been asked about yet. The
+    /// caller logs it: this module never logs, so it can be used under a lock that Python-facing
+    /// code also takes (logging can wait for Python's GIL).
+    pub const fn take_stall(&mut self) -> Option<Duration> {
+        self.stalled_for.take()
     }
 
     pub fn quorum(&self) -> Quorum {
@@ -960,6 +966,9 @@ mod tests {
             states(membership.tick(clock.advance(TICK + STALL_THRESHOLD))),
             vec![(zid(OWN), MemberState::Resuming)]
         );
+        // How late it was is there to log, once
+        assert_eq!(membership.take_stall(), Some(STALL_THRESHOLD));
+        assert_eq!(membership.take_stall(), None);
         assert_eq!(membership.own().state, MemberState::Resuming);
         assert_eq!(
             run_for(&mut membership, &mut clock, HOLD_OFF + REJOIN - TICK),

@@ -243,6 +243,7 @@ impl PyNetworkingHandle {
 
     #[staticmethod]
     pub fn new(
+        py: Python<'_>,
         identity: &str,
         namespace: &str,
         listen_port: u16,
@@ -262,15 +263,18 @@ impl PyNetworkingHandle {
             )));
         }
 
-        // create networking swarm (within tokio context!! or it crashes)
-        let swarm = pyo3_async_runtimes::tokio::get_runtime()
-            .block_on(create_swarm(
-                identity,
-                namespace,
-                from_client,
-                listen_port,
-                discovery_service_port,
-            ))
+        // create networking swarm (within tokio context!! or it crashes), without the GIL:
+        // starting zenoh and discovery runs other threads, which may need the GIL to log
+        let swarm = py
+            .detach(|| {
+                pyo3_async_runtimes::tokio::get_runtime().block_on(create_swarm(
+                    identity,
+                    namespace,
+                    from_client,
+                    listen_port,
+                    discovery_service_port,
+                ))
+            })
             .pyerr()?;
 
         Ok(PyNetworkingHandle {
@@ -281,8 +285,10 @@ impl PyNetworkingHandle {
     }
 
     /// This node's view of the cluster right now: every node it knows of, and the quorum read
-    pub fn members(&self) -> PyMembershipSnapshot {
-        self.members.snapshot().into()
+    pub fn members(&self, py: Python<'_>) -> PyMembershipSnapshot {
+        // Read without the GIL: the membership's own thread may hold the lock for a moment,
+        // and must never wait for a thread that waits for it with the GIL held
+        py.detach(|| self.members.snapshot()).into()
     }
 
     #[gen_stub(override_return_type(
