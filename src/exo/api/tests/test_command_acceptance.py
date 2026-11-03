@@ -1,6 +1,10 @@
 """Whether a node's state shows a cluster command applied."""
 
-from exo.api.command_acceptance import command_applied
+from exo.api.command_acceptance import (
+    command_already_applied,
+    command_applied,
+    undoing_command,
+)
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (
@@ -88,3 +92,40 @@ def test_custom_cards_are_applied_once_added_or_gone() -> None:
     assert command_applied(add, with_card)
     assert not command_applied(remove, with_card)
     assert command_applied(remove, State())
+
+
+def test_adding_a_card_again_is_a_repeat_only_when_it_is_the_same_card() -> None:
+    """Adding a card again refreshes it, so it is sent unless the very same card is there."""
+    add = AddCustomModelCard(model_card=CARD)
+    older = CARD.model_copy(update={"n_layers": 5})
+    assert command_already_applied(add, State(custom_model_cards={MODEL_ID: CARD}))
+    assert not command_already_applied(add, State(custom_model_cards={MODEL_ID: older}))
+    assert not command_already_applied(add, State())
+
+
+def test_launches_and_new_links_are_undone_but_nothing_else() -> None:
+    """A failed request's late copy is undone where trying again would make a second one."""
+    launch = CreateInstance(instance=INSTANCE)
+    new_link = SetInstanceLink(
+        link_id=LINK, prefill_instances=[PREFILL], decode_instances=[DECODE]
+    )
+    held = InstanceLink(
+        link_id=LINK, prefill_instances=[PREFILL], decode_instances=[PREFILL]
+    )
+
+    undo_launch = undoing_command(launch, State())
+    assert isinstance(undo_launch, DeleteInstance)
+    assert undo_launch.instance_id == INSTANCE.instance_id
+    undo_link = undoing_command(new_link, State())
+    assert isinstance(undo_link, DeleteInstanceLink)
+    assert undo_link.link_id == LINK
+    # Updating a link that exists: trying again updates the same link
+    assert undoing_command(new_link, State(instance_links={LINK: held})) is None
+    # Stops and removals: applying them late is what trying again does
+    for command in (
+        DeleteInstance(instance_id=INSTANCE.instance_id),
+        DeleteInstanceLink(link_id=LINK),
+        AddCustomModelCard(model_card=CARD),
+        DeleteCustomModelCard(model_id=MODEL_ID),
+    ):
+        assert undoing_command(command, State()) is None

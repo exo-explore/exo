@@ -58,7 +58,13 @@ from exo.api.adapters.responses import (
     responses_request_to_text_generation,
 )
 from exo.api.collected_response import CollectedResponse
-from exo.api.command_acceptance import ClusterCommand, command_applied
+from exo.api.command_acceptance import (
+    ClusterCommand,
+    changed_by,
+    command_already_applied,
+    command_applied,
+    undoing_command,
+)
 from exo.api.finished_commands import RESEND_INTERVAL_SECONDS, finishes_to_resend
 from exo.api.keepalive import with_sse_keepalive
 from exo.api.recent_events import RecentEvents
@@ -274,6 +280,11 @@ _NOT_APPLIED_MESSAGE = (
     "The cluster didn't confirm this change in time; the device coordinating it may have "
     "been lost. Check the cluster's state and try again."
 )
+# ...for a launch or a new link, which this node then calls off (see WithdrawnClusterCommand)
+_WITHDRAWN_MESSAGE = (
+    "The cluster didn't confirm this change in time; the device coordinating it may have "
+    "been lost. The change was called off, so trying again won't make it twice."
+)
 
 
 def _format_to_content_type(image_format: Literal["png", "jpeg", "webp"] | None) -> str:
@@ -329,6 +340,18 @@ class PendingClusterCommand:
     applied: bool = False
     # Set when the command is seen applied, or should be sent again at once
     wake: anyio.Event = field(default_factory=anyio.Event)
+
+
+@dataclass
+class WithdrawnClusterCommand:
+    """A launch or new link whose request was answered 503. A copy can still apply later
+    (delivered late, or seen once a split heals); it is then undone, so a client that tried
+    again doesn't end up with two."""
+
+    command: ClusterCommand
+    undo: ClusterCommand
+    # Created when a copy applies and the undo starts; set once the undo has ended
+    undo_finished: anyio.Event | None = None
 
 
 class API:
@@ -2291,6 +2314,14 @@ class API:
         return {}
 
     @functools.cached_property
+    def _withdrawn_cluster_commands(
+        self,
+    ) -> dict[InstanceId | InstanceLinkId | ModelId, WithdrawnClusterCommand]:
+        """Launches and new links answered 503, by what they change, to undo should they still
+        apply. Kept until then, or until a request about the same instance or link."""
+        return {}
+
+    @functools.cached_property
     def _finished_at(self) -> dict[CommandId, float]:
         """When this API finished each request whose task may still need a TaskFinished. Kept
         across resets: a change of master is when finishes get lost."""
@@ -2393,15 +2424,45 @@ class API:
 
     async def _apply_cluster_command(self, command: ClusterCommand) -> None:
         """Send a command that changes the cluster, and return once this node's state shows
-        it applied.
+        it applied. Raises a 503 if the change isn't seen within CLUSTER_COMMAND_TIMEOUT.
+
+        Before, a launch sent as the master died was answered as accepted and never happened.
+        After a 503 a launch or a new link is called off: should a copy still apply, this
+        node undoes it, so the failure the client was told of holds.
+        """
+        target = changed_by(command)
+        # A request about what a failed one called off takes over from it: its outcome is
+        # the one the client acts on. If a late copy of the failed one is being undone, it
+        # starts from the state after that.
+        withdrawn = self._withdrawn_cluster_commands.pop(target, None)
+        if withdrawn is not None and withdrawn.undo_finished is not None:
+            await withdrawn.undo_finished.wait()
+        undo = undoing_command(command, self.state)
+        if await self._send_until_applied(command):
+            return
+        logger.warning(
+            f"Giving up on {type(command).__name__} {command.command_id}: not applied "
+            f"after {CLUSTER_COMMAND_TIMEOUT:.0f}s"
+        )
+        if undo is None:
+            raise HTTPException(status_code=503, detail=_NOT_APPLIED_MESSAGE)
+        self._withdrawn_cluster_commands[target] = WithdrawnClusterCommand(
+            command=command, undo=undo
+        )
+        raise HTTPException(status_code=503, detail=_WITHDRAWN_MESSAGE)
+
+    async def _send_until_applied(self, command: ClusterCommand) -> bool:
+        """Send a command that changes the cluster until this node's state shows it applied,
+        and say whether it did within CLUSTER_COMMAND_TIMEOUT.
 
         The master publishes only the events a command leads to, so the effect in the state is
         the only sign it arrived. The command is sent again whenever this node catches up from
-        a new master's state, and every CLUSTER_COMMAND_RESEND_INTERVAL otherwise: before,
-        a launch sent as the master died was answered as accepted and never happened.
-        Applying one of these commands twice changes nothing. Raises a 503 if the change isn't
-        seen within CLUSTER_COMMAND_TIMEOUT.
+        a new master's state, and every CLUSTER_COMMAND_RESEND_INTERVAL otherwise. Applying one
+        of these commands twice changes nothing, and one that would change nothing now (a
+        repeat) isn't sent at all.
         """
+        if command_already_applied(command, self.state):
+            return True
         command_id = command.command_id
         pending = PendingClusterCommand(command=command)
         self._pending_cluster_commands[command_id] = pending
@@ -2418,23 +2479,49 @@ class API:
                             "sending it again"
                         )
             # One last look: the state may have caught up just as time ran out
-            if not pending.applied and not command_applied(command, self.state):
-                logger.warning(
-                    f"Giving up on {type(command).__name__} {command_id}: not applied "
-                    f"after {CLUSTER_COMMAND_TIMEOUT:.0f}s"
-                )
-                raise HTTPException(status_code=503, detail=_NOT_APPLIED_MESSAGE)
+            return pending.applied or command_applied(command, self.state)
         finally:
             self._pending_cluster_commands.pop(command_id, None)
 
     def _note_applied_cluster_commands(self) -> None:
-        """Mark the pending cluster commands the state now shows applied. Called after every
-        change to the state, so a change undone soon after (an instance created, then deleted
-        as its node is lost) still counts as applied."""
+        """Mark the pending cluster commands the state now shows applied, and undo the
+        withdrawn ones that applied after all. Called after every change to the state, so a
+        change undone soon after (an instance created, then deleted as its node is lost)
+        still counts as applied."""
         for pending in self._pending_cluster_commands.values():
             if not pending.applied and command_applied(pending.command, self.state):
                 pending.applied = True
                 pending.wake.set()
+        for withdrawn in self._withdrawn_cluster_commands.values():
+            if withdrawn.undo_finished is None and command_applied(
+                withdrawn.command, self.state
+            ):
+                withdrawn.undo_finished = anyio.Event()
+                self._tg.start_soon(self._undo_withdrawn_command, withdrawn)
+
+    async def _undo_withdrawn_command(self, withdrawn: WithdrawnClusterCommand) -> None:
+        command, undo = withdrawn.command, withdrawn.undo
+        logger.warning(
+            f"{type(command).__name__} {command.command_id} applied after its request "
+            f"was answered as failed; undoing it with {type(undo).__name__}"
+        )
+        finished = withdrawn.undo_finished
+        assert finished is not None
+        try:
+            undone = await self._send_until_applied(undo)
+        finally:
+            finished.set()
+        target = changed_by(command)
+        if undone:
+            if self._withdrawn_cluster_commands.get(target) is withdrawn:
+                del self._withdrawn_cluster_commands[target]
+            return
+        logger.error(
+            f"Couldn't undo {type(command).__name__} {command.command_id}: "
+            f"{type(undo).__name__} not applied after {CLUSTER_COMMAND_TIMEOUT:.0f}s; "
+            "trying again at the next change to the state"
+        )
+        withdrawn.undo_finished = None
 
     def _mark_accepted(self, command_id: CommandId) -> None:
         if (accepted := self._awaiting_acceptance.get(command_id)) is not None:
