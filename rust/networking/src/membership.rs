@@ -301,8 +301,8 @@ struct Peer {
     /// Whether it counts in the quorum read (see `FORGET_AFTER`): from when it is Alive and
     /// `listed`
     counted: bool,
-    /// The coordinator removed it: it leaves the view once this node reads Majority (see
-    /// `forget`)
+    /// The coordinator removed it: it leaves the view once it isn't Alive here and this node
+    /// reads Majority (see `forget`), unless the cluster lists it again first (see `listed`)
     removed: bool,
     /// Whether the cluster's state lists it (it reported, or a snapshot named it). Until then
     /// it doesn't count: a node that leaves before it ever reported (it quit within seconds of
@@ -456,12 +456,16 @@ impl Membership {
     /// Gone after the grace unless its transport shows it, so a node that went away before this
     /// one started (a new coordinator can inherit such nodes, or a late report can bring one
     /// back) is removed like any other instead of staying listed for good. A peer counts in the
-    /// quorum once it is both listed and Alive.
+    /// quorum once it is both listed and Alive. A removal still waiting (the node was Alive
+    /// here, or this node didn't read Majority) no longer holds: the node reported after it,
+    /// and is back in the state; taking it out of the view would leave the state listing a
+    /// node that, lost, never shows as Gone to be removed.
     pub fn listed(&mut self, node: ZenohId, now: Now) -> Option<Member> {
         if node == self.own {
             return None;
         }
         if let Some(peer) = self.peers.get_mut(&node) {
+            peer.removed = false;
             if !peer.listed {
                 peer.listed = true;
                 peer.counted = peer.state == MemberState::Alive;
@@ -1561,6 +1565,31 @@ mod tests {
         run_for(&mut membership, &mut clock, TICK);
         assert_eq!(counted(&membership, 1), None);
         assert_eq!(membership.snapshot().last_known, 2);
+    }
+
+    #[test]
+    fn a_removal_waiting_while_the_node_is_alive_is_called_off_when_it_is_listed_again() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        connected_peer(&mut membership, &clock, 2);
+        // Removed while this node still reaches it, and then it reports again
+        membership.forget(zid(1));
+        membership.listed(zid(1), clock.now);
+        // Lost later: it stays in the view and counts, to be Gone and removed like any other
+        lose(&mut membership, clock.now, 1);
+        run_for(&mut membership, &mut clock, TICK);
+        assert_eq!(counted(&membership, 1), Some(true));
+        run_for(&mut membership, &mut clock, GRACE + TICK);
+        let member = membership
+            .snapshot()
+            .members
+            .into_iter()
+            .find(|m| m.node == zid(1));
+        assert_eq!(
+            member.map(|m| m.state),
+            Some(MemberState::Gone(Reason::Disconnected))
+        );
     }
 
     #[test]
