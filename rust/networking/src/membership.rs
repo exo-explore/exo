@@ -23,7 +23,10 @@
 //! The quorum read counts this node and the peers it knows, and a peer stops counting (it stays
 //! in the view, as Gone, until it is removed) when it leaves, and when it has been Gone for
 //! [`FORGET_AFTER`]. The coordinator removing it (`forget`, unless this node still reaches it)
-//! takes it out of the view too. Otherwise every restart of a node, which comes back with a new
+//! takes it out of the view too, once this node reads Majority with it still counted: a node cut
+//! off from most of the cluster (or either side of an even split) may be told by its own
+//! coordinator to remove the others, and honouring that at once would make it read Majority
+//! before the split hold ends. Otherwise every restart of a node, which comes back with a new
 //! id, would count as one more node for good. A peer that comes back counts again.
 //!
 //! The liveliness token is the main signal, but in a cluster of three or more zenoh can keep
@@ -292,6 +295,9 @@ struct Peer {
     away_before: Duration,
     /// Whether it counts in the quorum read (see `FORGET_AFTER`)
     counted: bool,
+    /// The coordinator removed it: it leaves the view once this node reads Majority (see
+    /// `forget`)
+    removed: bool,
 }
 
 #[derive(Debug)]
@@ -434,15 +440,25 @@ impl Membership {
         .then(|| self.set(node, MemberState::Alive, now))
     }
 
-    /// The coordinator removed the node from the cluster: it no longer counts in the quorum, and
-    /// if it comes back it is new. A node this node still reaches stays (it counts again).
+    /// The coordinator removed the node from the cluster: it leaves the view (and no longer
+    /// counts), and if it comes back it is new. Only once this node reads Majority with it still
+    /// counted, now or later (when another node joins, say): a coordinator on the smaller side of a
+    /// split, or on either side of an even one, also removes the nodes it lost, and honouring that
+    /// at once would make this node read Majority before the split hold ends. A node this node
+    /// still reaches stays (it counts again).
     pub fn forget(&mut self, node: ZenohId) {
-        if self
-            .peers
-            .get(&node)
-            .is_some_and(|peer| peer.state != MemberState::Alive)
+        if let Some(peer) = self.peers.get_mut(&node)
+            && peer.state != MemberState::Alive
         {
-            self.peers.remove(&node);
+            peer.removed = true;
+            self.apply_removals();
+        }
+    }
+
+    /// Takes the nodes the coordinator removed out of the view, if this node reads Majority
+    fn apply_removals(&mut self) {
+        if self.quorum() == Quorum::Majority {
+            self.peers.retain(|_, peer| !peer.removed);
         }
     }
 
@@ -533,6 +549,7 @@ impl Membership {
         for node in ask {
             self.ask(node);
         }
+        self.apply_removals();
         changes
     }
 
@@ -596,6 +613,7 @@ impl Membership {
                     last_heard: None,
                     away_before: Duration::ZERO,
                     counted: true,
+                    removed: false,
                 },
             );
             return Some(self.member(node));
@@ -657,8 +675,9 @@ impl Membership {
             peer.since = now;
             peer.next_probe = None;
             if state == MemberState::Alive {
-                // Back: it counts again
+                // Back: it counts again, and isn't removed
                 peer.counted = true;
+                peer.removed = false;
             }
             if state == MemberState::Alive {
                 // It couldn't report while it was away: its wedge timeout starts again
@@ -1408,9 +1427,13 @@ mod tests {
         assert_eq!(counted(&membership, 1), Some(true));
         assert_eq!(membership.snapshot().last_known, 2);
 
-        // Lost and removed by the coordinator: out of the view
+        // Lost and removed by the coordinator: out of the view once this node reads Majority (with
+        // a third node back; alone it reads Half and keeps it)
         lose(&mut membership, clock.now, 1);
         membership.forget(zid(1));
+        assert_eq!(counted(&membership, 1), Some(true));
+        connected_peer(&mut membership, &clock, 2);
+        run_for(&mut membership, &mut clock, TICK);
         assert_eq!(counted(&membership, 1), None);
     }
 
@@ -1434,14 +1457,79 @@ mod tests {
             lose(&mut membership, clock.now, old);
             run_for(&mut membership, &mut clock, Duration::from_secs(15));
             membership.forget(zid(old));
+            // Alone, this node reads Half: the removal waits for a Majority read
+            assert_eq!(counted(&membership, old), Some(true));
             connected_peer(&mut membership, &clock, new);
+            run_for(&mut membership, &mut clock, TICK);
             let snapshot = membership.snapshot();
             assert_eq!(
                 (snapshot.quorum, snapshot.reachable, snapshot.last_known),
                 (Quorum::Majority, 2, 2),
                 "after the restart as node {new}"
             );
+            assert_eq!(counted(&membership, old), None, "removed once Majority");
         }
+    }
+
+    #[test]
+    fn a_node_cut_off_from_two_others_keeps_them_until_the_split_hold() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        connected_peer(&mut membership, &clock, 2);
+        lose(&mut membership, clock.now, 1);
+        lose(&mut membership, clock.now, 2);
+        // Its own coordinator (itself, cut off) removes the other two at its silence timeout
+        run_for(&mut membership, &mut clock, Duration::from_secs(15));
+        membership.forget(zid(1));
+        membership.forget(zid(2));
+        // It reads Minority, and keeps both, until they stop counting at the split hold
+        run_for(
+            &mut membership,
+            &mut clock,
+            GRACE + SPLIT_HOLD - Duration::from_secs(16),
+        );
+        let snapshot = membership.snapshot();
+        assert_eq!(
+            (snapshot.quorum, snapshot.reachable, snapshot.last_known),
+            (Quorum::Minority, 1, 3)
+        );
+        run_for(&mut membership, &mut clock, Duration::from_secs(2));
+        assert_eq!(membership.quorum(), Quorum::Majority, "after the hold");
+    }
+
+    #[test]
+    fn neither_side_of_a_two_node_cut_drops_the_other_before_the_split_hold() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        lose(&mut membership, clock.now, 1);
+        run_for(&mut membership, &mut clock, Duration::from_secs(15));
+        // Each side's coordinator (each node, for its side) removes the other
+        membership.forget(zid(1));
+        run_for(
+            &mut membership,
+            &mut clock,
+            GRACE + SPLIT_HOLD - Duration::from_secs(16),
+        );
+        assert_eq!(membership.quorum(), Quorum::Half);
+        assert_eq!(counted(&membership, 1), Some(true));
+    }
+
+    #[test]
+    fn a_majority_removes_a_crashed_node_at_once() {
+        let clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        connected_peer(&mut membership, &clock, 2);
+        lose(&mut membership, clock.now, 2);
+        membership.forget(zid(2));
+        let snapshot = membership.snapshot();
+        assert_eq!(counted(&membership, 2), None);
+        assert_eq!(
+            (snapshot.quorum, snapshot.reachable, snapshot.last_known),
+            (Quorum::Majority, 2, 2)
+        );
     }
 
     #[test]
@@ -1490,9 +1578,10 @@ mod tests {
         let clock = Clock::new();
         let mut membership = membership(&clock);
         connected_peer(&mut membership, &clock, 1);
+        connected_peer(&mut membership, &clock, 2);
         lose(&mut membership, clock.now, 1);
         membership.forget(zid(1));
-        assert_eq!(membership.snapshot().last_known, 1);
+        assert_eq!(membership.snapshot().last_known, 2);
         assert_eq!(
             state(membership.token_put(zid(1), clock.now)),
             Some(alive(1))
