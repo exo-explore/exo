@@ -120,6 +120,7 @@
     describeDiskFit,
     type DiskFit,
   } from "$lib/utils/disk_fit";
+  import { devicesMissingRdma } from "$lib/utils/rdma";
   import type { ChatUploadedFile } from "$lib/types/files";
 
   const chatStarted = $derived(hasStartedChat());
@@ -190,8 +191,12 @@
     }));
   });
 
-  // Dismissed RDMA warnings stay dismissed across reloads (in this browser)
-  const RDMA_NOT_ENABLED_DISMISSED_KEY = "exo-rdma-not-enabled-dismissed";
+  // Dismissed RDMA warnings stay dismissed across reloads (in this browser).
+  // A new key for "RDMA not enabled": the old one was set by dismissing the
+  // warning that showed for any Thunderbolt hardware, and must not hide the
+  // one for devices actually cabled with Thunderbolt 5.
+  const RDMA_NOT_ENABLED_DISMISSED_KEY =
+    "exo-rdma-not-enabled-thunderbolt-link-dismissed";
   const RDMA_INCOMPATIBLE_PORT_DISMISSED_KEY =
     "exo-rdma-incompatible-port-dismissed";
 
@@ -212,19 +217,12 @@
     }
   }
 
-  // Detect TB5 nodes where RDMA is not enabled
+  // Devices connected with Thunderbolt 5 cables that don't have RDMA on.
+  // Having Thunderbolt ports isn't enough (every recent Mac has them): a
+  // cluster on Ethernet or Wi-Fi has nothing to enable (see rdma.ts).
   const tb5WithoutRdma = $derived.by(() => {
-    const rdmaCtl = rdmaCtlData;
-    if (!rdmaCtl) return false;
-    const ids = tbIdentifiers;
-    if (!ids) return false;
-    // Find nodes with TB5 hardware (any TB interface)
-    const tb5NodeIds = Object.entries(ids)
-      .filter(([_, node]) => node.interfaces.length > 0)
-      .map(([id]) => id);
-    if (tb5NodeIds.length < 2) return false;
-    // At least one TB5 node has RDMA disabled
-    return tb5NodeIds.some((id) => rdmaCtl[id]?.enabled !== true);
+    if (!rdmaCtlData || !tbIdentifiers) return false;
+    return devicesMissingRdma(tbIdentifiers, rdmaCtlData).length > 0;
   });
   let tb5InfoDismissed = $state(
     loadWarningDismissed(RDMA_NOT_ENABLED_DISMISSED_KEY),
@@ -5067,8 +5065,9 @@
             class="absolute top-full left-0 mt-2 w-80 p-3 rounded border border-yellow-500/30 bg-exo-dark-gray/95 backdrop-blur-sm opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 shadow-lg"
           >
             <p class="text-xs text-white/80 mb-2">
-              Thunderbolt 5 hardware detected on multiple devices. Enable RDMA
-              for much faster communication between devices.
+              Your devices are connected with Thunderbolt 5, but RDMA isn't
+              enabled on all of them. Enable it for much faster communication
+              between devices.
             </p>
             <p class="text-xs text-white/60 mb-1.5">
               <span class="text-yellow-300">To enable:</span>
@@ -5395,7 +5394,7 @@
       {#if tb5WithoutRdma && !tb5InfoDismissed}
         <div
           class="flex items-center gap-1.5 px-2 py-1 rounded border border-yellow-500/50 bg-yellow-500/10 backdrop-blur-sm"
-          title="Thunderbolt 5 detected — RDMA not enabled. Enable it for faster communication between devices."
+          title="Devices connected with Thunderbolt 5 — RDMA not enabled. Enable it for faster communication between devices."
         >
           <svg
             class="w-3.5 h-3.5 text-yellow-400"
