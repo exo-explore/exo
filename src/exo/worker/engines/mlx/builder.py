@@ -23,6 +23,7 @@ from exo.worker.runner.llm_inference.batch_generator import (
 from exo.worker.runner.llm_inference.tool_parsers import make_mlx_parser
 
 from .cache import KVPrefixCache
+from .speculative import DraftConfigError, DraftModel, load_draft, resolve_draft_config
 from .types import Model
 from .utils_mlx import (
     initialize_mlx,
@@ -51,6 +52,7 @@ class MlxBuilder(Builder):
     tokenizer: TokenizerWrapper | None = None
     group: mx.distributed.Group | None = None
     vision_processor: VisionProcessor | None = None
+    draft: DraftModel | None = None
 
     def __post_init__(self) -> None:
         use_generation_stream_by_default()
@@ -64,12 +66,41 @@ class MlxBuilder(Builder):
             self.tokenizer,
             self.vision_processor,
         ) = yield from load_mlx_items(bound_instance, self.group)
+        self.draft = self._load_draft()
+
+    def _load_draft(self) -> DraftModel | None:
+        """The configured draft model, if this instance can use one (see speculative.py)."""
+        assert self.inference_model is not None
+        assert self.tokenizer is not None
+        try:
+            config = resolve_draft_config(self.model_id)
+        except DraftConfigError as e:
+            logger.error(f"{e}; decoding without a draft model")
+            return None
+        if config is None:
+            return None
+        if self.group is not None:
+            logger.warning(
+                f"Draft model {config.source} not loaded: speculative decoding runs on "
+                "single-node instances only"
+            )
+            return None
+        if generates_in_batches(self.inference_model):
+            logger.warning(
+                f"Draft model {config.source} not loaded: this instance batches requests, "
+                "and speculative decoding runs one request at a time (set EXO_NO_BATCH=1 "
+                "to use the draft)"
+            )
+            return None
+        return load_draft(config, self.inference_model, self.tokenizer)
 
     def close(self) -> None:
         with contextlib.suppress(NameError, AttributeError):
             del self.inference_model
         with contextlib.suppress(NameError, AttributeError):
             del self.tokenizer
+        with contextlib.suppress(NameError, AttributeError):
+            del self.draft
         with contextlib.suppress(NameError, AttributeError):
             del self.group
 
@@ -101,6 +132,11 @@ class MlxBuilder(Builder):
         device_rank = 0 if self.group is None else self.group.rank()
         if not generates_in_batches(self.inference_model):
             logger.info("using SequentialGenerator (batching disabled)")
+            if self.draft is not None:
+                logger.info(
+                    f"speculative decoding with draft model {self.draft.name}, "
+                    f"num_draft_tokens={self.draft.num_draft_tokens}"
+                )
             return SequentialGenerator(
                 model=self.inference_model,
                 tokenizer=self.tokenizer,
@@ -112,6 +148,7 @@ class MlxBuilder(Builder):
                 cancel_receiver=self.cancel_receiver,
                 event_sender=self.event_sender,
                 vision_processor=vision_processor,
+                draft=self.draft,
             )
         else:
             logger.info("using BatchGenerator")

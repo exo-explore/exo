@@ -58,6 +58,12 @@ from exo.worker.engines.mlx.sharding.pipeline import (
     set_pipeline_prefill,
     set_pipeline_queue_sends,
 )
+from exo.worker.engines.mlx.speculative import (
+    DraftModel,
+    SpeculativeStats,
+    align_draft,
+    speculation_blocker,
+)
 from exo.worker.engines.mlx.types import KVCacheType, Model, SnapshotCache
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
@@ -404,6 +410,7 @@ def warmup_inference(
     tokenizer: TokenizerWrapper,
     group: mx.distributed.Group | None,
     model_id: ModelId,
+    draft: DraftModel | None = None,
 ) -> int:
     logger.info(f"warming up inference for instance: {model_id}")
 
@@ -439,6 +446,7 @@ def warmup_inference(
         prompt=warmup_prompt,
         kv_prefix_cache=None,
         group=group,
+        draft=draft,
     ):
         tokens_generated += 1
 
@@ -544,6 +552,7 @@ def mlx_generate(
     distributed_prompt_progress_callback: Callable[[], None] | None = None,
     on_generation_token: Callable[[], None] | None = None,
     vision_processor: VisionProcessor | None = None,
+    draft: DraftModel | None = None,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -713,8 +722,44 @@ def mlx_generate(
 
     # stream_generate starts from the last token
     last_token = prompt_tokens[-2:]
-
     max_tokens = task.max_output_tokens or MAX_TOKENS
+
+    # Speculative decoding: the draft has no prefix cache, so it is prefilled over the whole
+    # prompt to wherever the target's cache ends, and both decode from last_token
+    decode_caches: KVCacheType = caches
+    decode_draft_model: Model | None = None
+    spec_stats: SpeculativeStats | None = None
+    if draft is not None:
+        num_draft_tokens = (
+            task.num_draft_tokens
+            if task.num_draft_tokens is not None
+            else draft.num_draft_tokens
+        )
+        draft_caches = make_kv_cache(model=draft.model)
+        blocker = speculation_blocker(
+            model,
+            caches,
+            draft,
+            draft_caches,
+            group,
+            has_vision=vision is not None,
+            num_draft_tokens=num_draft_tokens,
+        ) or align_draft(
+            draft, draft_caches, all_prompt_tokens, caches, len(last_token)
+        )
+        if blocker is None:
+            # mlx-lm splits target and draft caches at len(model.layers)
+            decode_caches = [*caches, *draft_caches]
+            decode_draft_model = draft.model
+            spec_stats = SpeculativeStats(
+                num_draft_tokens=num_draft_tokens, max_tokens=max_tokens
+            )
+            logger.info(
+                f"Speculative decoding with {draft.name}, num_draft_tokens={num_draft_tokens}"
+            )
+        else:
+            logger.info(f"Decoding without the draft model: {blocker}")
+
     accumulated_text = ""
     generated_text_parts: list[str] = []
     generation_start_time = time.perf_counter()
@@ -730,13 +775,19 @@ def mlx_generate(
             max_tokens=max_tokens,
             sampler=sampler,
             logits_processors=logits_processors,
-            prompt_cache=caches,
+            prompt_cache=decode_caches,
             prefill_step_size=1,
             kv_group_size=KV_GROUP_SIZE,
             kv_bits=KV_BITS,
+            draft_model=decode_draft_model,
+            num_draft_tokens=spec_stats.num_draft_tokens
+            if spec_stats is not None
+            else 0,
         ),
         start=1,
     ):
+        if spec_stats is not None:
+            spec_stats.observe(out.from_draft)
         generated_text_parts.append(out.text)
         accumulated_text += out.text
 
@@ -769,7 +820,15 @@ def mlx_generate(
                 prompt_tokens=int(prefill_tokens + out.prompt_tokens),
                 generation_tokens=int(out.generation_tokens),
                 peak_memory_usage=Memory.from_gb(out.peak_memory),
+                draft_tokens_proposed=spec_stats.proposed
+                if spec_stats is not None
+                else None,
+                draft_tokens_accepted=spec_stats.accepted
+                if spec_stats is not None
+                else None,
             )
+            if spec_stats is not None:
+                logger.info(f"Speculative decoding: {spec_stats.summary()}")
             if not stop_matched and out.finish_reason not in get_args(FinishReason):
                 logger.warning(
                     f"Model generated unexpected finish_reason: {out.finish_reason}"
