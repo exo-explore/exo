@@ -66,6 +66,7 @@
     nodeThunderboltBridge,
     nodeIdentities,
     nodeHeardAt,
+    downloadActivity,
     type DownloadProgress,
     type NodeInfo,
     type PlacementPreview,
@@ -88,6 +89,11 @@
     totalDownload,
     type NodeDownload,
   } from "$lib/utils/download_progress";
+  import {
+    downloadKey,
+    estimateRemainingMs,
+    isStalled,
+  } from "$lib/utils/download_activity";
   import type { ChatUploadedFile } from "$lib/types/files";
 
   const chatStarted = $derived(hasStartedChat());
@@ -112,6 +118,7 @@
   const rdmaCtlData = $derived(nodeRdmaCtl());
   const nodeFilter = $derived(previewNodeFilter());
   const heardAtData = $derived(nodeHeardAt());
+  const downloadActivityData = $derived(downloadActivity());
 
   // Aggregate active download progress across all instances for header indicator
   const activeDownloadSummary = $derived.by(() => {
@@ -2080,13 +2087,24 @@
           continue;
         }
 
-        // DownloadOngoing
+        // DownloadOngoing. One at 0 of 0 bytes is downloading too: it can't
+        // list the model's files yet (e.g. Hugging Face is unreachable)
         const progress = parseDownloadProgress(downloadPayload);
-        if (
-          !progress ||
-          (progress.downloadedBytes <= 0 && progress.totalBytes <= 0)
-        )
-          continue;
+        if (!progress) continue;
+        // The device's own speed is an average since the start; time the
+        // bytes here for whether it's moving and when it will finish
+        const activity = downloadActivityData[downloadKey(nodeId, modelId)];
+        const now = Date.now();
+        const nodeEtaMs =
+          progress.totalBytes > 0
+            ? estimateRemainingMs(
+                progress.totalBytes - progress.downloadedBytes,
+                activity,
+                now,
+              )
+            : null;
+        progress.stalled = isStalled(activity, now);
+        progress.etaMs = nodeEtaMs ?? 0;
 
         perNodeMap.set(nodeId, {
           nodeId,
@@ -2101,6 +2119,7 @@
           downloadedBytes: progress.downloadedBytes,
           totalBytes: progress.totalBytes,
           speed: progress.speed,
+          etaMs: nodeEtaMs,
         });
       }
     }
@@ -2124,9 +2143,11 @@
     let isDownloading = false;
     const allFiles: DownloadProgress["files"] = [];
 
+    let allStalled = true;
     for (const node of perNode) {
       if (node.status === "downloading" && node.progress) {
         isDownloading = true;
+        allStalled &&= node.progress.stalled === true;
         completedFiles += node.progress.completedFiles;
         totalFiles += node.progress.totalFiles;
         allFiles.push(...node.progress.files);
@@ -2155,8 +2176,9 @@
         totalBytes: total.totalBytes,
         downloadedBytes: total.downloadedBytes,
         speed: total.speed,
-        // 0 shows as "--": not known yet
+        // 0: not known yet
         etaMs: total.etaMs ?? 0,
+        stalled: allStalled,
         percentage: total.percentage,
         completedFiles,
         totalFiles,
@@ -3105,6 +3127,25 @@
     }
 
     return [];
+  }
+
+  // A download's speed, or that it's stuck and the downloader is retrying
+  function downloadSpeedText(progress: DownloadProgress | null | undefined) {
+    if (progress?.stalled) return "Stalled, retrying";
+    return formatSpeed(progress?.speed ?? 0);
+  }
+
+  // A device's speed and time left; a stalled one has no time left to show
+  function nodeDownloadText(progress: DownloadProgress | null | undefined) {
+    if (progress?.stalled) return "Stalled, retrying";
+    return `${formatSpeed(progress?.speed ?? 0)} • ETA ${downloadEtaText(progress)}`;
+  }
+
+  // Time left, or "unknown": stalled, just started, or a device not moving
+  function downloadEtaText(progress: DownloadProgress | null | undefined) {
+    return progress && progress.etaMs > 0
+      ? formatEta(progress.etaMs)
+      : "unknown";
   }
 
   function formatEta(ms: number): string {
@@ -6574,20 +6615,25 @@
                               class="flex justify-between text-xs font-mono text-exo-light-gray"
                             >
                               <span
-                                >{formatSpeed(
-                                  downloadInfo.progress.speed,
+                                class={downloadInfo.progress.stalled
+                                  ? "text-orange-400"
+                                  : ""}
+                                >{downloadSpeedText(
+                                  downloadInfo.progress,
                                 )}</span
                               >
                               <span
-                                >ETA: {formatEta(
-                                  downloadInfo.progress.etaMs,
+                                >ETA: {downloadEtaText(
+                                  downloadInfo.progress,
                                 )}</span
                               >
-                              <span
-                                >{downloadInfo.progress
-                                  .completedFiles}/{downloadInfo.progress
-                                  .totalFiles} files</span
-                              >
+                              {#if !downloadInfo.progress.stalled}
+                                <span
+                                  >{downloadInfo.progress
+                                    .completedFiles}/{downloadInfo.progress
+                                    .totalFiles} files</span
+                                >
+                              {/if}
                             </div>
                           </div>
                           {#if downloadInfo.perNode.length > 0}
@@ -6660,10 +6706,11 @@
                                         )}</span
                                       >
                                       <span
-                                        >{formatSpeed(
-                                          nodeProg.progress?.speed ?? 0,
-                                        )} • ETA {formatEta(
-                                          nodeProg.progress?.etaMs ?? 0,
+                                        class={nodeProg.progress?.stalled
+                                          ? "text-orange-400"
+                                          : ""}
+                                        >{nodeDownloadText(
+                                          nodeProg.progress,
                                         )}</span
                                       >
                                     </div>
@@ -7315,11 +7362,15 @@
                           )}</span
                         >
                         <span>
-                          {#if chatLaunchDownload.speed > 0}
-                            {formatBytes(chatLaunchDownload.speed)}/s
-                          {/if}
-                          {#if chatLaunchDownload.etaMs > 0}
-                            &middot; {formatEta(chatLaunchDownload.etaMs)}
+                          {#if chatLaunchDownload.stalled}
+                            Stalled, retrying
+                          {:else}
+                            {#if chatLaunchDownload.speed > 0}
+                              {formatBytes(chatLaunchDownload.speed)}/s
+                            {/if}
+                            {#if chatLaunchDownload.etaMs > 0}
+                              &middot; {formatEta(chatLaunchDownload.etaMs)}
+                            {/if}
                           {/if}
                         </span>
                       </div>
@@ -7775,20 +7826,25 @@
                                 class="flex justify-between text-xs font-mono text-exo-light-gray"
                               >
                                 <span
-                                  >{formatSpeed(
-                                    downloadInfo.progress.speed,
+                                  class={downloadInfo.progress.stalled
+                                    ? "text-orange-400"
+                                    : ""}
+                                  >{downloadSpeedText(
+                                    downloadInfo.progress,
                                   )}</span
                                 >
                                 <span
-                                  >ETA: {formatEta(
-                                    downloadInfo.progress.etaMs,
+                                  >ETA: {downloadEtaText(
+                                    downloadInfo.progress,
                                   )}</span
                                 >
-                                <span
-                                  >{downloadInfo.progress
-                                    .completedFiles}/{downloadInfo.progress
-                                    .totalFiles} files</span
-                                >
+                                {#if !downloadInfo.progress.stalled}
+                                  <span
+                                    >{downloadInfo.progress
+                                      .completedFiles}/{downloadInfo.progress
+                                      .totalFiles} files</span
+                                  >
+                                {/if}
                               </div>
                             </div>
                             {#if downloadInfo.perNode.length > 0}
@@ -7864,10 +7920,11 @@
                                           )}</span
                                         >
                                         <span
-                                          >{formatSpeed(
-                                            nodeProg.progress?.speed ?? 0,
-                                          )} • ETA {formatEta(
-                                            nodeProg.progress?.etaMs ?? 0,
+                                          class={nodeProg.progress?.stalled
+                                            ? "text-orange-400"
+                                            : ""}
+                                          >{nodeDownloadText(
+                                            nodeProg.progress,
                                           )}</span
                                         >
                                       </div>

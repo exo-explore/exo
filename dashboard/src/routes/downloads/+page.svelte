@@ -5,6 +5,7 @@
   import {
     topologyData,
     downloads,
+    downloadActivity,
     nodeDisk,
     refreshState,
     lastUpdate as lastUpdateStore,
@@ -18,6 +19,11 @@
     extractModelIdFromDownload,
     extractShardMetadata,
   } from "$lib/utils/downloads";
+  import {
+    downloadKey,
+    estimateRemainingMs,
+    isStalled,
+  } from "$lib/utils/download_activity";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
 
   type CellStatus =
@@ -33,7 +39,10 @@
         downloadedBytes: number;
         totalBytes: number;
         speed: number;
+        // 0 when not known
         etaMs: number;
+        // No bytes for a while: the downloader is waiting to retry
+        stalled: boolean;
         modelDirectory?: string;
       }
     | {
@@ -72,6 +81,7 @@
 
   const data = $derived(topologyData());
   const downloadsData = $derived(downloads());
+  const activityData = $derived(downloadActivity());
   const nodeDiskData = $derived(nodeDisk());
 
   function getNodeLabel(nodeId: string): string {
@@ -270,8 +280,18 @@
             const totalBytes = getBytes(prog.total ?? payload.total);
             const downloadedBytes = getBytes(prog.downloaded);
             const speed = (prog.speed as number) ?? 0;
+            // The device's speed is an average since the start; the bytes
+            // timed here say whether it's moving and when it will finish
+            const activity = activityData[downloadKey(nodeId, modelId)];
+            const now = Date.now();
             const etaMs =
-              (prog.eta_ms as number) ?? (prog.etaMs as number) ?? 0;
+              totalBytes > 0
+                ? (estimateRemainingMs(
+                    totalBytes - downloadedBytes,
+                    activity,
+                    now,
+                  ) ?? 0)
+                : 0;
             const percentage =
               totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0;
             cell = {
@@ -281,6 +301,7 @@
               totalBytes,
               speed,
               etaMs,
+              stalled: isStalled(activity, now),
               modelDirectory,
             };
           } else if (tag === "DownloadFailed") {
@@ -615,9 +636,11 @@
                         class="flex flex-col items-center gap-1"
                         title="{formatBytes(
                           cell.downloadedBytes,
-                        )} / {formatBytes(cell.totalBytes)} - {formatSpeed(
-                          cell.speed,
-                        )} - ETA {formatEta(cell.etaMs)}"
+                        )} / {formatBytes(cell.totalBytes)} - {cell.stalled
+                          ? 'stalled, retrying'
+                          : formatSpeed(cell.speed)} - ETA {cell.etaMs > 0
+                          ? formatEta(cell.etaMs)
+                          : 'unknown'}"
                       >
                         <span class="text-blue-400 text-sm font-medium"
                           >{clampPercent(cell.percentage).toFixed(1)}%</span
@@ -632,9 +655,15 @@
                             ).toFixed(1)}%"
                           ></div>
                         </div>
-                        <span class="text-[10px] text-white/70"
-                          >{formatSpeed(cell.speed)}</span
-                        >
+                        {#if cell.stalled}
+                          <span class="text-[10px] text-orange-400"
+                            >Stalled, retrying</span
+                          >
+                        {:else}
+                          <span class="text-[10px] text-white/70"
+                            >{formatSpeed(cell.speed)}</span
+                          >
+                        {/if}
                         <div class="flex gap-1 mt-0.5">
                           <button
                             type="button"

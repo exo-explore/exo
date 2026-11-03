@@ -20,6 +20,9 @@ export interface NodeDownload {
   totalBytes: number;
   /** Bytes per second; only a downloading device has one */
   speed: number;
+  /** The device's time left when known better than its speed gives (see
+   * download_activity.ts); null when it can't be known */
+  etaMs?: number | null;
 }
 
 export interface DownloadTotal {
@@ -85,7 +88,12 @@ export function totalDownload(
       : total;
     if (known && remaining <= 0) continue;
     // Devices download at the same time, so the slowest one decides
-    const nodeEta = node.speed > 0 ? (remaining / node.speed) * 1000 : null;
+    const nodeEta =
+      node.etaMs !== undefined
+        ? node.etaMs
+        : node.speed > 0
+          ? (remaining / node.speed) * 1000
+          : null;
     if (etaMs === null || !known || nodeEta === null) {
       etaMs = null;
     } else {

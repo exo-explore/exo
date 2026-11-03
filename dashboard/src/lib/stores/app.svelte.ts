@@ -14,6 +14,15 @@ import {
 } from "$lib/utils/api_errors";
 import { describeStreamError, type StreamKind } from "$lib/utils/stream_errors";
 import { DeviceSilenceTracker } from "$lib/utils/instance_health";
+import {
+  DownloadActivityTracker,
+  downloadKey,
+  type DownloadActivity,
+} from "$lib/utils/download_activity";
+import {
+  extractModelIdFromDownload,
+  getDownloadTag,
+} from "$lib/utils/downloads";
 
 // UUID generation fallback for browsers without crypto.randomUUID
 function generateUUID(): string {
@@ -152,7 +161,10 @@ export interface DownloadProgress {
   totalBytes: number;
   downloadedBytes: number;
   speed: number;
+  // 0 when not known
   etaMs: number;
+  // No bytes for a while: the downloader is waiting to retry
+  stalled?: boolean;
   percentage: number;
   completedFiles: number;
   totalFiles: number;
@@ -545,6 +557,28 @@ function isProgressPlaceholder(content: string): boolean {
   );
 }
 
+// The downloaded bytes of every download in progress, by downloadKey
+function ongoingDownloadBytes(
+  downloads: Record<string, unknown[]>,
+): Record<string, number> {
+  const result: Record<string, number> = {};
+  for (const [nodeId, entries] of Object.entries(downloads)) {
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      const tagged = getDownloadTag(entry);
+      if (!tagged || tagged[0] !== "DownloadOngoing") continue;
+      const modelId = extractModelIdFromDownload(tagged[1]);
+      const progress = (tagged[1].downloadProgress ??
+        tagged[1].download_progress) as
+        | { downloaded?: { inBytes?: number } }
+        | undefined;
+      if (!modelId) continue;
+      result[downloadKey(nodeId, modelId)] = progress?.downloaded?.inBytes ?? 0;
+    }
+  }
+  return result;
+}
+
 class AppStore {
   // Conversation state
   conversations = $state<Conversation[]>([]);
@@ -577,6 +611,9 @@ class AppStore {
   instanceLinks = $state<Record<string, RawInstanceLink>>({});
   featureFlags = $state<Record<string, boolean>>({});
   downloads = $state<Record<string, unknown[]>>({});
+  /** Whether each download in progress is moving, by downloadKey */
+  downloadActivity = $state<Record<string, DownloadActivity>>({});
+  private downloadTracker = new DownloadActivityTracker();
   nodeDisk = $state<
     Record<
       string,
@@ -1369,6 +1406,10 @@ class AppStore {
       if (data.downloads) {
         this.downloads = data.downloads;
       }
+      this.downloadActivity = this.downloadTracker.observe(
+        ongoingDownloadBytes(this.downloads),
+        Date.now(),
+      );
       if (data.nodeDisk) {
         this.nodeDisk = data.nodeDisk;
       }
@@ -3650,6 +3691,9 @@ export const isConnected = () => appStore.isConnected;
 export const nodeIdentities = () => appStore.nodeIdentities;
 // When each node was last heard from (browser clock, ms)
 export const nodeHeardAt = () => appStore.nodeHeardAt;
+
+// Whether each download in progress is moving, by downloadKey
+export const downloadActivity = () => appStore.downloadActivity;
 
 // Thunderbolt & RDMA status
 export const nodeThunderbolt = () => appStore.nodeThunderbolt;
