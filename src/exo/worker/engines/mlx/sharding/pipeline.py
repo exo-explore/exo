@@ -159,9 +159,13 @@ class PipelineLastLayer(CustomMlxLayer):
                 mx.eval(_cache.keys)  # type: ignore
 
         if not self.is_prefill:
-            output = mx.distributed.all_gather(output, group=self.group)[
-                -output.shape[0] :
-            ]
+            # Wait for the other ranks on the CPU, as for the send and the receive: a GPU
+            # command buffer that waited for the gather (the slice below) would wait for
+            # the slowest rank, and the GPU watchdog fails command buffers that wait too
+            # long (a later stage still compiling its kernels, or computing a long chunk).
+            gathered = mx.distributed.all_gather(output, group=self.group)
+            mx.eval(gathered)
+            output = gathered[-output.shape[0] :]
             mx.eval(output)
 
         if extra:
