@@ -7,6 +7,26 @@ import pytest
 from exo.utils import banner
 
 
+def _first_run_at_a_local_desktop(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Path:
+    marker = tmp_path / ".dashboard_opened"
+    monkeypatch.setattr(banner, "_FIRST_RUN_MARKER", marker)
+    monkeypatch.delenv("EXO_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("SSH_CONNECTION", raising=False)
+    monkeypatch.delenv("SSH_TTY", raising=False)
+    monkeypatch.setenv("DISPLAY", ":0")
+    return marker
+
+
+def _recording_open(calls: list[str]):
+    def recording_open(url: str) -> bool:
+        calls.append(url)
+        return True
+
+    return recording_open
+
+
 def test_a_browser_that_never_answers_does_not_block_the_banner(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -20,8 +40,7 @@ def test_a_browser_that_never_answers_does_not_block_the_banner(
         release.wait(timeout=10)
         return True
 
-    monkeypatch.setattr(banner, "_FIRST_RUN_MARKER", tmp_path / ".dashboard_opened")
-    monkeypatch.delenv("EXO_RUNTIME_DIR", raising=False)
+    marker = _first_run_at_a_local_desktop(monkeypatch, tmp_path)
     monkeypatch.setattr(banner.webbrowser, "open", never_answering_open)
 
     start = time.monotonic()
@@ -30,7 +49,7 @@ def test_a_browser_that_never_answers_does_not_block_the_banner(
     release.set()
 
     assert elapsed < 1.0
-    assert (tmp_path / ".dashboard_opened").exists()
+    assert marker.exists()
     deadline = time.monotonic() + 5
     while not opened_on and time.monotonic() < deadline:
         time.sleep(0.01)
@@ -40,17 +59,44 @@ def test_a_browser_that_never_answers_does_not_block_the_banner(
 def test_the_browser_is_opened_only_on_first_run(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    marker = tmp_path / ".dashboard_opened"
+    marker = _first_run_at_a_local_desktop(monkeypatch, tmp_path)
     marker.touch()
     calls: list[str] = []
+    monkeypatch.setattr(banner.webbrowser, "open", _recording_open(calls))
 
-    def recording_open(url: str) -> bool:
-        calls.append(url)
-        return True
+    banner.print_startup_banner(52415)
+    time.sleep(0.1)
 
-    monkeypatch.setattr(banner, "_FIRST_RUN_MARKER", marker)
-    monkeypatch.delenv("EXO_RUNTIME_DIR", raising=False)
-    monkeypatch.setattr(banner.webbrowser, "open", recording_open)
+    assert calls == []
+
+
+def test_no_browser_is_opened_from_an_ssh_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Over ssh a browser would open on whoever is at the machine's screen, not in front of the person running
+    exo. The first run still counts as done."""
+    marker = _first_run_at_a_local_desktop(monkeypatch, tmp_path)
+    monkeypatch.setenv("SSH_CONNECTION", "client 50000 server 22")
+    calls: list[str] = []
+    monkeypatch.setattr(banner.webbrowser, "open", _recording_open(calls))
+
+    banner.print_startup_banner(52415)
+    time.sleep(0.1)
+
+    assert calls == []
+    assert marker.exists()
+
+
+def test_no_browser_is_opened_on_linux_without_a_graphical_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Without a display, webbrowser would start a text browser on the same terminal as exo."""
+    _first_run_at_a_local_desktop(monkeypatch, tmp_path)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setattr(banner.sys, "platform", "linux")
+    calls: list[str] = []
+    monkeypatch.setattr(banner.webbrowser, "open", _recording_open(calls))
 
     banner.print_startup_banner(52415)
     time.sleep(0.1)
