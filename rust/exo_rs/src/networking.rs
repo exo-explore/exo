@@ -6,7 +6,8 @@ use crate::ext::{ByteArrayExt as _, FutureExt, PyErrExt as _};
 use crate::ext::{ResultExt as _, TokioMpscSenderExt as _};
 use futures_lite::{Stream, StreamExt as _};
 use networking::membership::{
-    GRACE, Member, MemberState, Quorum, Reason, SPLIT_HOLD, Snapshot, WEDGE_TIMEOUT,
+    GRACE, Member, MemberState, Quorum, Reason, SPLIT_HOLD, STALL_THRESHOLD, Snapshot,
+    WEDGE_TIMEOUT,
 };
 use networking::swarm::{FromExo, FromSwarm, Members, Swarm, ToSwarm, create_swarm};
 use networking::{Session, is_valid_zid};
@@ -410,11 +411,13 @@ impl PyNetworkingHandle {
 pyo3_stub_gen::module_variable!("exo_rs", "GRACE_SECONDS", f64);
 pyo3_stub_gen::module_variable!("exo_rs", "WEDGE_TIMEOUT_SECONDS", f64);
 pyo3_stub_gen::module_variable!("exo_rs", "SPLIT_HOLD_SECONDS", f64);
+pyo3_stub_gen::module_variable!("exo_rs", "STALL_THRESHOLD_SECONDS", f64);
 
 pub fn networking_submodule(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("GRACE_SECONDS", GRACE.as_secs_f64())?;
     m.add("WEDGE_TIMEOUT_SECONDS", WEDGE_TIMEOUT.as_secs_f64())?;
     m.add("SPLIT_HOLD_SECONDS", SPLIT_HOLD.as_secs_f64())?;
+    m.add("STALL_THRESHOLD_SECONDS", STALL_THRESHOLD.as_secs_f64())?;
     m.add_class::<PyNetworkingHandle>()?;
     m.add_class::<PyFromSwarm>()?;
     m.add_class::<PyMemberState>()?;

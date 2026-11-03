@@ -47,6 +47,8 @@ WEDGE_TIMEOUT: Final = timedelta(seconds=exo_rs.WEDGE_TIMEOUT_SECONDS)
 SPLIT_HOLD: Final = timedelta(seconds=exo_rs.SPLIT_HOLD_SECONDS)
 """How long the side of a split without a majority holds before it takes over the lost nodes'
 work"""
+STALL_THRESHOLD: Final = timedelta(seconds=exo_rs.STALL_THRESHOLD_SECONDS)
+"""How late a 1 s tick must be to mean this node itself was stopped (frozen, starved or asleep)"""
 
 
 class Member(FrozenModel):

@@ -10,7 +10,7 @@ from anyio import (
 )
 from loguru import logger
 
-from exo.routing.membership import MembershipChange
+from exo.routing.membership import STALL_THRESHOLD, MembershipChange
 from exo.shared.types.commands import ForwarderCommand
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, Sender
@@ -30,6 +30,9 @@ MASTER_SILENCE_TIMEOUT = 30.0
 # doesn't hear it back, and every election pauses the whole cluster for a moment.
 RETRY_MIN_DELAY = 15.0
 RETRY_MAX_DELAY = 300.0
+# A silence check this late means this node itself was stopped (the membership's own rule): the
+# master's silence then says nothing about the master
+STALL_THRESHOLD_SECONDS = STALL_THRESHOLD.total_seconds()
 
 
 class ElectionMessage(FrozenModel):
@@ -123,6 +126,11 @@ class ResumingHold:
         self._resuming = False
         self._put_off: set[NodeId] = set()
 
+    @property
+    def resuming(self) -> bool:
+        """Whether this node is Resuming, as its membership last said"""
+        return self._resuming
+
     def starts_a_round(self, change: MembershipChange) -> bool:
         """Whether `change` starts an election round now"""
         if change.node_id == self._node_id:
@@ -182,6 +190,7 @@ class Election:
         self._em_receiver = election_message_receiver
         self._er_sender = election_result_sender
         self._membership_changes = membership_change_receiver
+        self._resuming_hold = ResumingHold(node_id)
         self._co_receiver = command_receiver
 
         # The latest word from the master we follow: its winning message, then its heartbeats
@@ -243,7 +252,14 @@ class Election:
 
     async def _heartbeat(self) -> None:
         while True:
+            started = anyio.current_time()
             await anyio.sleep(HEARTBEAT_INTERVAL)
+            # This node was stopped (a frozen process): the membership will say Resuming in a
+            # moment, but this check can run first
+            stopped = (
+                anyio.current_time() - started - HEARTBEAT_INTERVAL
+                >= STALL_THRESHOLD_SECONDS
+            )
             if self._campaign_cancel_scope is not None:
                 continue
             if self.current_session.master_node_id == self.node_id:
@@ -251,8 +267,15 @@ class Election:
                     self._election_status().model_copy(update={"heartbeat": True})
                 )
             elif (
-                silence := anyio.current_time() - self._master_last_heard
-            ) > MASTER_SILENCE_TIMEOUT and self._may_retry():
+                (silence := anyio.current_time() - self._master_last_heard)
+                > MASTER_SILENCE_TIMEOUT
+                # While this node is Resuming its links close one by one and the master can't
+                # reach it yet: the silence says nothing about the master. Once Resuming ends, a
+                # master still silent is replaced as before.
+                and not stopped
+                and not self._resuming_hold.resuming
+                and self._may_retry()
+            ):
                 logger.warning(
                     f"No heartbeat from master {self.current_session.master_node_id} "
                     f"for {silence:.0f}s; starting a new election"
@@ -356,7 +379,7 @@ class Election:
                 self._candidates.append(message)
 
     async def _connection_receiver(self) -> None:
-        hold = ResumingHold(self.node_id)
+        hold = self._resuming_hold
         with self._membership_changes as changes:
             async for first in changes:
                 if not hold.starts_a_round(first):

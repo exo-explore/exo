@@ -18,6 +18,7 @@ __all__ = [
     "PidfileError",
     "Quorum",
     "SPLIT_HOLD_SECONDS",
+    "STALL_THRESHOLD_SECONDS",
     "WEDGE_TIMEOUT_SECONDS",
     "flush_logs",
     "write_panics_to",
@@ -25,6 +26,7 @@ __all__ = [
 
 GRACE_SECONDS: builtins.float
 SPLIT_HOLD_SECONDS: builtins.float
+STALL_THRESHOLD_SECONDS: builtins.float
 WEDGE_TIMEOUT_SECONDS: builtins.float
 class FromSwarm:
     @typing.final
