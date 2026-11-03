@@ -24,6 +24,7 @@ import {
   getDownloadTag,
 } from "$lib/utils/downloads";
 import {
+  TOMBSTONE_TTL_MS,
   mergeConversations,
   mergeTombstones,
   sameConversations,
@@ -350,9 +351,11 @@ export interface Conversation {
 }
 
 const STORAGE_KEY = "exo-conversations";
-// Conversations deleted in any tab (id -> when), so merging another tab's
-// copy doesn't bring them back (see conversation_sync.ts)
-const DELETED_STORAGE_KEY = "exo-conversations-deleted";
+// Conversations deleted in any tab, one key per conversation (its value: when),
+// so merging another tab's copy doesn't bring them back (see
+// conversation_sync.ts). One key each means a tab only ever adds its own
+// deletions: it can't overwrite another tab's with a list it read earlier.
+const DELETED_KEY_PREFIX = "exo-conversation-deleted:";
 
 // A stored conversation with every field set. Missing times count as
 // fallbackTime: now when first loaded, 0 (older than anything) when merging.
@@ -628,6 +631,8 @@ class AppStore {
 
   // Abort controller for stopping generation
   private currentAbortController: AbortController | null = null;
+  // The conversation a reply is streaming into, while it streams
+  private streamingConversationId: string | null = null;
 
   /** The message whose reply just stopped with an error, while its
    * conversation stays open: screen readers announce only that one, not the
@@ -721,7 +726,7 @@ class AppStore {
         if (
           event.key === null ||
           event.key === STORAGE_KEY ||
-          event.key === DELETED_STORAGE_KEY
+          event.key.startsWith(DELETED_KEY_PREFIX)
         ) {
           this.syncConversationsFromStorage();
         }
@@ -746,11 +751,7 @@ class AppStore {
         this.conversations = parsed
           .map((conversation) => normalizeConversation(conversation, now))
           .filter(
-            (conversation) =>
-              !(
-                (this.deletedConversations[conversation.id] ?? -1) >=
-                conversation.updatedAt
-              ),
+            (conversation) => !(conversation.id in this.deletedConversations),
           );
         // Fields filled in here (ids, times) must be stored as they are now,
         // or each later read would fill them in differently
@@ -771,11 +772,36 @@ class AppStore {
   }
 
   private readDeletedConversations(): Tombstones {
+    const deleted: Tombstones = {};
     try {
-      const stored = localStorage.getItem(DELETED_STORAGE_KEY);
-      return stored ? (JSON.parse(stored) as Tombstones) : {};
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key?.startsWith(DELETED_KEY_PREFIX)) continue;
+        const deletedAt = Number(localStorage.getItem(key));
+        if (Number.isFinite(deletedAt)) {
+          deleted[key.slice(DELETED_KEY_PREFIX.length)] = deletedAt;
+        }
+      }
     } catch {
-      return {};
+      // Unreadable: no deletions known from storage
+    }
+    return deleted;
+  }
+
+  // Store this tab's deletions, each under its own key, and forget expired
+  // ones. Nothing here can undo another tab's deletion.
+  private writeDeletedConversations(stored: Tombstones) {
+    for (const [id, deletedAt] of Object.entries(this.deletedConversations)) {
+      if (stored[id] === undefined) {
+        localStorage.setItem(DELETED_KEY_PREFIX + id, String(deletedAt));
+      }
+    }
+    // Only by age: a deletion this tab hasn't read yet must stay
+    const now = Date.now();
+    for (const [id, deletedAt] of Object.entries(stored)) {
+      if (now - deletedAt > TOMBSTONE_TTL_MS) {
+        localStorage.removeItem(DELETED_KEY_PREFIX + id);
+      }
     }
   }
 
@@ -831,6 +857,14 @@ class AppStore {
   }
 
   private applyMergedConversations(merged: Conversation[]) {
+    // Deleted in another tab while this one streams into it: stop, so this
+    // tab neither keeps adding to it nor saves it again
+    if (
+      this.streamingConversationId &&
+      !merged.some((c) => c.id === this.streamingConversationId)
+    ) {
+      this.currentAbortController?.abort();
+    }
     const active = this.activeConversationId
       ? merged.find((c) => c.id === this.activeConversationId)
       : undefined;
@@ -867,10 +901,7 @@ class AppStore {
     try {
       const merged = this.mergeOtherTabsConversations();
       this.writeConversations(merged);
-      const deleted = JSON.stringify(this.deletedConversations);
-      if (localStorage.getItem(DELETED_STORAGE_KEY) !== deleted) {
-        localStorage.setItem(DELETED_STORAGE_KEY, deleted);
-      }
+      this.writeDeletedConversations(this.readDeletedConversations());
     } catch (error) {
       console.error("Failed to save conversations:", error);
     }
@@ -2762,6 +2793,7 @@ class AppStore {
 
       const abortController = new AbortController();
       this.currentAbortController = abortController;
+      this.streamingConversationId = targetConversationId;
 
       const response = await fetch("/v1/chat/completions", {
         method: "POST",
@@ -2967,6 +2999,7 @@ class AppStore {
       }
     } finally {
       this.currentAbortController = null;
+      this.streamingConversationId = null;
       this.prefillProgress = null;
       this.isLoading = false;
       this.currentResponse = "";

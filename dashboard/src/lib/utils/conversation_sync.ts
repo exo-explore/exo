@@ -8,7 +8,8 @@
  * event): by conversation id, the version updated last wins, and a
  * conversation only goes away when a tab deleted it. Deletions are kept as
  * tombstones (id -> when), so a merge doesn't bring a deleted conversation
- * back from another tab's copy.
+ * back from another tab's copy. A deletion always wins, also over a tab still
+ * streaming a reply into the conversation: that tab stops.
  */
 
 export interface SyncedConversation {
@@ -23,14 +24,12 @@ export type Tombstones = Record<string, number>;
 /** How long a deletion is remembered: longer than any tab stays stale */
 export const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+// Ids are random UUIDs, never reused: a deleted id stays deleted
 function isDeleted(
   conversation: SyncedConversation,
   deleted: Tombstones,
 ): boolean {
-  const deletedAt = deleted[conversation.id];
-  // A conversation updated after it was deleted elsewhere (still streaming
-  // in another tab) keeps what was added to it
-  return deletedAt !== undefined && deletedAt >= conversation.updatedAt;
+  return deleted[conversation.id] !== undefined;
 }
 
 /**

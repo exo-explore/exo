@@ -61,14 +61,12 @@ test("a deleted conversation doesn't come back from another copy", () => {
   );
 });
 
-test("a conversation still being added to after a delete elsewhere is kept", () => {
+test("a deletion wins over a tab still adding to the conversation", () => {
+  // Deleted at 100 in one tab; another tab streamed into it until 200
   const merged = mergeConversations<Conversation>([conv("a", 1, 200)], [], {
     a: 100,
   });
-  assert.deepEqual(
-    merged.map((c) => c.id),
-    ["a"],
-  );
+  assert.deepEqual(merged, []);
 });
 
 test("newest created first", () => {
