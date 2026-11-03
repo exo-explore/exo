@@ -7,6 +7,7 @@
  * - UI state for the topology/chat transition
  */
 
+import type { RawDeployment } from "$lib/utils/deployments";
 import { browser } from "$app/environment";
 import {
   extractApiErrorMessage,
@@ -89,6 +90,8 @@ export interface TopologyData {
 }
 
 export interface Instance {
+  /** The deployment it runs: what the user launched, which exo keeps running */
+  deploymentId?: string;
   shardAssignments?: {
     modelId?: string;
     runnerToShard?: Record<string, unknown>;
@@ -257,6 +260,8 @@ interface RawStateResponse {
   >;
   runners?: Record<string, unknown>;
   instanceLinks?: Record<string, RawInstanceLink>;
+  // The models users launched, which exo keeps running (utils/deployments.ts)
+  deployments?: Record<string, RawDeployment>;
   downloads?: Record<string, unknown[]>;
   // When each node last reported, stamped by the master's clock
   lastSeen?: Record<string, string>;
@@ -644,6 +649,7 @@ class AppStore {
   instances = $state<Record<string, unknown>>({});
   runners = $state<Record<string, unknown>>({});
   instanceLinks = $state<Record<string, RawInstanceLink>>({});
+  deployments = $state<Record<string, RawDeployment>>({});
   featureFlags = $state<Record<string, boolean>>({});
   downloads = $state<Record<string, unknown[]>>({});
   /** Whether each download in progress is moving, by downloadKey */
@@ -1598,6 +1604,7 @@ class AppStore {
       } else {
         this.instanceLinks = {};
       }
+      this.deployments = data.deployments ?? {};
       if (data.downloads) {
         this.downloads = data.downloads;
       }
@@ -3784,6 +3791,7 @@ export const topologyData = () => appStore.topologyData;
 export const instances = () => appStore.instances;
 export const runners = () => appStore.runners;
 export const instanceLinks = () => appStore.instanceLinks;
+export const deployments = () => appStore.deployments;
 export const featureFlags = () => appStore.featureFlags;
 export const createInstanceLink = (
   prefillInstances: string[],

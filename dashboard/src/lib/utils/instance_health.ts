@@ -3,10 +3,11 @@
  * its devices and runners.
  *
  * A runner reports its status when it changes, so a model whose device has
- * frozen, quit or crashed keeps its last status (often Ready) until the
- * master notices the silence and removes the model, 15 s later
- * (NODE_SILENCE_TIMEOUT in master/main.py). Meanwhile two things in /state
- * already tell the truth:
+ * frozen or crashed keeps its last status (often Ready) until the master
+ * removes the device: the membership's 30 s grace after it was lost, or up to
+ * the 5-minute split hold when this side reads half of the cluster or less,
+ * which keeps the model for the device. Meanwhile two things in /state already
+ * tell the truth:
  * - lastSeen: every device reports about once a second, so a device whose
  *   lastSeen stops moving has gone quiet;
  * - runners: a runner that shuts down is removed from the state, so a model
@@ -20,8 +21,7 @@
  * sees them up to a /state poll (1 s) later, so a healthy device can look
  * quiet for about 7.3 s. 12 s leaves 4.7 s of margin above that, so a busy
  * cluster doesn't flip a healthy model to Unavailable, and still flags a
- * silent device about 3 s before the master removes it (after 15 s,
- * NODE_SILENCE_TIMEOUT in master/main.py) and with it the model. */
+ * silent device well before the master removes it and with it the model. */
 export const DEVICE_SILENCE_MS = 12_000;
 
 /**
