@@ -25,7 +25,8 @@ use zenoh::sample::Sample;
 use zenoh::sample::SampleKind;
 
 use crate::membership::{
-    ALIVE_KEY_PREFIX, GRACE, Member, Membership, Now, PROBE_TIMEOUT, Snapshot, TICK,
+    ALIVE_KEY_PREFIX, GRACE, Member, Membership, Now, PROBE_FIRST_ASK_DELAY, PROBE_TIMEOUT,
+    Snapshot, TICK,
 };
 
 #[derive(Debug)]
@@ -296,15 +297,33 @@ async fn watch_connections(session: &Session) -> Result<(Queryable<()>, Connecti
     Ok((alive, connections))
 }
 
-/// Whether a node answers, within PROBE_TIMEOUT, that it is still there.
+/// Whether a node answers, within `PROBE_TIMEOUT`, that it is still there. It is first asked
+/// after `PROBE_FIRST_ASK_DELAY`, and again after that delay each time a query ends without an
+/// answer: until zenoh has recomputed its routes after the closed link, a query to a node that
+/// is reachable only through another one finds no route and ends at once.
 async fn answers(session: &Session, zid: ZenohId) -> bool {
-    let replies = session
-        .get(format!("{ALIVE_KEY_PREFIX}/{zid}"))
-        .priority(Priority::InteractiveHigh)
-        .timeout(PROBE_TIMEOUT)
+    let deadline = tokio::time::Instant::now() + PROBE_TIMEOUT;
+    loop {
+        tokio::time::sleep_until(
+            (tokio::time::Instant::now() + PROBE_FIRST_ASK_DELAY).min(deadline),
+        )
         .await;
-    let Ok(replies) = replies else { return false };
-    matches!(replies.recv_async().await, Ok(reply) if reply.result().is_ok())
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if left.is_zero() {
+            return false;
+        }
+        let Ok(replies) = session
+            .get(format!("{ALIVE_KEY_PREFIX}/{zid}"))
+            .priority(Priority::InteractiveHigh)
+            .timeout(left)
+            .await
+        else {
+            continue;
+        };
+        if matches!(replies.recv_async().await, Ok(reply) if reply.result().is_ok()) {
+            return true;
+        }
+    }
 }
 
 async fn on_message(
@@ -431,19 +450,22 @@ pub async fn create_swarm(
 mod tests {
     //! Every node's swarm must report what happens to a peer: a crash (Suspect at once, also
     //! when zenoh keeps the peer's liveliness token, as it does in clusters of three or more:
-    //! see `membership`; then Gone after the grace), and a freeze (Suspect after the lease,
-    //! Alive again when it resumes). The test binary runs itself as each node, in separate
+    //! see `membership`; then Gone after the grace), a freeze (Suspect after the lease, Alive
+    //! again when it resumes), and a lost direct link to a peer that is still reachable through
+    //! another node (it stays Alive). The test binary runs itself as each node, in separate
     //! processes, so a node can be killed or stopped the way a crash or a sleep does it.
     use std::collections::{HashMap, HashSet};
     use std::io::{BufRead, BufReader};
-    use std::net::TcpListener;
+    use std::net::{Shutdown, TcpListener, TcpStream};
     use std::process::{Child, Command, Stdio};
-    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
     use std::sync::mpsc as std_mpsc;
+    use std::sync::{Arc, Mutex as StdMutex};
     use std::time::{Duration, Instant};
 
     use futures_lite::StreamExt as _;
     use zenoh::config::{Locator, ZenohId};
+    use zenoh::sample::SampleKind;
     use zenoh_plugin_storage_manager::StoragesPlugin;
     use zenoh_plugin_trait::PluginsManager;
 
@@ -553,6 +575,109 @@ mod tests {
         );
     }
 
+    /// The direct connection between two nodes closes while both still reach each other
+    /// through the third one: the probe must be answered through it. Asked at once, before
+    /// zenoh had recomputed its routes, it wasn't always.
+    #[test]
+    fn a_node_still_reachable_through_another_node_stays_alive() {
+        const NAME: &str = "swarm::tests::a_node_still_reachable_through_another_node_stays_alive";
+        if let Ok(spec) = std::env::var(NODE_ENV) {
+            run_node(&spec);
+            return;
+        }
+        let Some(ports) = loopback_ports(NAME, 4) else {
+            return;
+        };
+        let zids = random_zids(3);
+        // Nodes 0 and 1 are connected through a proxy (the one with the greater id dials)
+        let ids: Vec<ZenohId> = zids.iter().map(|zid| zid.parse().expect("zid")).collect();
+        let (dialer, dialed) = if ids[0] > ids[1] { (0, 1) } else { (1, 0) };
+        let proxy_port = ports[3];
+        let proxy = Proxy::start(proxy_port, ports[dialed]);
+        let mut cluster = Cluster::spawn(NAME, GRACE, &zids, &ports[..3], |from, to| {
+            if from == dialer && to == dialed {
+                proxy_port
+            } else {
+                ports[to]
+            }
+        });
+        cluster.wait_for_mesh();
+
+        let cut = Instant::now();
+        proxy.cut();
+        // Both ends see the direct connection close...
+        cluster.wait_for_all(&[dialer], dialed, "closed", cut, cut + SLACK);
+        cluster.wait_for_all(&[dialed], dialer, "closed", cut, cut + SLACK);
+        // ... and neither takes the other for unreachable
+        std::thread::sleep(PROBE_TIMEOUT + SLACK);
+        let suspect = cluster.reported("Suspect");
+        assert!(
+            suspect.is_empty(),
+            "nodes reported as unreachable though still reachable: {suspect:#?}"
+        );
+    }
+
+    /// A TCP proxy that can be cut: its connections are shut and it accepts no new ones
+    struct Proxy {
+        port: u16,
+        cut: Arc<AtomicBool>,
+        streams: Arc<StdMutex<Vec<TcpStream>>>,
+    }
+
+    impl Proxy {
+        fn start(port: u16, target: u16) -> Self {
+            let listener = TcpListener::bind(("::1", port)).expect("proxy listener");
+            let cut = Arc::new(AtomicBool::new(false));
+            let streams: Arc<StdMutex<Vec<TcpStream>>> = Arc::default();
+            {
+                let cut = Arc::clone(&cut);
+                let streams = Arc::clone(&streams);
+                std::thread::spawn(move || {
+                    for client in listener.incoming() {
+                        if cut.load(std::sync::atomic::Ordering::SeqCst) {
+                            break;
+                        }
+                        let Ok(client) = client else { continue };
+                        let Ok(server) = TcpStream::connect(("::1", target)) else {
+                            continue;
+                        };
+                        let (Ok(client_copy), Ok(server_copy)) =
+                            (client.try_clone(), server.try_clone())
+                        else {
+                            continue;
+                        };
+                        streams
+                            .lock()
+                            .expect("proxy streams")
+                            .extend([client_copy, server_copy]);
+                        let (Ok(client_reader), Ok(server_writer)) =
+                            (client.try_clone(), server.try_clone())
+                        else {
+                            continue;
+                        };
+                        for (mut from, mut to) in [(client_reader, server_writer), (server, client)]
+                        {
+                            std::thread::spawn(move || {
+                                let _ = std::io::copy(&mut from, &mut to);
+                                let _ = to.shutdown(Shutdown::Both);
+                            });
+                        }
+                    }
+                });
+            }
+            Self { port, cut, streams }
+        }
+
+        fn cut(&self) {
+            self.cut.store(true, std::sync::atomic::Ordering::SeqCst);
+            // Wake the accept loop, which then stops
+            let _ = TcpStream::connect(("::1", self.port));
+            for stream in self.streams.lock().expect("proxy streams").iter() {
+                let _ = stream.shutdown(Shutdown::Both);
+            }
+        }
+    }
+
     /// Nodes running as child processes, and what each reports
     struct Cluster {
         children: Vec<Child>,
@@ -566,7 +691,7 @@ mod tests {
     struct Event {
         /// Which node reported it
         node: usize,
-        /// The state it reported, e.g. `Suspect(Disconnected)`
+        /// The state it reported, e.g. `Suspect(Disconnected)`, or `closed` for a connection
         state: String,
         /// About which node
         about: String,
@@ -784,8 +909,8 @@ mod tests {
     }
 
     /// A node: exo's swarm on an exo-configured router that dials its peers the way discovery
-    /// does (only those with a smaller id), reporting each membership change.
-    /// `spec` is `GRACE_MS ID@PORT PEER_ID@PEER_PORT...`.
+    /// does (only those with a smaller id), reporting each membership change and each of its
+    /// connections that closes. `spec` is `GRACE_MS ID@PORT PEER_ID@PEER_PORT...`.
     fn run_node(spec: &str) {
         let mut parts = spec.split_whitespace();
         let grace = Duration::from_millis(
@@ -812,6 +937,19 @@ mod tests {
                     .expect("zenoh session");
                 runtime.start().await.expect("start zenoh");
                 let own: ZenohId = z.zid();
+                let closed = z
+                    .info()
+                    .transport_events_listener()
+                    .history(false)
+                    .await
+                    .expect("transport events");
+                tokio::spawn(async move {
+                    while let Ok(event) = closed.recv_async().await {
+                        if event.kind() == SampleKind::Delete {
+                            eprintln!("SWARM closed {}", event.transport().zid());
+                        }
+                    }
+                });
                 let dialer = tokio::spawn(async move {
                     loop {
                         for (peer, peer_port) in &peers {

@@ -57,6 +57,19 @@ pub const LEASE: Duration = Duration::from_secs(10);
 /// more) the crash is noticed only when this runs out, so it is short.
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// zenoh recomputes its routes this long after a link changes (`TREES_COMPUTATION_DELAY_MS`,
+/// zenoh's own constant). Until then a query to a node that is now reachable only through
+/// another one finds no route and ends at once, with no answer.
+const ZENOH_ROUTES_RECOMPUTED_AFTER: Duration = Duration::from_millis(100);
+
+/// How long after a connection closed its node is first asked whether it is still there, and
+/// how long to wait before asking again each time a query ends without an answer, until
+/// `PROBE_TIMEOUT`. Three times zenoh's route recomputation delay, so that the other nodes'
+/// news of the closed link has reached this node too. Asked once and at once, a node still
+/// reachable through a third one was taken for lost in every one of 12 trials on one machine;
+/// asked this way, in none of 12.
+pub const PROBE_FIRST_ASK_DELAY: Duration = ZENOH_ROUTES_RECOMPUTED_AFTER.saturating_mul(3);
+
 /// How often the membership checks its timers and its own clocks.
 pub const TICK: Duration = Duration::from_secs(1);
 
@@ -1212,5 +1225,10 @@ mod tests {
         assert!(STALL_THRESHOLD < LEASE);
         assert!(STALL_THRESHOLD > TICK);
         assert!(MINORITY_HOLD_LIMIT > GRACE);
+        assert_eq!(PROBE_FIRST_ASK_DELAY, ZENOH_ROUTES_RECOMPUTED_AFTER * 3);
+        assert!(
+            PROBE_FIRST_ASK_DELAY * 4 <= PROBE_TIMEOUT,
+            "a node is asked several times before it is suspect"
+        );
     }
 }
