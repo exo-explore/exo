@@ -493,6 +493,15 @@ class RunnerSupervisor:
                         continue
                     if (
                         isinstance(event, TaskStatusUpdated)
+                        and event.task_status == TaskStatus.Cancelled
+                    ):
+                        # A cancelled request is done with, as a completed one is: kept in
+                        # in_progress, it (and its prompt and images) stayed for good, and a
+                        # later failure of the runner reported it as failed too
+                        self.in_progress.pop(event.task_id, None)
+                        self.completed.add(event.task_id)
+                    if (
+                        isinstance(event, TaskStatusUpdated)
                         and event.task_status == TaskStatus.Complete
                     ):
                         # If a task has just been completed, we should be working on it.
