@@ -194,19 +194,25 @@ def _without_requests(state: State) -> State:
 PROCESSED_COMMANDS_KEPT = 100_000
 
 
-def gone_nodes(listed: AbstractSet[NodeId], view: MembershipView) -> set[NodeId]:
-    """The listed nodes Gone in this node's membership view (Suspect for the grace period, or
-    listed and never seen for as long), as far as its quorum read lets it act on them: their
-    instances can't serve, so they are ended. Never this node itself.
+def nodes_to_remove(listed: AbstractSet[NodeId], view: MembershipView) -> set[NodeId]:
+    """The listed nodes the coordinator removes now, and whose instances it ends: those Gone in
+    its own membership view (Suspect for the grace period, or listed and never seen for as
+    long), as far as its quorum read allows. Never this node itself.
 
-    - Majority, or Half (two nodes with one away, or an even split): all of them.
+    - Majority: all of them.
+    - Half (two nodes with one away, or an even split): none yet, and their instances stay. A
+      Mac whose lid closed for a minute or two then comes back to its models, if their ranks'
+      connections held; its requests fail fast meanwhile (every API checks reachability).
+      Once the node has been Gone for FORGET_AFTER (the split hold, SPLIT_HOLD) it stops
+      counting, the read is Majority, and it is removed. This is also where the models the
+      other side ran would be re-placed after SPLIT_HOLD, once exo re-places models itself.
     - Minority: none. This node is most likely the one cut off, and the rest of the cluster
-      still runs what it can't see.
+      still runs what it can't see. Once the lost nodes have been Gone for FORGET_AFTER they
+      stop counting, the read is Majority of the nodes it reaches, and they are removed.
 
-    Suspect nodes are never among them: they may be back within the grace period. Their
-    requests end at once anyway (every API checks reachability itself).
+    Suspect nodes are never removed: they may be back within the grace period.
     """
-    if view.quorum == "Minority":
+    if view.quorum != "Majority":
         return set()
     return {
         member.node_id
@@ -215,27 +221,6 @@ def gone_nodes(listed: AbstractSet[NodeId], view: MembershipView) -> set[NodeId]
         and member.node_id in listed
         and member.node_id != view.node_id
     }
-
-
-def nodes_to_remove(gone: AbstractSet[NodeId], view: MembershipView) -> set[NodeId]:
-    """Which of the gone nodes the coordinator removes from the cluster now (D4):
-
-    - Majority: all of them.
-    - Half: none yet. The node stays listed as Gone, and its instances end; it is removed
-      once it has been Gone for FORGET_AFTER (the split hold, SPLIT_HOLD): it then stops
-      counting, and the read is Majority. Removing it at once would make this side a
-      majority of one, which must not happen before the split hold. Once deployments
-      exist (step 3), this is also where the other side's deployments are kept, and
-      re-placed only after SPLIT_HOLD unless the user acts.
-    - Minority: none (no node is gone, see gone_nodes). Once they have been Gone for
-      FORGET_AFTER, they stop counting in its quorum read, which then is a majority of the
-      nodes it reaches, and they are removed.
-    """
-    match view.quorum:
-        case "Majority":
-            return set(gone)
-        case "Half" | "Minority":
-            return set()
 
 
 class NoInstanceForModelError(Exception):
@@ -660,12 +645,12 @@ class Master:
         # time the peers it lost meanwhile toward Gone, so it doesn't blame them for its stall
         view = self.membership.view()
         listed = listed_nodes(self.state)
-        gone = gone_nodes(listed, view)
+        gone = nodes_to_remove(listed, view)
         self._note_held_back(listed, view)
         members = {member.node_id: member for member in view.members}
         # Each removal is in the state as soon as it is made, so a node or an instance is
         # removed once
-        for node_id in nodes_to_remove(gone, view):
+        for node_id in gone:
             member = members[node_id]
             logger.info(
                 f"Removing node {node_id}: gone ({member.reason}) since "
@@ -673,9 +658,8 @@ class Master:
             )
             self._index(NodeTimedOut(node_id=node_id))
 
-        # An instance that lost a node can't serve anything, so delete it straight away (in
-        # an even split, while the node stays listed)
-        connected = set(self.state.topology.list_nodes()) - gone
+        # An instance that lost a node can't serve anything, so delete it straight away
+        connected = set(self.state.topology.list_nodes())
         for instance_id, instance in list(self.state.instances.items()):
             if any(
                 node_id not in connected
@@ -729,10 +713,9 @@ class Master:
                 )
             else:
                 logger.warning(
-                    f"Keeping {len(held_back)} gone node(s) listed, and ending their "
-                    f"instances: this node reaches {view.reachable} of the "
-                    f"{view.last_known} nodes it knows, exactly half, so it removes them "
-                    "only after the split hold"
+                    f"Keeping {len(held_back)} gone node(s) and their instances: this node "
+                    f"reaches {view.reachable} of the {view.last_known} nodes it knows, "
+                    "exactly half, so it waits for the split hold before removing them"
                 )
         elif self._held_back and not held_back:
             logger.info("No longer holding back the removal of gone nodes")

@@ -207,25 +207,28 @@ async def test_a_node_that_hasnt_reported_for_long_is_kept_while_it_is_alive() -
     assert removals(events) == []
 
 
-async def test_a_master_with_exactly_half_ends_the_gone_nodes_instances_and_keeps_it() -> (
+async def test_a_pair_keeps_a_gone_node_and_its_instances_until_the_split_hold() -> (
     None
 ):
-    """A 2-node cluster whose other node is gone (D4). Its instances can't serve, so they end;
-    the node stays listed as Gone until it stops counting, after the split hold: removing it
-    at once would make this side a majority of one."""
-    instance = instance_on(PEER_A)
+    """A 2-node cluster whose other node has been Gone for longer than the grace, but not for
+    the split hold: a Mac whose lid closed for a minute or two comes back to its models.
+    Removing the node, or ending its instances, at Gone lost the model of a follower asleep
+    for 35 s on real Macs: it was back 5 s after it was Gone (discovery holds off for 12 s
+    after a stall). Its requests fail fast meanwhile (every API checks reachability)."""
+    instance = instance_on(MASTER, PEER_A)
     master, events = master_with(
         listed(MASTER, PEER_A),
         instance,
         membership=membership("Half", gone=(PEER_A,)),
     )
 
-    check(master)
+    for _ in range(3):
+        check(master)
 
-    assert removals(events) == [("instance", instance.instance_id)]
+    assert removals(events) == []
 
 
-async def test_an_even_split_keeps_the_other_half_listed() -> None:
+async def test_an_even_split_keeps_the_other_half_and_its_instances() -> None:
     instance = instance_on(PEER_B, PEER_C)
     master, events = master_with(
         listed(MASTER, PEER_A, PEER_B, PEER_C),
@@ -235,23 +238,24 @@ async def test_an_even_split_keeps_the_other_half_listed() -> None:
 
     check(master)
 
-    assert removals(events) == [("instance", instance.instance_id)]
+    assert removals(events) == []
 
 
-async def test_a_gone_node_kept_in_an_even_split_is_removed_once_it_stops_counting() -> (
+async def test_a_pair_removes_the_gone_node_and_ends_its_instances_after_the_split_hold() -> (
     None
 ):
     """After FORGET_AFTER (the split hold) Gone, the node no longer counts: the read is a
-    majority of the nodes this one reaches, and the node is removed"""
+    majority of the nodes this one reaches, and the node is removed and its instances end"""
+    instance = instance_on(MASTER, PEER_A)
     view = membership("Half", gone=(PEER_A,))
-    master, events = master_with(listed(MASTER, PEER_A), membership=view)
+    master, events = master_with(listed(MASTER, PEER_A), instance, membership=view)
     check(master)
     assert removals(events) == []
 
     view.quorum = "Majority"
     check(master)
 
-    assert removals(events) == [("node", PEER_A)]
+    assert removals(events) == [("node", PEER_A), ("instance", instance.instance_id)]
 
 
 async def test_a_master_in_a_minority_removes_nothing_and_sends_nothing() -> None:
