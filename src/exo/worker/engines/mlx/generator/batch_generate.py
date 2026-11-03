@@ -58,6 +58,7 @@ from exo.worker.engines.mlx.vision import (
     prepare_vision,
 )
 from exo.worker.runner.bootstrap import logger
+from exo.worker.runner.context_length import check_context_length
 
 _MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
 REMOTE_PREFILL_MIN_TOKENS = 1000
@@ -98,6 +99,8 @@ class ExoBatchGenerator:
     group: mx.distributed.Group | None
     kv_prefix_cache: KVPrefixCache | None
     vision_processor: VisionProcessor | None = None
+    # The longest context the model takes; 0 if unknown
+    context_length: int = 0
 
     _mlx_gen: MlxBatchGenerator = field(init=False)
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
@@ -157,6 +160,10 @@ class ExoBatchGenerator:
         if vision is not None:
             all_prompt_tokens = vision.prompt_tokens
             media_regions = vision.media_regions
+        # Before any work on a request the model can't take (and any collective)
+        check_context_length(
+            len(all_prompt_tokens), task_params.max_output_tokens, self.context_length
+        )
 
         is_bench = task_params.bench
 

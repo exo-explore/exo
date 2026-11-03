@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from exo.api.adapters.chat_completions import fetch_image_url
-from exo.api.collected_response import GenerationFailedError
+from exo.api.collected_response import GenerationFailedError, request_error
 from exo.api.types import FinishReason, Usage
 from exo.api.types.claude_api import (
     ClaudeContentBlock,
@@ -383,7 +383,9 @@ async def generate_claude_stream(
             # The stream ends with the error, as a Claude Messages stream does: no message_stop
             error_event = ClaudeErrorEvent(
                 error=ClaudeErrorDetail(
-                    type="api_error",
+                    type="invalid_request_error"
+                    if request_error(chunk.error_message) is not None
+                    else "api_error",
                     message=chunk.error_message,
                     code=generation_error_code(chunk.error_message),
                 )

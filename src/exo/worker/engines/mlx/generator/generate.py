@@ -73,6 +73,7 @@ from exo.worker.engines.mlx.vision import (
     prepare_vision,
 )
 from exo.worker.runner.bootstrap import logger
+from exo.worker.runner.context_length import check_context_length
 
 REMOTE_PREFILL_MIN_TOKENS = 1000
 
@@ -542,6 +543,7 @@ def mlx_generate(
     distributed_prompt_progress_callback: Callable[[], None] | None = None,
     on_generation_token: Callable[[], None] | None = None,
     vision_processor: VisionProcessor | None = None,
+    context_length: int = 0,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -574,6 +576,8 @@ def mlx_generate(
     if vision is not None:
         all_prompt_tokens = vision.prompt_tokens
     media_regions: list[MediaRegion] = vision.media_regions if vision else []
+    # Before any work on a request the model can't take (and any collective)
+    check_context_length(len(all_prompt_tokens), task.max_output_tokens, context_length)
 
     # Do not use the prefix cache if we are trying to do benchmarks.
     is_bench = task.bench

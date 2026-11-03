@@ -8,6 +8,17 @@ from exo.api.types import ErrorInfo, ErrorResponse
 from exo.shared.request_errors import GenerationErrorCode, generation_error_code
 
 
+def request_error(message: str) -> ErrorInfo | None:
+    """The error to answer with, the way OpenAI reports it, if a generation failed because of
+    the request itself (one the client has to fix); None for any other failure."""
+    code = generation_error_code(message)
+    if code in ("context_length_exceeded", "invalid_request"):
+        return ErrorInfo(
+            message=message, type="invalid_request_error", param="messages", code=code
+        )
+    return None
+
+
 class GenerationFailedError(ValueError):
     """A generation that ended with an error, and the stable code saying why"""
 
@@ -37,6 +48,11 @@ class CollectedResponse(StreamingResponse):
         try:
             body = "".join([chunk async for chunk in self._collect()])
         except ValueError as error:
+            if (info := request_error(str(error))) is not None:
+                self.status_code = HTTPStatus.BAD_REQUEST
+                body = ErrorResponse(error=info).model_dump_json()
+                await self._send(send, body)
+                return
             code = error.code if isinstance(error, GenerationFailedError) else None
             status = (
                 _STATUS_OF_CODE.get(code, HTTPStatus.INTERNAL_SERVER_ERROR)
@@ -49,6 +65,9 @@ class CollectedResponse(StreamingResponse):
                     message=str(error), type=status.phrase, code=code or status
                 )
             ).model_dump_json()
+        await self._send(send, body)
+
+    async def _send(self, send: Send, body: str) -> None:
         content = body.encode(self.charset)
         await send(
             {
