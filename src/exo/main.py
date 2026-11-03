@@ -55,9 +55,16 @@ _OLD_MASTER_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "master"
 LEAVE_ANNOUNCE_TIMEOUT = 2.0
 # How often to look whether the departure has been applied
 LEAVE_POLL_INTERVAL = 0.05
-# After the departure is applied, time for this node's own messages to leave it before its
-# network shuts down: when this node is the master, the departure it indexed is still on its way
-# to the other nodes.
+# A quitting master waits this long after its departure is applied before its network shuts
+# down, for the departure it indexed to leave the process. Its router queues each event for the
+# network before delivering it locally (TopicRouter.run), so this node's worker can see the
+# departure while the copy for the other nodes waits behind what was queued before it.
+# Handing one queued message to zenoh takes 0.5-1 ms (measured on an Apple-silicon Mac); zenoh
+# then writes it to every peer at once, holding it back for batching only under back-pressure,
+# for at most 1 ms. So 0.25 s hands the departure over behind about 200 queued messages, where a
+# master that keeps up with its events (fewer than about 1000 a second) has a handful. Should it
+# be lost anyway, the other nodes remove this one after their silence timeouts, as before.
+# A follower doesn't wait: the departure it saw came from the master, which has sent it to all.
 LEAVE_FLUSH = 0.25
 
 
@@ -219,34 +226,42 @@ class Node:
 
     async def _leave_and_stop(self) -> None:
         try:
+            announced = False
             with anyio.move_on_after(LEAVE_ANNOUNCE_TIMEOUT) as scope:
-                await self._announce_departure()
+                announced = await self._announce_departure()
             if scope.cancelled_caught:
                 logger.warning(
                     f"The master didn't confirm this node's departure within "
                     f"{LEAVE_ANNOUNCE_TIMEOUT:.0f}s; shutting down anyway"
                 )
+            elif announced and self.master is not None:
+                # The departure this master indexed may not have left the process yet
+                await anyio.sleep(LEAVE_FLUSH)
         finally:
             self._tg.cancel_tasks()
 
-    async def _announce_departure(self) -> None:
+    async def _announce_departure(self) -> bool:
         """Tell the master this node is leaving, and wait until it has removed the node.
+        Returns whether there was anything to announce.
 
         The departure is the event the master sends for a node it stopped hearing from, so a
         master of an older version removes the node too. A node without a worker never joined
         the cluster's state, so it has nothing to announce.
         """
         if self.worker is None:
-            return
+            return False
         worker = self.worker
-        # Anything the worker reports about this node after its departure would add it back
+        # Anything this node reports about itself after its departure would add it back: its
+        # info and connections, and its download statuses
         worker.stop_reporting()
+        if self.download_coordinator is not None:
+            self.download_coordinator.stop_reporting()
         logger.info("Announcing this node's departure to the cluster")
         await self.event_router.sender().send(NodeTimedOut(node_id=self.node_id))
         while _lists_node(worker.state, self.node_id):
             await anyio.sleep(LEAVE_POLL_INTERVAL)
         logger.info("The cluster has removed this node")
-        await anyio.sleep(LEAVE_FLUSH)
+        return True
 
     def _cluster_state(self) -> State | None:
         """The cluster state as this node last knew it, for a master it starts to carry on from."""

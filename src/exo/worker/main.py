@@ -134,8 +134,9 @@ class Worker:
         self._awaiting_state_of: SessionId | None = None
         # The session of the last state snapshot applied
         self._snapshot_session: SessionId | None = None
-        # Cleared once the node announces it is leaving: what it reports after that (its info,
-        # its connections) would add it back to the cluster
+        # Cleared once the node announces it is leaving: what it reports about itself after
+        # that (its info, its connections, a model it found on disk) would add it back to the
+        # cluster's state
         self._reporting = True
 
     async def run(self):
@@ -175,10 +176,15 @@ class Worker:
         """Stop telling the cluster about this node, which is leaving it."""
         self._reporting = False
 
+    async def _report(
+        self, event: NodeGatheredInfo | TopologyEdgeCreated | NodeDownloadProgress
+    ) -> None:
+        """Send an event about this node, unless it is leaving the cluster."""
+        if self._reporting:
+            await self.event_sender.send(event)
+
     async def _send_info(self, info: GatheredInfo) -> None:
-        if not self._reporting:
-            return
-        await self.event_sender.send(
+        await self._report(
             NodeGatheredInfo(
                 node_id=self.node_id,
                 when=str(datetime.now(tz=timezone.utc)),
@@ -418,7 +424,7 @@ class Worker:
                     )
                     if found_path is not None:
                         logger.info(f"Model {model_id} found at {found_path}")
-                        await self.event_sender.send(
+                        await self._report(
                             NodeDownloadProgress(
                                 download_progress=DownloadCompleted(
                                     node_id=self.node_id,
@@ -621,9 +627,9 @@ class Worker:
                     # nonsense multiaddr
                     else Multiaddr(address=f"/ip6/{ip}/tcp/{self.api_port}"),
                 )
-                if edge not in edges and self._reporting:
+                if edge not in edges:
                     logger.debug(f"ping discovered {edge=}")
-                    await self.event_sender.send(
+                    await self._report(
                         TopologyEdgeCreated(
                             conn=Connection(source=self.node_id, sink=nid, edge=edge)
                         )
