@@ -78,24 +78,37 @@ class _CardCache:
         await self.refresh()
         return [c for c in self.cc.values() if c.is_custom]
 
-    async def _load_cards_from_dir(self, directory: Path, *, is_custom: bool) -> None:
-        """Load all TOML model cards from a directory into the cache."""
+    async def _load_cards_from_dir(
+        self,
+        directory: Path,
+        into: dict[ModelId, "ModelCard"],
+        *,
+        is_custom: bool,
+    ) -> None:
+        """Read all TOML model cards in a directory into `into`, skipping cards already
+        read or already in the cache."""
         async for toml_file in directory.rglob("*.toml"):
             try:
                 card = await ModelCard.load_from_path(toml_file)
                 if is_custom:
                     card = card.model_copy(update={"is_custom": True})
-                if self.get(card.model_id) is None:
-                    self.cc[card.model_id] = card
+                if card.model_id not in into and self.get(card.model_id) is None:
+                    into[card.model_id] = card
             except (ValidationError, TOMLKitError) as e:
                 logger.opt(exception=e).warning(
                     f"failed to validate model card at {toml_file}"
                 )
 
     async def refresh(self) -> None:
+        # Read every card before adding any. Each file read yields to the event loop, and
+        # list_all, called meanwhile (e.g. by the API while the downloader's first call is
+        # still reading), would otherwise return the cards read so far as the catalog.
+        loaded: dict[ModelId, ModelCard] = {}
         for path in _BUILTIN_CARD_DIRS:
-            await self._load_cards_from_dir(path, is_custom=False)
-        await self._load_cards_from_dir(_custom_cards_dir, is_custom=True)
+            await self._load_cards_from_dir(path, loaded, is_custom=False)
+        await self._load_cards_from_dir(_custom_cards_dir, loaded, is_custom=True)
+        for model_id, card in loaded.items():
+            self.cc.setdefault(model_id, card)
 
 
 card_cache = _CardCache()
