@@ -77,6 +77,7 @@ from exo.shared.types.events import (
     TracesMerged,
 )
 from exo.shared.types.instance_link import InstanceLink
+from exo.shared.types.placement import PlacementRequest
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
@@ -455,7 +456,12 @@ class Master:
                             )
                         case PlaceInstance():
                             placement = place_instance(
-                                command,
+                                PlacementRequest(
+                                    model_card=command.model_card,
+                                    sharding=command.sharding,
+                                    instance_meta=command.instance_meta,
+                                    min_nodes=command.min_nodes,
+                                ),
                                 reachable_topology(
                                     self.membership, self.state.topology
                                 ),

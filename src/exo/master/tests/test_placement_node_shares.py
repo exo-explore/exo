@@ -10,9 +10,9 @@ from exo.master.tests.conftest import create_node_network, create_socket_connect
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
-from exo.shared.types.commands import PlaceInstance
-from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.common import NodeId
 from exo.shared.types.memory import Memory
+from exo.shared.types.placement import PlacementRequest
 from exo.shared.types.profiling import MemoryUsage, NodeIdentity
 from exo.shared.types.topology import Connection
 from exo.shared.types.worker.instances import Instance, InstanceMeta
@@ -75,8 +75,7 @@ def _place(
     node_identities: Mapping[NodeId, NodeIdentity] | None = None,
 ) -> Instance:
     placement = place_instance(
-        PlaceInstance(
-            command_id=CommandId(),
+        PlacementRequest(
             model_card=model,
             sharding=sharding,
             instance_meta=InstanceMeta.MlxRing,

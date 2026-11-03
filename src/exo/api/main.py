@@ -219,7 +219,6 @@ from exo.shared.types.commands import (
     ForwarderDownloadCommand,
     ImageEdits,
     ImageGeneration,
-    PlaceInstance,
     SendInputChunk,
     SetInstanceLink,
     StartDownload,
@@ -236,6 +235,7 @@ from exo.shared.types.events import (
     TracesMerged,
 )
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
+from exo.shared.types.placement import PlacementRequest
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
@@ -685,7 +685,7 @@ class API:
         min_nodes: int = 1,
     ) -> Instance:
         model_card = await ModelCard.load(model_id)
-        command = PlaceInstance(
+        request = PlacementRequest(
             model_card=model_card,
             sharding=sharding,
             instance_meta=instance_meta,
@@ -694,7 +694,7 @@ class API:
 
         def place(topology: Topology) -> Mapping[InstanceId, Instance]:
             return get_instance_placements(
-                command,
+                request,
                 node_memory=self.state.node_memory,
                 node_network=self.state.node_network,
                 node_backends=self.state.node_backends,
@@ -765,7 +765,7 @@ class API:
         for sharding, instance_meta, min_nodes in instance_combinations:
             try:
                 placements = get_instance_placements(
-                    PlaceInstance(
+                    PlacementRequest(
                         model_card=model_card,
                         sharding=sharding,
                         instance_meta=instance_meta,

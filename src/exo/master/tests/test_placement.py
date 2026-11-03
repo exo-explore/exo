@@ -17,7 +17,6 @@ from exo.master.tests.conftest import (
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
-from exo.shared.types.commands import PlaceInstance
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import (
     InstanceCreated,
@@ -26,6 +25,7 @@ from exo.shared.types.events import (
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.multiaddr import Multiaddr
+from exo.shared.types.placement import PlacementRequest
 from exo.shared.types.profiling import (
     MemoryUsage,
     NetworkInterfaceInfo,
@@ -100,9 +100,8 @@ def _metal_only(
     return {node_id: [Backend.MlxMetal] for node_id in node_memory}
 
 
-def place_instance_command(model_card: ModelCard) -> PlaceInstance:
-    return PlaceInstance(
-        command_id=CommandId(),
+def place_instance_command(model_card: ModelCard) -> PlacementRequest:
+    return PlacementRequest(
         model_card=model_card,
         sharding=Sharding.Pipeline,
         instance_meta=InstanceMeta.MlxRing,
@@ -606,10 +605,9 @@ def test_tensor_rdma_backend_connectivity_matrix(
     topology.add_connection(Connection(source=node_b, sink=node_a, edge=ethernet_conn))
     topology.add_connection(Connection(source=node_c, sink=node_b, edge=ethernet_conn))
 
-    cic = PlaceInstance(
+    cic = PlacementRequest(
         sharding=Sharding.Tensor,
         instance_meta=InstanceMeta.MlxJaccl,
-        command_id=CommandId(),
         model_card=model_card,
         min_nodes=1,
     )
@@ -737,10 +735,9 @@ def test_place_mlx_jaccl_rejects_when_a_node_has_rdma_ctl_disabled(
         node_b: NodeRdmaCtlStatus(enabled=True),
         node_c: NodeRdmaCtlStatus(enabled=False),
     }
-    cic = PlaceInstance(
+    cic = PlacementRequest(
         sharding=Sharding.Tensor,
         instance_meta=InstanceMeta.MlxJaccl,
-        command_id=CommandId(),
         model_card=model_card,
         min_nodes=3,
     )
@@ -777,10 +774,9 @@ def test_place_mlx_jaccl_rejects_when_node_rdma_ctl_missing(model_card: ModelCar
         node_a: NodeRdmaCtlStatus(enabled=True),
         node_b: NodeRdmaCtlStatus(enabled=True),
     }
-    cic = PlaceInstance(
+    cic = PlacementRequest(
         sharding=Sharding.Tensor,
         instance_meta=InstanceMeta.MlxJaccl,
-        command_id=CommandId(),
         model_card=model_card,
         min_nodes=3,
     )
@@ -1168,10 +1164,9 @@ def test_mlx_jaccl_rejects_cuda_only_cycle(model_card: ModelCard):
     }
     node_backends = {n: [Backend.MlxCuda] for n in (node_a, node_b, node_c)}
 
-    cic = PlaceInstance(
+    cic = PlacementRequest(
         sharding=Sharding.Tensor,
         instance_meta=InstanceMeta.MlxJaccl,
-        command_id=CommandId(),
         model_card=model_card.model_copy(
             update={
                 "backends": [Backend.MlxMetal, Backend.MlxCuda],

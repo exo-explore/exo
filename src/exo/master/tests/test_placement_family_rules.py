@@ -15,8 +15,8 @@ from exo.shared.constants import RESOURCES_DIR
 from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
-from exo.shared.types.commands import PlaceInstance
-from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.common import NodeId
+from exo.shared.types.placement import PlacementRequest
 from exo.shared.types.topology import Connection
 from exo.shared.types.worker.instances import InstanceMeta
 from exo.shared.types.worker.shards import Sharding
@@ -41,8 +41,7 @@ def _place(card: ModelCard, sharding: Sharding, min_nodes: int) -> int:
         Connection(source=b, sink=a, edge=create_socket_connection(2))
     )
     node_memory = {n: create_node_memory(_TB) for n in (a, b)}
-    command = PlaceInstance(
-        command_id=CommandId(),
+    command = PlacementRequest(
         model_card=card,
         sharding=sharding,
         instance_meta=InstanceMeta.MlxRing,
@@ -111,8 +110,7 @@ def _place_tensor_on_ring(card: ModelCard, nodes: int) -> int:
                     edge=create_socket_connection(2 * index + port + 1),
                 )
             )
-    command = PlaceInstance(
-        command_id=CommandId(),
+    command = PlacementRequest(
         model_card=card,
         sharding=Sharding.Tensor,
         instance_meta=InstanceMeta.MlxRing,
