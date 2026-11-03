@@ -134,6 +134,9 @@ class Worker:
         self._awaiting_state_of: SessionId | None = None
         # The session of the last state snapshot applied
         self._snapshot_session: SessionId | None = None
+        # Cleared once the node announces it is leaving: what it reports after that (its info,
+        # its connections) would add it back to the cluster
+        self._reporting = True
 
     async def run(self):
         logger.info("Starting Worker")
@@ -168,7 +171,13 @@ class Worker:
                 self._gathered[type(info)] = info
                 await self._send_info(info)
 
+    def stop_reporting(self) -> None:
+        """Stop telling the cluster about this node, which is leaving it."""
+        self._reporting = False
+
     async def _send_info(self, info: GatheredInfo) -> None:
+        if not self._reporting:
+            return
         await self.event_sender.send(
             NodeGatheredInfo(
                 node_id=self.node_id,
@@ -612,7 +621,7 @@ class Worker:
                     # nonsense multiaddr
                     else Multiaddr(address=f"/ip6/{ip}/tcp/{self.api_port}"),
                 )
-                if edge not in edges:
+                if edge not in edges and self._reporting:
                     logger.debug(f"ping discovered {edge=}")
                     await self.event_sender.send(
                         TopologyEdgeCreated(
