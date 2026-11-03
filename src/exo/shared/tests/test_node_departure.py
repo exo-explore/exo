@@ -238,8 +238,10 @@ async def test_a_departed_node_leaves_no_download_entries_behind() -> None:
         async with anyio.create_task_group() as tg:
             tg.start_soon(coordinator.run)
             tg.start_soon(master)
-            # The coordinator reports what is on disk as the node starts
-            await until(lambda: NODE in cluster.downloads)
+            # The coordinator scans what is on disk as the node starts. Nothing is, so the
+            # state lists nothing for the node
+            await until(lambda: model_status() is not None)
+            assert NODE not in cluster.downloads
 
             await run_until_stopped(node, [])
             # The coordinator handles the request: offline, the download fails
