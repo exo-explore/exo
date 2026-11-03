@@ -117,6 +117,13 @@ const FREEZE_RIDDEN_OUT: Duration = Duration::from_secs(12);
 pub const GRACE: Duration =
     Duration::from_secs(HOLD_OFF.as_secs() + REJOIN.as_secs() + FREEZE_RIDDEN_OUT.as_secs());
 
+/// How long a peer must stay Alive for its earlier losses to stop counting toward `GRACE`. A peer
+/// lost again sooner adds its new time away to the earlier one, so a link that drops every few
+/// seconds ends Gone once it has been away for `GRACE` in all, instead of never (each return
+/// used to start the grace again). The same length as `GRACE`: a peer back for as long as this
+/// node waits for a lost one is steady, and its next loss gets a full grace.
+pub const STEADY_AFTER: Duration = GRACE;
+
 /// How long a peer whose transport is up may go without a report from exo on it before it is
 /// Suspect(Wedged) (T_WEDGE in the design). Nodes report about once a second, and a busy
 /// node's reports were up to 6.3 s apart: about 5 times that, so a slow exo isn't taken for a
@@ -276,6 +283,9 @@ struct Peer {
     next_probe: Option<Instant>,
     /// When exo on it last reported; `None` until it first does, and then it isn't checked
     last_heard: Option<Instant>,
+    /// Its time Suspect before the current state, since it was last Alive for `STEADY_AFTER`:
+    /// it counts toward `GRACE` with the current time Suspect
+    away_before: Duration,
 }
 
 #[derive(Debug)]
@@ -461,7 +471,11 @@ impl Membership {
             .iter()
             .filter_map(|(&node, peer)| match peer.state {
                 MemberState::Suspect(reason)
-                    if now.awake >= timed_from(peer.since.awake) + self.grace =>
+                    if peer.away_before
+                        + now
+                            .awake
+                            .saturating_duration_since(timed_from(peer.since.awake))
+                        >= self.grace =>
                 {
                     Some((node, MemberState::Gone(reason)))
                 }
@@ -571,6 +585,7 @@ impl Membership {
                     opened_while_probing: false,
                     next_probe: None,
                     last_heard: None,
+                    away_before: Duration::ZERO,
                 },
             );
             return Some(self.member(node));
@@ -609,7 +624,25 @@ impl Membership {
 
     /// Moves a known peer to `state` and returns the change
     fn set(&mut self, node: ZenohId, state: MemberState, now: Now) -> Member {
+        let resumed_at = self.resumed_at;
         if let Some(peer) = self.peers.get_mut(&node) {
+            let held = now.awake.saturating_duration_since(peer.since.awake);
+            match (peer.state, state) {
+                // Back from Suspect: its time away counts toward a next loss's grace
+                (MemberState::Suspect(_), MemberState::Alive) => {
+                    let from = resumed_at.map_or(peer.since.awake, |at| peer.since.awake.max(at));
+                    peer.away_before += now.awake.saturating_duration_since(from);
+                }
+                // Lost after a steady while: a full grace again
+                (MemberState::Alive, MemberState::Suspect(_)) if held >= STEADY_AFTER => {
+                    peer.away_before = Duration::ZERO;
+                }
+                // Gone, or back from Gone: whatever came before no longer counts
+                (_, MemberState::Gone(_)) | (MemberState::Gone(_), _) => {
+                    peer.away_before = Duration::ZERO;
+                }
+                _ => {}
+            }
             peer.state = state;
             peer.since = now;
             peer.next_probe = None;
@@ -1245,6 +1278,42 @@ mod tests {
     }
 
     #[test]
+    fn a_flapping_node_is_gone_once_it_has_been_away_for_the_grace_in_all() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        // Away 4 s, back 1 s, again and again: each return used to start the grace again
+        let mut changes = Vec::new();
+        let mut cycles = 0;
+        while !changes.contains(&gone(1, Reason::Disconnected)) && cycles < 20 {
+            cycles += 1;
+            changes.extend(state(lose(&mut membership, clock.now, 1)));
+            changes.extend(run_for(&mut membership, &mut clock, Duration::from_secs(4)));
+            changes.extend(state(membership.connection_opened(zid(1), clock.now)));
+            changes.extend(run_for(&mut membership, &mut clock, TICK));
+        }
+        // Gone in the cycle in which its time away reached GRACE (30 s: the 8th)
+        assert_eq!(cycles, 8, "{changes:?}");
+    }
+
+    #[test]
+    fn a_node_lost_now_and_then_gets_a_full_grace_each_time() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        for _ in 0..5 {
+            lose(&mut membership, clock.now, 1);
+            assert_eq!(run_for(&mut membership, &mut clock, GRACE - TICK), vec![]);
+            membership.connection_opened(zid(1), clock.now);
+            run_for(&mut membership, &mut clock, STEADY_AFTER);
+        }
+        assert_eq!(
+            states(membership.snapshot().members),
+            vec![alive(OWN), alive(1)]
+        );
+    }
+
+    #[test]
     fn a_node_back_before_the_grace_is_never_gone() {
         let mut clock = Clock::new();
         let mut membership = membership(&clock);
@@ -1252,10 +1321,28 @@ mod tests {
         lose(&mut membership, clock.now, 1);
         run_for(&mut membership, &mut clock, GRACE - TICK);
         membership.token_put(zid(1), clock.now);
+        assert_eq!(run_for(&mut membership, &mut clock, STEADY_AFTER), vec![]);
 
-        // Lost again: the grace starts over
+        // Lost again after a steady while: the grace starts over
         lose(&mut membership, clock.now, 1);
         assert_eq!(run_for(&mut membership, &mut clock, GRACE - TICK), vec![]);
+    }
+
+    #[test]
+    fn a_node_lost_again_soon_after_it_was_back_has_only_the_rest_of_the_grace() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        lose(&mut membership, clock.now, 1);
+        run_for(&mut membership, &mut clock, GRACE - TICK * 5);
+        membership.connection_opened(zid(1), clock.now);
+        run_for(&mut membership, &mut clock, TICK);
+        lose(&mut membership, clock.now, 1);
+        assert_eq!(run_for(&mut membership, &mut clock, TICK * 4), vec![]);
+        assert_eq!(
+            run_for(&mut membership, &mut clock, TICK),
+            vec![gone(1, Reason::Disconnected)]
+        );
     }
 
     #[test]
@@ -1525,15 +1612,14 @@ mod tests {
         for n in 1..total {
             connected_peer(&mut membership, &clock, n);
         }
-        for n in 1..=(away + gone) {
+        // The last `gone` peers were lost a grace ago, the first `away` ones just now
+        for n in (away + 1)..=(away + gone) {
             lose(&mut membership, clock.now, n);
         }
-        run_for(&mut membership, &mut clock, GRACE - TICK);
+        run_for(&mut membership, &mut clock, GRACE);
         for n in 1..=away {
-            membership.token_put(zid(n), clock.now);
             lose(&mut membership, clock.now, n);
         }
-        run_for(&mut membership, &mut clock, TICK);
         let snapshot = membership.snapshot();
         let count = |wanted: fn(MemberState) -> bool| {
             snapshot
@@ -1679,6 +1765,8 @@ mod tests {
         assert!(SPLIT_HOLD >= Duration::from_secs(90) * 3);
         // Forgetting a lost node ends the hold for its work: never before the hold ends
         assert!(FORGET_AFTER >= SPLIT_HOLD);
+        // Back for as long as a lost node is waited for: steady
+        assert_eq!(STEADY_AFTER, GRACE);
         assert_eq!(PROBE_FIRST_ASK_DELAY, ZENOH_ROUTES_RECOMPUTED_AFTER * 3);
         assert!(
             PROBE_FIRST_ASK_DELAY * 4 <= PROBE_TIMEOUT,

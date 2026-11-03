@@ -316,6 +316,8 @@ async def test_membership_and_its_fake_both_tell_readers_of_reachability() -> No
         assert results == [PEER]
 
     fake = FakeReachability(ME)
+    assert not fake.is_reachable(PEER), "never heard of, as with the real one"
+    fake.reach(PEER)
     assert fake.is_reachable(PEER)
     fake_results: list[NodeId] = []
     async with create_task_group() as tg:
@@ -328,7 +330,7 @@ async def test_membership_and_its_fake_both_tell_readers_of_reachability() -> No
         await fake.lose(PEER)
     assert fake_results == [PEER]
     assert fake.is_reachable(ME)
-    fake.regain(PEER)
+    fake.reach(PEER)
     assert fake.is_reachable(PEER)
 
 
