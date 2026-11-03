@@ -30,8 +30,8 @@ pub enum PyFromSwarm {
 impl From<FromSwarm> for PyFromSwarm {
     fn from(value: FromSwarm) -> Self {
         match value {
-            FromSwarm::Discovered {} => Self::Connection { connected: true },
-            FromSwarm::Expired {} => Self::Connection { connected: false },
+            FromSwarm::Discovered { .. } => Self::Connection { connected: true },
+            FromSwarm::Expired { .. } => Self::Connection { connected: false },
             FromSwarm::Message { topic, data } => Self::Message {
                 topic: topic,
                 data: data.pybytes(),

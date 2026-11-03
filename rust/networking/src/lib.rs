@@ -10,6 +10,7 @@ pub use zenoh::{Config, config::ZenohId};
 use crate::discovery::Discovery;
 
 pub mod discovery;
+pub mod membership;
 pub mod swarm;
 
 pub fn is_valid_zid(identity: &str) -> bool {
