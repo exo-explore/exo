@@ -307,6 +307,12 @@ class DeleteInstanceResponse(BaseModel):
     instance_id: InstanceId
 
 
+class PromoteMasterResponse(BaseModel):
+    message: str
+    command_id: CommandId
+    target_node_id: NodeId
+
+
 class AwaitInstanceReadyMessage(BaseModel):
     type: Literal["ready"] = "ready"
     instance: Instance
