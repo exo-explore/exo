@@ -6,6 +6,7 @@
     topologyData,
     downloads,
     downloadActivity,
+    instances,
     nodeDisk,
     refreshState,
     lastUpdate as lastUpdateStore,
@@ -18,6 +19,8 @@
     getDownloadTag,
     extractModelIdFromDownload,
     extractShardMetadata,
+    deleteDownloadQuestion,
+    isModelRunningOnNode,
   } from "$lib/utils/downloads";
   import {
     describeStall,
@@ -408,8 +411,13 @@
             : null;
     if (
       !confirm(
-        `Delete ${name}${size ? ` (${size})` : ""} from ${col.label}?\n\n` +
-          "You'll need to download it again to run it on this device.",
+        deleteDownloadQuestion({
+          modelName: name,
+          deviceName: col.label,
+          size,
+          // Deleting doesn't stop it: say so, it would download again
+          running: isModelRunningOnNode(instances(), col.nodeId, row.modelId),
+        }),
       )
     )
       return;

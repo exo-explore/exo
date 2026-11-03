@@ -209,3 +209,45 @@ export function indexModelDownloads(
   }
   return index;
 }
+
+/**
+ * Whether a model runs (or is starting) on a node: an instance of it has a
+ * runner there. Instances are tagged: { MlxRingInstance: { shardAssignments } }.
+ */
+export function isModelRunningOnNode(
+  instances: Record<string, unknown>,
+  nodeId: string,
+  modelId: string,
+): boolean {
+  for (const wrapped of Object.values(instances)) {
+    if (!wrapped || typeof wrapped !== "object") continue;
+    const unwrapped = unwrapTagged(wrapped as Record<string, unknown>);
+    if (!unwrapped) continue;
+    const assignments = unwrapped[1].shardAssignments as
+      | { modelId?: string; nodeToRunner?: Record<string, string> }
+      | undefined;
+    if (assignments?.modelId === modelId && assignments.nodeToRunner?.[nodeId])
+      return true;
+  }
+  return false;
+}
+
+/** What to ask before deleting a model's files from a device. */
+export function deleteDownloadQuestion(options: {
+  modelName: string;
+  deviceName: string;
+  /** e.g. "16 GB", or "6.8 GB downloaded" */
+  size: string | null;
+  running: boolean;
+}): string {
+  const { modelName, deviceName, size, running } = options;
+  const question = `Delete ${modelName}${size ? ` (${size})` : ""} from ${deviceName}?`;
+  if (running) {
+    return (
+      `${question}\n\n` +
+      `It's running on ${deviceName}. It keeps running from memory for now, ` +
+      `and ${deviceName} will download it again the next time it starts.`
+    );
+  }
+  return `${question}\n\nYou'll need to download it again to run it on this device.`;
+}
