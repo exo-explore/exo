@@ -102,6 +102,11 @@ class NetworkingHandle:
         r"""
         This node's view of the cluster right now: every node it knows of, and the quorum read
         """
+    def forget(self, node: builtins.str) -> None:
+        r"""
+        The coordinator removed `node` from the cluster: it stops counting in the quorum, unless
+        this node still reaches it. Ignored for a node id that isn't valid.
+        """
     def recv(self) -> typing.Awaitable[FromSwarm]: ...
     async def gossipsub_subscribe(self, topic: builtins.str, high_priority: builtins.bool = False) -> builtins.bool:
         r"""

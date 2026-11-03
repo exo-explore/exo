@@ -70,15 +70,31 @@ pub enum FromSwarm {
 /// the snapshot would then wait for the lock with the GIL held, for good. `with` keeps the lock
 /// to the closure; log after it.
 #[derive(Clone)]
-pub struct Members(Arc<Mutex<Membership>>);
+pub struct Members {
+    membership: Arc<Mutex<Membership>>,
+    from_exo: mpsc::UnboundedSender<FromExo>,
+}
+
+/// What exo tells the membership, that only exo knows
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FromExo {
+    /// The coordinator removed the node from the cluster
+    Removed(ZenohId),
+}
 
 impl Members {
     pub fn snapshot(&self) -> Snapshot {
         self.with(|membership| membership.snapshot())
     }
 
+    /// Passes `input` on to the task that drives the membership: it never waits, and never
+    /// takes the lock
+    pub fn tell(&self, input: FromExo) {
+        _ = self.from_exo.send(input);
+    }
+
     fn with<T>(&self, update: impl FnOnce(&mut Membership) -> T) -> T {
-        update(&mut self.0.lock())
+        update(&mut self.membership.lock())
     }
 }
 
@@ -87,6 +103,7 @@ pub struct Swarm {
     session: crate::Session,
     from_client: mpsc::Receiver<ToSwarm>,
     members: Members,
+    from_exo: mpsc::UnboundedReceiver<FromExo>,
 }
 
 impl Swarm {
@@ -101,10 +118,15 @@ impl Swarm {
         grace: Duration,
     ) -> Self {
         let membership = Membership::new(session.z.zid(), grace, Now::read());
+        let (to_membership, from_exo) = mpsc::unbounded_channel();
         Self {
             session,
             from_client,
-            members: Members(Arc::new(Mutex::new(membership))),
+            members: Members {
+                membership: Arc::new(Mutex::new(membership)),
+                from_exo: to_membership,
+            },
+            from_exo,
         }
     }
 
@@ -117,6 +139,7 @@ impl Swarm {
             session,
             mut from_client,
             members,
+            from_exo,
         } = self;
         let stream = async_stream::stream! {
             let mut session = session;
@@ -130,6 +153,7 @@ impl Swarm {
                 session.z.clone(),
                 members,
                 inputs,
+                from_exo,
                 changes_sender,
             )));
             loop {
@@ -180,6 +204,7 @@ async fn drive_membership(
     session: Session,
     members: Members,
     inputs: MembershipInputs,
+    mut from_exo: mpsc::UnboundedReceiver<FromExo>,
     changes: mpsc::UnboundedSender<Member>,
 ) {
     let MembershipInputs {
@@ -243,6 +268,15 @@ async fn drive_membership(
                         Vec::new()
                     }
                 }
+            }
+            Some(input) = from_exo.recv() => {
+                match input {
+                    FromExo::Removed(zid) => {
+                        log::info!("the coordinator removed {zid}");
+                        members.with(|membership| membership.forget(zid));
+                    }
+                }
+                Vec::new()
             }
             token = tokens.recv_async() => {
                 // The session is closed

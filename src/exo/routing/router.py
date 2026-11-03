@@ -190,6 +190,10 @@ class Router:
         """This node's view of the cluster's membership now, from the networking layer"""
         return self._net.members()
 
+    def forget(self, node: NodeId) -> None:
+        """The coordinator removed `node`: the networking layer's quorum read stops counting it"""
+        self._net.forget(node)
+
     async def shutdown(self):
         logger.debug("Shutting down Router")
         self._tg.cancel_tasks()

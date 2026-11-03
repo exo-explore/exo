@@ -5,17 +5,23 @@ probe of nodes whose connection closed, it decides whether each node is Alive, S
 Gone (with the reason), and it owns every liveness timer (see rust/networking/src/membership.rs).
 This module keeps the latest state it reported for the rest of the node to read locally. It
 isn't part of the replicated state: two nodes may disagree for a moment.
+
+It also tells the networking layer what only exo knows, from the cluster's events as this node
+applies them: that the coordinator removed a node (NodeTimedOut, which is also how a quitting
+node's departure arrives), so that the quorum read stops counting it.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Final, Literal, Protocol, final
 
 import exo_rs
-from anyio import BrokenResourceError, ClosedResourceError
+from anyio import BrokenResourceError, ClosedResourceError, create_task_group
 from loguru import logger
 
+from exo.routing.event_router import NodeEventReceiver
 from exo.shared.types.common import NodeId
+from exo.shared.types.events import IndexedEvent, NodeTimedOut
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.pydantic_ext import FrozenModel
 
@@ -132,6 +138,18 @@ class Reachability(Protocol):
         ...
 
 
+class NetworkingMembership(Protocol):
+    """The networking layer's membership, as exo reads it and tells it what only exo knows (the
+    router, over exo_rs.NetworkingHandle)"""
+
+    def members(self) -> exo_rs.MembershipSnapshot: ...
+
+    def forget(self, node: NodeId) -> None:
+        """The coordinator removed the node: it stops counting in the quorum (unless this node
+        still reaches it)"""
+        ...
+
+
 @final
 class Membership(Reachability):
     """The latest state of each node, as this node's networking reported it"""
@@ -141,20 +159,25 @@ class Membership(Reachability):
         node_id: NodeId,
         *,
         member_receiver: Receiver[Member],
-        snapshot: Callable[[], exo_rs.MembershipSnapshot],
+        networking: NetworkingMembership,
+        cluster_events: NodeEventReceiver,
     ):
         self.node_id = node_id
         self._member_receiver = member_receiver
-        self._snapshot = snapshot
+        self._networking = networking
+        self._cluster_events = cluster_events
         self._latest: dict[NodeId, Member] = {}
         self._watchers: list[Sender[NodeId]] = []
         self._change_senders: list[Sender[MembershipChange]] = []
 
     async def run(self) -> None:
         try:
-            with self._member_receiver as members:
-                async for member in members:
-                    await self._update(member)
+            async with create_task_group() as tg:
+                tg.start_soon(self._follow_cluster)
+                with self._member_receiver as members:
+                    async for member in members:
+                        await self._update(member)
+                tg.cancel_scope.cancel()
         finally:
             # Those reading what it hands out see their stream end with it
             for sender in [*self._watchers, *self._change_senders]:
@@ -183,11 +206,23 @@ class Membership(Reachability):
 
     def view(self) -> MembershipView:
         """Every node this node knows of, and the quorum read, from the networking layer now"""
-        return MembershipView.from_snapshot(self.node_id, self._snapshot())
+        return MembershipView.from_snapshot(self.node_id, self._networking.members())
 
     def quorum(self) -> Quorum:
         """How much of the cluster this node reaches now"""
         return self.view().quorum
+
+    async def _follow_cluster(self) -> None:
+        """Tells the networking layer which nodes the coordinator removed, as this node applies
+        the cluster's events. Every node does, so every node's quorum read leaves them out: a
+        node that restarts comes back under a new id, and its old one must stop counting."""
+        with self._cluster_events as events:
+            async for item in events:
+                match item:
+                    case IndexedEvent(event=NodeTimedOut(node_id=node_id)):
+                        self._networking.forget(node_id)
+                    case _:
+                        pass
 
     async def _update(self, member: Member) -> None:
         previous = self._latest.get(member.node_id)

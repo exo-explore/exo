@@ -10,7 +10,9 @@ from fastapi.testclient import TestClient
 
 from exo.api.main import API
 from exo.routing.membership import Member, Membership
+from exo.routing.tests.fake_networking import FakeNetworking
 from exo.shared.types.common import NodeId
+from exo.shared.types.events import IndexedEvent, StateSnapshot
 from exo.utils.channels import channel
 
 SINCE = 1_800_000_000.0
@@ -33,9 +35,13 @@ def snapshot() -> MembershipSnapshot:
 
 def served_membership() -> object:
     _, receiver = channel[Member]()
+    _, cluster_events = channel[IndexedEvent | StateSnapshot]()
     api = object.__new__(API)
     api.membership = Membership(
-        NodeId("a1"), member_receiver=receiver, snapshot=snapshot
+        NodeId("a1"),
+        member_receiver=receiver,
+        networking=FakeNetworking(snapshot),
+        cluster_events=cluster_events,
     )
     app = FastAPI()
     app.get("/membership")(api.get_membership)

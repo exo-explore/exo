@@ -120,7 +120,8 @@ class Node:
         membership = Membership(
             node_id,
             member_receiver=router.receiver(topics.MEMBERSHIP),
-            snapshot=router.members,
+            networking=router,
+            cluster_events=event_router.receiver(),
         )
 
         logger.info(f"Starting node {node_id}")

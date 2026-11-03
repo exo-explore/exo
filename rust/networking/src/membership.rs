@@ -8,7 +8,7 @@
 //!   (unknown) ------------------------------------------------------> Alive
 //!   Alive -- token deleted, no connection | probe unanswered -------> Suspect(Disconnected)
 //!   Alive -- transport up, no report from exo on it for WEDGE_TIMEOUT -> Suspect(Wedged)
-//!   Alive | Suspect -- it announced that it is leaving --------------> Gone(Left)
+//!   Alive | Suspect -- it announced that it is leaving --------------> Gone(Left), forgotten
 //!   Suspect(Disconnected) -- token put | connection opened | probe answered -> Alive
 //!   Suspect(Wedged) -- a report -------------------------------------> Alive
 //!   Suspect -- Suspect for GRACE ------------------------------------> Gone(same reason)
@@ -19,6 +19,11 @@
 //! A loss is undone by the kind of signal that showed it: a lost transport by the transport,
 //! a wedged exo by a report from it. Each change is reported once, whichever input shows it
 //! first.
+//!
+//! The quorum read counts this node and every peer it knows, so a peer stops counting when it is
+//! forgotten: when it leaves, when the coordinator removes it (`forget`, unless this node still
+//! reaches it), and when it has been Gone for [`FORGET_AFTER`]. Otherwise every restart of a
+//! node, which comes back with a new id, would count as one more node for good.
 //!
 //! The liveliness token is the main signal, but in a cluster of three or more zenoh can keep
 //! the token of a node that crashed (or lost power, or was cut off) for good. So a closed
@@ -131,6 +136,12 @@ pub const WEDGE_TIMEOUT: Duration = Duration::from_secs(30);
 /// `MINORITY_HOLD_LIMIT`.
 pub const SPLIT_HOLD: Duration = Duration::from_secs(5 * 60);
 
+/// How long a peer is Gone before it no longer counts in the quorum read. Forgetting it makes
+/// this side of a split a majority of fewer nodes, which ends the hold for its work, so it is
+/// the split hold: never sooner, or the hold would end early. A peer the coordinator removed is
+/// forgotten at once (`forget`), and one that left at once (`left`).
+pub const FORGET_AFTER: Duration = SPLIT_HOLD;
+
 // ---- States --------------------------------------------------------------------------------
 
 /// Why a node isn't Alive
@@ -200,8 +211,7 @@ pub struct Snapshot {
     pub quorum: Quorum,
     /// The Alive peers, plus this node unless it is Resuming
     pub reachable: usize,
-    /// The nodes counted in the quorum: this node and every peer seen Alive, except those that
-    /// left or were forgotten
+    /// The nodes counted in the quorum: this node and every peer it knows (see `FORGET_AFTER`)
     pub last_known: usize,
 }
 
@@ -231,7 +241,7 @@ pub struct Membership {
     own_state: MemberState,
     own_since: SystemTime,
     grace: Duration,
-    /// Every peer ever seen Alive, unless forgotten since
+    /// Every peer seen Alive, until it is forgotten (see `FORGET_AFTER`)
     peers: BTreeMap<ZenohId, Peer>,
     last_tick: Now,
     /// When this node's latest stall stops counting: until then it is Resuming, and a peer's
@@ -342,11 +352,14 @@ impl Membership {
         std::mem::take(&mut self.probes)
     }
 
-    /// The node said it is leaving (a graceful quit): it is Gone at once, without a grace.
+    /// The node said it is leaving (a graceful quit): it is Gone at once, without a grace, and
+    /// forgotten (if it comes back, it is new).
     pub fn left(&mut self, node: ZenohId, now: Now) -> Option<Member> {
-        let peer = self.peers.get(&node)?;
-        (peer.state != MemberState::Gone(Reason::Left))
-            .then(|| self.set(node, MemberState::Gone(Reason::Left), now))
+        self.peers.contains_key(&node).then(|| {
+            let change = self.set(node, MemberState::Gone(Reason::Left), now);
+            self.peers.remove(&node);
+            change
+        })
     }
 
     /// exo on the node reported (its periodic node info). Only a report undoes a wedge.
@@ -360,10 +373,16 @@ impl Membership {
         .then(|| self.set(node, MemberState::Alive, now))
     }
 
-    /// The node was removed from the cluster (by the coordinator): it no longer counts in the
-    /// quorum, and if it comes back it is new.
+    /// The coordinator removed the node from the cluster: it no longer counts in the quorum, and
+    /// if it comes back it is new. A node this node still reaches stays (it counts again).
     pub fn forget(&mut self, node: ZenohId) {
-        self.peers.remove(&node);
+        if self
+            .peers
+            .get(&node)
+            .is_some_and(|peer| peer.state != MemberState::Alive)
+        {
+            self.peers.remove(&node);
+        }
     }
 
     /// Called every `TICK`: notices this node's own stalls, and peers that are Suspect for
@@ -418,6 +437,16 @@ impl Membership {
             due.into_iter()
                 .map(|(node, state)| self.set(node, state, now)),
         );
+
+        // A peer Gone for FORGET_AFTER (not counting this node's stalls) no longer counts
+        let resumed_at = self.resumed_at;
+        self.peers.retain(|_, peer| {
+            let MemberState::Gone(_) = peer.state else {
+                return true;
+            };
+            let from = resumed_at.map_or(peer.since.monotonic, |at| peer.since.monotonic.max(at));
+            now.monotonic < from + FORGET_AFTER
+        });
 
         // Ask again, every REPROBE_INTERVAL, each node Alive without a connection of its own
         let mut ask = Vec::new();
@@ -477,11 +506,7 @@ impl Membership {
     }
 
     fn last_known(&self) -> usize {
-        1 + self
-            .peers
-            .values()
-            .filter(|peer| peer.state != MemberState::Gone(Reason::Left))
-            .count()
+        1 + self.peers.len()
     }
 
     /// The transport shows the node: it joins, rejoins, or is back from a lost transport
@@ -1188,6 +1213,88 @@ mod tests {
     }
 
     #[test]
+    fn a_node_that_left_is_forgotten_at_once() {
+        let clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        membership.left(zid(1), clock.now);
+        let snapshot = membership.snapshot();
+        assert_eq!(states(snapshot.members), vec![alive(OWN)]);
+        assert_eq!(snapshot.last_known, 1);
+    }
+
+    #[test]
+    fn the_coordinator_removing_a_node_this_one_reaches_changes_nothing() {
+        let clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        membership.forget(zid(1));
+        assert_eq!(membership.snapshot().last_known, 2);
+    }
+
+    #[test]
+    fn a_pair_stays_a_majority_when_the_other_node_restarts_under_new_ids() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        for (old, new) in [(1, 2), (2, 3), (3, 4)] {
+            // It quits; the coordinator removes it (on announce-leave a quitting node asks it to
+            // at once; otherwise its silence timeout does); it comes back with a new id
+            lose(&mut membership, clock.now, old);
+            run_for(&mut membership, &mut clock, Duration::from_secs(15));
+            membership.forget(zid(old));
+            connected_peer(&mut membership, &clock, new);
+            let snapshot = membership.snapshot();
+            assert_eq!(
+                (snapshot.quorum, snapshot.reachable, snapshot.last_known),
+                (Quorum::Majority, 2, 2),
+                "after the restart as node {new}"
+            );
+        }
+    }
+
+    #[test]
+    fn restarts_nobody_removed_stop_counting_once_gone_for_forget_after() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        // The other node of a pair crashes and comes back under a new id, three times, and
+        // nobody removes the old ids (the coordinator is this node, and it didn't)
+        for (old, new) in [(1, 2), (2, 3), (3, 4)] {
+            lose(&mut membership, clock.now, old);
+            run_for(&mut membership, &mut clock, GRACE + TICK);
+            connected_peer(&mut membership, &clock, new);
+        }
+        // Meanwhile the old ids count: 2 of 5 (with the removals a node makes, never)
+        assert_eq!(membership.quorum(), Quorum::Minority);
+        // Once each old id has been Gone for FORGET_AFTER it stops counting
+        run_for(&mut membership, &mut clock, FORGET_AFTER);
+        let snapshot = membership.snapshot();
+        assert_eq!(
+            (snapshot.quorum, snapshot.reachable, snapshot.last_known),
+            (Quorum::Majority, 2, 2)
+        );
+    }
+
+    #[test]
+    fn a_gone_node_counts_until_forget_after() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        lose(&mut membership, clock.now, 1);
+        run_for(&mut membership, &mut clock, GRACE);
+        assert_eq!(membership.quorum(), Quorum::Half);
+        run_for(&mut membership, &mut clock, FORGET_AFTER - TICK);
+        assert_eq!(
+            membership.quorum(),
+            Quorum::Half,
+            "the split hold isn't cut short"
+        );
+        run_for(&mut membership, &mut clock, TICK);
+        assert_eq!(membership.quorum(), Quorum::Majority);
+    }
+
+    #[test]
     fn a_forgotten_node_is_new_when_it_comes_back() {
         let clock = Clock::new();
         let mut membership = membership(&clock);
@@ -1497,6 +1604,8 @@ mod tests {
         // A crash of a node reached only through another is noticed about when a frozen peer is
         assert!(REPROBE_INTERVAL + TICK + PROBE_TIMEOUT <= LEASE + PROBE_TIMEOUT + TICK);
         assert!(SPLIT_HOLD >= Duration::from_secs(90) * 3);
+        // Forgetting a lost node ends the hold for its work: never before the hold ends
+        assert!(FORGET_AFTER >= SPLIT_HOLD);
         assert_eq!(PROBE_FIRST_ASK_DELAY, ZENOH_ROUTES_RECOMPUTED_AFTER * 3);
         assert!(
             PROBE_FIRST_ASK_DELAY * 4 <= PROBE_TIMEOUT,

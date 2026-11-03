@@ -28,8 +28,17 @@ from exo.routing.membership import (
     LossReason as LossReasonName,
 )
 from exo.routing.router import Router
+from exo.routing.tests.fake_networking import FakeNetworking, no_snapshot
 from exo.routing.tests.fake_reachability import FakeReachability
-from exo.shared.types.common import NodeId
+from exo.shared.types.common import NodeId, SessionId, SystemId
+from exo.shared.types.events import (
+    IndexedEvent,
+    InstanceDeleted,
+    NodeTimedOut,
+    StateSnapshot,
+)
+from exo.shared.types.state import State
+from exo.shared.types.worker.instances import InstanceId
 from exo.utils.channels import Receiver, Sender, channel
 
 ME = NodeId("ME")
@@ -52,16 +61,18 @@ def member(
     )
 
 
-def no_snapshot() -> MembershipSnapshot:
-    raise AssertionError("not asked for in this test")
-
-
 @asynccontextmanager
 async def running_membership(
     snapshot: Callable[[], MembershipSnapshot] = no_snapshot,
 ) -> AsyncIterator[tuple[Membership, Sender[Member]]]:
     sender, receiver = channel[Member]()
-    membership = Membership(ME, member_receiver=receiver, snapshot=snapshot)
+    _, cluster_events = channel[IndexedEvent | StateSnapshot]()
+    membership = Membership(
+        ME,
+        member_receiver=receiver,
+        networking=FakeNetworking(snapshot),
+        cluster_events=cluster_events,
+    )
     async with create_task_group() as tg:
         tg.start_soon(membership.run)
         yield membership, sender
@@ -335,3 +346,41 @@ async def test_the_quorum_read_has_split_sides_values() -> None:
     snapshot = snapshot_of([own], Quorum.Half, 1, 2)
     async with running_membership(snapshot) as (membership, _):
         assert membership.quorum() == "Half"
+
+
+# ---- What the cluster's events tell the networking layer ----
+
+
+async def test_a_node_the_coordinator_removed_stops_counting_in_the_quorum() -> None:
+    """A node that restarts comes back under a new id: its old one must stop counting, or a
+    healthy pair reads Half, then Minority. The coordinator removes it (NodeTimedOut, which is
+    also how a quitting node's departure arrives), and every node then forgets it."""
+    networking = FakeNetworking()
+    members, member_receiver = channel[Member]()
+    events, event_receiver = channel[IndexedEvent | StateSnapshot]()
+    membership = Membership(
+        ME,
+        member_receiver=member_receiver,
+        networking=networking,
+        cluster_events=event_receiver,
+    )
+    async with create_task_group() as tg:
+        tg.start_soon(membership.run)
+        await events.send(IndexedEvent(idx=0, event=NodeTimedOut(node_id=PEER)))
+        await events.send(
+            IndexedEvent(
+                idx=1, event=InstanceDeleted(instance_id=InstanceId("an-instance"))
+            )
+        )
+        await events.send(
+            StateSnapshot(
+                session=SessionId(master_node_id=OTHER, election_clock=1),
+                requester=SystemId(),
+                state=State(),
+            )
+        )
+        await events.send(IndexedEvent(idx=2, event=NodeTimedOut(node_id=OTHER)))
+        await settle()
+        members.close()
+        events.close()
+    assert networking.forgotten == [PEER, OTHER]

@@ -8,7 +8,7 @@ use futures_lite::{Stream, StreamExt as _};
 use networking::membership::{
     GRACE, Member, MemberState, Quorum, Reason, SPLIT_HOLD, Snapshot, WEDGE_TIMEOUT,
 };
-use networking::swarm::{FromSwarm, Members, Swarm, ToSwarm, create_swarm};
+use networking::swarm::{FromExo, FromSwarm, Members, Swarm, ToSwarm, create_swarm};
 use networking::{Session, is_valid_zid};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -291,6 +291,14 @@ impl PyNetworkingHandle {
         // Read without the GIL: the membership's own thread may hold the lock for a moment,
         // and must never wait for a thread that waits for it with the GIL held
         py.detach(|| self.members.snapshot()).into()
+    }
+
+    /// The coordinator removed `node` from the cluster: it stops counting in the quorum, unless
+    /// this node still reaches it. Ignored for a node id that isn't valid.
+    pub fn forget(&self, node: &str) {
+        if let Ok(zid) = node.parse() {
+            self.members.tell(FromExo::Removed(zid));
+        }
     }
 
     #[gen_stub(override_return_type(

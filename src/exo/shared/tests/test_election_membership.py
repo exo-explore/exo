@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 import anyio
 import pytest
 from anyio import create_task_group, fail_after
-from exo_rs import MembershipSnapshot
 
 from exo.routing.membership import (
     LossReason,
@@ -18,6 +17,7 @@ from exo.routing.membership import (
     MembershipChange,
     MemberState,
 )
+from exo.routing.tests.fake_networking import FakeNetworking
 from exo.shared.election import (
     Election,
     ElectionMessage,
@@ -26,6 +26,7 @@ from exo.shared.election import (
 )
 from exo.shared.types.commands import ForwarderCommand
 from exo.shared.types.common import NodeId
+from exo.shared.types.events import IndexedEvent, StateSnapshot
 from exo.utils.channels import Receiver, Sender, channel
 
 ME = NodeId("ME")
@@ -110,18 +111,16 @@ class Harness:
         return sorted({message.clock for message in self.outbound.collect()})
 
 
-def no_snapshot() -> MembershipSnapshot:
-    raise AssertionError("elections don't read the snapshot")
-
-
 @asynccontextmanager
 async def election_on_membership() -> AsyncIterator[Harness]:
     """An election fed by a running Membership, as on a node"""
     member_tx, member_rx = channel[Member]()
+    _, cluster_events = channel[IndexedEvent | StateSnapshot]()
     membership = Membership(
         ME,
         member_receiver=member_rx,
-        snapshot=no_snapshot,
+        networking=FakeNetworking(),
+        cluster_events=cluster_events,
     )
     em_out_tx, em_out_rx = channel[ElectionMessage]()
     em_in_tx, em_in_rx = channel[ElectionMessage]()
