@@ -9,8 +9,10 @@
     nodeThunderboltBridge,
     nodeRdmaCtl,
     nodeIdentities,
+    nodeHeardAt,
     type NodeInfo,
   } from "$lib/stores/app.svelte";
+  import { DEVICE_SILENCE_MS } from "$lib/utils/instance_health";
 
   interface Props {
     class?: string;
@@ -36,6 +38,14 @@
   const tbBridgeData = $derived(nodeThunderboltBridge());
   const rdmaCtlData = $derived(nodeRdmaCtl());
   const identitiesData = $derived(nodeIdentities());
+  const heardAtData = $derived(nodeHeardAt());
+
+  // A device that stopped reporting (asleep, quit, crashed, or the old
+  // identity of a device that restarted) until the cluster removes it
+  function isNotResponding(nodeId: string): boolean {
+    const heardAt = heardAtData[nodeId];
+    return heardAt !== undefined && Date.now() - heardAt >= DEVICE_SILENCE_MS;
+  }
 
   function getNodeLabel(nodeId: string): string {
     const node = data?.nodes?.[nodeId];
@@ -589,11 +599,12 @@
       const screenFill = "rgba(0,20,40,0.9)";
       const glowColor = exoYellow(0.3);
 
+      const notResponding = isNotResponding(nodeInfo.id);
       const nodeG = nodesGroup
         .append("g")
         .attr("class", "graph-node")
         .style("cursor", onNodeClick ? "pointer" : "default")
-        .style("opacity", isFilteredOut ? 0.5 : 1);
+        .style("opacity", notResponding ? 0.35 : isFilteredOut ? 0.5 : 1);
 
       // Add click and hover handlers - hover just updates state, styling is applied during render
       nodeG
@@ -618,7 +629,7 @@
       nodeG
         .append("title")
         .text(
-          `${friendlyName}\nID: ${nodeInfo.id.slice(-8)}\nMemory: ${formatBytes(ramUsed)}/${formatBytes(ramTotal)}`,
+          `${friendlyName}${notResponding ? " (not responding)" : ""}\nID: ${nodeInfo.id.slice(-8)}\nMemory: ${formatBytes(ramUsed)}/${formatBytes(ramTotal)}`,
         );
 
       if (modelLower === "mac studio") {
@@ -1204,6 +1215,7 @@
     const _hoveredNodeId = hoveredNodeId;
     const _filteredNodes = filteredNodes;
     const _highlightedNodes = highlightedNodes;
+    const _heardAt = heardAtData;
     if (_data) {
       renderGraph();
     }
