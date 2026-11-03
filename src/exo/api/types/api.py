@@ -22,7 +22,9 @@ class ErrorInfo(BaseModel):
     message: str
     type: str
     param: str | None = None
-    code: int
+    # The HTTP status, or for a generation that failed, a stable code saying why (as
+    # OpenAI's "context_length_exceeded"): see GenerationErrorCode
+    code: int | str
 
 
 class ErrorResponse(BaseModel):

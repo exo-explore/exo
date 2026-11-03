@@ -4,7 +4,7 @@ import signal
 import sys
 from dataclasses import dataclass, field
 from os import PathLike
-from typing import Callable, Self, final
+from typing import Callable, Self
 
 import anyio
 from anyio import (
@@ -63,6 +63,12 @@ from exo.worker.runner.diagnostics import (
     RunnerUnknown,
     metal_out_of_memory,
 )
+from exo.worker.runner.failures import (
+    RunnerLostPeersError,
+    RunnerStalledError,
+    RunnerStoppedError,
+    describe_failure,
+)
 
 PREFILL_TIMEOUT_SECONDS = 60
 DECODE_TIMEOUT_SECONDS = 5
@@ -119,11 +125,6 @@ def runner_warmup_timeout(model_card: ModelCard, on_metal: bool) -> float:
         else SLOWEST_CPU_WARMUP_BYTES_PER_SECOND
     )
     return RUNNER_WARMUP_TIMEOUT_BASE + model_card.storage_size.in_bytes / rate
-
-
-@final
-class RunnerStoppedError(Exception):
-    """Why the supervisor stopped a runner that was still running"""
 
 
 @dataclass(frozen=True)
@@ -520,14 +521,16 @@ class RunnerSupervisor:
             while True:
                 await anyio.sleep(RUNNER_WATCH_INTERVAL)
                 if not self.runner_process.is_alive():
-                    await self._check_runner(RuntimeError("Runner found to be dead"))
+                    await self._check_runner(
+                        RunnerStoppedError("Runner found to be dead")
+                    )
                 elif self._lost_its_peers():
                     # MLX gave up on the connection to the other runners of this instance, but
                     # the process lives on, stuck: every request on the instance would hang.
                     # Stopping it fails its requests with an error, and the runner and its
                     # peers are recreated.
                     await self._check_runner(
-                        RunnerStoppedError(
+                        RunnerLostPeersError(
                             "Lost the connection to the instance's other runners"
                         )
                     )
@@ -535,7 +538,7 @@ class RunnerSupervisor:
                     # Stopping it fails its requests with an error; the runner and the
                     # instance's other runners are then recreated.
                     await self._check_runner(
-                        RunnerStoppedError(
+                        RunnerStalledError(
                             f"Runner made no progress for {RUNNER_STALL_TIMEOUT:.0f}s while generating"
                         )
                     )
@@ -622,12 +625,17 @@ class RunnerSupervisor:
             )
         ):
             diagnostics.append(out_of_memory)
+        # The cause, with any traceback, is in the log above; the user gets one sentence
+        error_message = describe_failure(e, diagnostics)
         # Each send yields to the event loop, where the runner's last results can still finish
         # requests (and take them out of in_progress), so walk a copy and skip those.
         for task in list(self.in_progress.values()):
             if task.task_id not in self.in_progress:
                 continue
             if isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
+                logger.warning(
+                    f"Ending request {task.command_id} with: {error_message}"
+                )
                 with anyio.CancelScope(shield=True):
                     await self._event_sender.send(
                         ChunkGenerated(
@@ -635,10 +643,7 @@ class RunnerSupervisor:
                             chunk=ErrorChunk(
                                 model=self.shard_metadata.model_card.model_id,
                                 diagnostics=diagnostics,
-                                error_message=(
-                                    "Runner shutdown before completing command "
-                                    f"({cause})"
-                                ),
+                                error_message=error_message,
                             ),
                         )
                     )

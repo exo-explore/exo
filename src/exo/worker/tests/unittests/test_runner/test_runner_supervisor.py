@@ -5,6 +5,7 @@ import pytest
 
 import exo.worker.runner.supervisor as supervisor_module
 from exo.shared.models.model_cards import ModelId
+from exo.shared.request_errors import generation_error_code
 from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import ChunkGenerated, Event, RunnerStatusUpdated
@@ -95,7 +96,10 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
     assert isinstance(got_chunk, ChunkGenerated)
     assert got_chunk.command_id == task.command_id
     assert isinstance(got_chunk.chunk, ErrorChunk)
-    assert "Runner shutdown before completing command" in got_chunk.chunk.error_message
+    assert got_chunk.chunk.error_message == (
+        "The model stopped before the reply finished: boom."
+    )
+    assert generation_error_code(got_chunk.chunk.error_message) == "model_failed"
 
     assert isinstance(got_status, RunnerStatusUpdated)
     assert isinstance(got_status.runner_status, RunnerFailed)
@@ -392,3 +396,35 @@ async def test_a_runner_out_of_gpu_memory_fails_with_the_cause() -> None:
     assert [type(d) for d in status.runner_status.diagnostics] == [
         RunnerMetalOutOfMemory
     ]
+
+
+@pytest.mark.anyio
+async def test_a_request_never_ends_with_the_runners_traceback() -> None:
+    """A node of the instance quit mid-reply: the runner here raised from MLX's ring. Its
+    requests end with one sentence and a code, and the traceback stays in the log."""
+    event_sender, event_receiver = channel[Event]()
+    supervisor = await _supervisor_of_dead_runner(event_sender)
+    task = _text_generation(supervisor, "a")
+    supervisor.in_progress[task.task_id] = task
+
+    await supervisor._check_runner(  # pyright: ignore[reportPrivateUsage]
+        RunnerTerminationError(
+            exception_type="RuntimeError",
+            exception_message="[ring] connection to a peer was lost",
+            exception_repr="RuntimeError('[ring] connection to a peer was lost')",
+            traceback=(
+                "Traceback (most recent call last):\n"
+                '  File "runner.py", line 1, in main\n'
+                "RuntimeError: [ring] connection to a peer was lost\n"
+            ),
+        )
+    )
+
+    with anyio.fail_after(1):
+        got_chunk = await event_receiver.receive()
+    assert isinstance(got_chunk, ChunkGenerated)
+    assert isinstance(got_chunk.chunk, ErrorChunk)
+    assert got_chunk.chunk.error_message == (
+        "A device serving this model disconnected before the reply finished."
+    )
+    assert generation_error_code(got_chunk.chunk.error_message) == "device_left"
