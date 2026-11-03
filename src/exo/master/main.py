@@ -20,12 +20,17 @@ from exo.routing.event_router import (
     EventRouterBrokenResourceError,
     EventRouterClosedResourceError,
 )
-from exo.routing.membership import MembershipReader, MembershipView, listed_nodes
+from exo.routing.membership import (
+    MembershipReader,
+    MembershipView,
+    instance_is_reachable,
+    listed_nodes,
+)
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_TRACING_ENABLED
 from exo.shared.model_readiness import instance_is_ready, instance_readiness
 from exo.shared.models.model_cards import ModelId
-from exo.shared.request_errors import INSTANCE_GONE_BEFORE_START
+from exo.shared.request_errors import DEVICE_UNREACHABLE, INSTANCE_GONE_BEFORE_START
 from exo.shared.topology import Topology
 from exo.shared.types.chunks import ErrorChunk, ImageChunk
 from exo.shared.types.commands import (
@@ -586,9 +591,14 @@ class Master:
     ) -> InstanceId:
         """The ready instance of the model with the fewest requests in flight.
 
-        Instances that aren't ready (downloading, loading, failed) are left out: the API waits
-        for a model to be ready before sending a request, but with several instances of a
-        model, one may be ready and another not.
+        Instances with a node this node can't reach now, as its membership sees it, are left
+        out: their output can't arrive. The API that sent the request checked the same on its
+        own view; this is the backstop for views that differ. A request whose model has only
+        such instances ends at once.
+
+        So are instances that aren't ready (downloading, loading, failed): the API waits for
+        a model to be ready before sending a request, but with several instances of a model,
+        one may be ready and another not.
         """
         in_flight = {TaskStatus.Pending, TaskStatus.Running}
         of_model = [
@@ -601,15 +611,22 @@ class Master:
             # The API sends a request only for a model it saw an instance of, so the instance
             # was deleted (the model stopped, or a node lost) after the API looked
             raise NoInstanceForModelError(model, INSTANCE_GONE_BEFORE_START)
+        reachable = [
+            instance
+            for instance in of_model
+            if instance_is_reachable(self.membership, instance)
+        ]
+        if not reachable:
+            raise NoInstanceForModelError(model, DEVICE_UNREACHABLE)
         ready = [
             instance.instance_id
-            for instance in of_model
+            for instance in reachable
             if instance_is_ready(instance, self.state.runners)
         ]
         if not ready:
             not_ready = [
                 status
-                for instance in of_model
+                for instance in reachable
                 if (status := instance_readiness(self.state, instance)) is not None
             ]
             raise NoInstanceForModelError(

@@ -153,7 +153,11 @@ from exo.master.placement import (
 )
 from exo.master.placement import place_instance as get_instance_placements
 from exo.routing.event_router import NodeEventReceiver
-from exo.routing.membership import Membership, MembershipView
+from exo.routing.membership import (
+    MembershipReader,
+    MembershipView,
+    instance_is_reachable,
+)
 from exo.routing.wire import WIRE_VERSION, DeviceOnOtherVersion, build_id
 from exo.shared.apply import apply
 from exo.shared.constants import (
@@ -185,6 +189,7 @@ from exo.shared.models.model_cards import (
 )
 from exo.shared.request_errors import (
     DEVICE_LEFT,
+    DEVICE_UNREACHABLE,
     INSTANCE_GONE_BEFORE_START,
     INTERRUPTED,
     MODEL_STOPPED,
@@ -329,6 +334,19 @@ def _require_disaggregation_enabled() -> None:
 
 
 @final
+class ModelUnreachableError(HTTPException):
+    """A 503 for a request whose model's instances all have a device this node can't reach
+    now: sent, it would wait for output that can't arrive"""
+
+    code: GenerationErrorCode = "device_unreachable"
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=HTTPStatus.SERVICE_UNAVAILABLE, detail=DEVICE_UNREACHABLE
+        )
+
+
+@final
 class ModelNotReadyError(HTTPException):
     """A 503 for a request whose model isn't ready to serve"""
 
@@ -394,7 +412,9 @@ class API:
         download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
         election_receiver: Receiver[ElectionMessage],
-        membership: Membership,
+        # This node's own view of which nodes it reaches: requests that need a node it can't
+        # reach end at once
+        membership: MembershipReader,
         # What discovery hears of devices that can't join: they run another version
         devices_on_other_versions: Callable[[], list[DeviceOnOtherVersion]],
     ) -> None:
@@ -491,7 +511,7 @@ class API:
                 message=exc.detail,
                 type=HTTPStatus(exc.status_code).phrase,
                 code=exc.code
-                if isinstance(exc, ModelNotReadyError)
+                if isinstance(exc, (ModelNotReadyError, ModelUnreachableError))
                 else exc.status_code,
             )
         )
@@ -1189,13 +1209,30 @@ class API:
         """
         await self._validate_model_has_any_instance(model_id)
         deadline = anyio.current_time() + MODEL_READY_WAIT_SECONDS
-        while (not_ready := model_readiness(self.state, model_id)) is not None:
+        while (not_ready := self._reachable_model_readiness(model_id)) is not None:
             if not_ready.failed or anyio.current_time() >= deadline:
                 raise ModelNotReadyError(not_ready)
             await anyio.sleep(_MODEL_READY_POLL_SECONDS)
             # It may have been deleted meanwhile
             await self._validate_model_has_any_instance(model_id)
         return model_id
+
+    def _reachable_model_readiness(self, model_id: ModelId) -> NotReady | None:
+        """Whether an instance of the model that this node reaches is ready (see
+        model_readiness). One with a device this node can't reach now (Suspect or Gone in its
+        membership view) can't serve the request, so if every instance has one the request
+        ends at once, with ModelUnreachableError, rather than be sent and wait."""
+        reachable = {
+            instance_id: instance
+            for instance_id, instance in self.state.instances.items()
+            if instance.shard_assignments.model_id == model_id
+            and instance_is_reachable(self.membership, instance)
+        }
+        if not reachable:
+            raise ModelUnreachableError()
+        return model_readiness(
+            self.state.model_copy(update={"instances": reachable}), model_id
+        )
 
     async def _validate_model_has_any_instance(self, model_id: ModelId) -> None:
         if not any(
@@ -2108,6 +2145,7 @@ class API:
                     partial(shutil.rmtree, _OLD_API_EVENT_LOG_DIR, ignore_errors=True)
                 )
                 tg.start_soon(self._apply_state)
+                tg.start_soon(self._end_requests_on_unreachable_nodes)
                 tg.start_soon(self._pause_on_new_election)
                 tg.start_soon(self._cleanup_expired_images)
                 tg.start_soon(self._resend_lost_finishes)
@@ -2191,6 +2229,16 @@ class API:
                     self._mark_accepted(event.task.command_id)
                     if event.task_id not in self.state.tasks:
                         await self._end_request_not_started(event.task)
+                    elif (
+                        instance := self.state.instances.get(event.task.instance_id)
+                    ) is not None and not instance_is_reachable(
+                        self.membership, instance
+                    ):
+                        # The master chose it on its own view; this node can't reach one of
+                        # its devices, so the output couldn't arrive
+                        self._close_streams_for_instance(
+                            instance.instance_id, DEVICE_UNREACHABLE
+                        )
                 if isinstance(event, ChunkGenerated):
                     self._mark_accepted(event.command_id)
                     if queue := self._image_generation_queues.get(
@@ -2307,6 +2355,19 @@ class API:
             if sender := self._image_generation_queues.pop(task.command_id, None):
                 self._stream_end_reasons[task.command_id] = reason
                 sender.close()
+
+    async def _end_requests_on_unreachable_nodes(self) -> None:
+        """End the requests running on an instance with a device this node can no longer
+        reach (it left Alive in this node's membership view), at once: their output can't
+        arrive, and the device may be back within the grace period or be removed only after
+        it. New requests skip such instances (see _reachable_model_readiness)."""
+        with self.membership.watch() as unreachable_nodes:
+            async for node_id in unreachable_nodes:
+                for instance_id, instance in self.state.instances.items():
+                    if node_id in instance.shard_assignments.node_to_runner:
+                        self._close_streams_for_instance(
+                            instance_id, DEVICE_UNREACHABLE
+                        )
 
     def _save_merged_trace(self, event: TracesMerged) -> None:
         traces = [

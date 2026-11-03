@@ -20,6 +20,7 @@ import exo.api.main as api_main
 from exo.api.adapters.chat_completions import collect_chat_response
 from exo.api.collected_response import CollectedResponse
 from exo.api.main import API
+from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.model_readiness import NotReady, model_readiness
 from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.common import CommandId, ModelId, NodeId
@@ -242,6 +243,8 @@ def test_a_model_whose_runner_failed_is_not_waited_for() -> None:
 def make_api(state: State) -> tuple[API, AsyncMock]:
     api = object.__new__(API)
     api.app = FastAPI()
+    # Reaching every node
+    api.membership = FakeMembership(NodeId("api-node"), *NODES)
     api.state = state
     api.paused = False
     api._text_generation_queues = {}

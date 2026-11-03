@@ -96,6 +96,8 @@ def make_api(
 ) -> tuple[API, Sender[IndexedEvent], Receiver[ForwarderCommand]]:
     api = object.__new__(API)
     api.state = state
+    # Reaching every node
+    api.membership = FakeMembership(NodeId("api-node"), NODE)
     api.paused = False
     api._system_id = SystemId()
     api._recent_events = RecentEvents()

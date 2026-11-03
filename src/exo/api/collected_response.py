@@ -32,6 +32,8 @@ class GenerationFailedError(ValueError):
 _STATUS_OF_CODE: dict[GenerationErrorCode, HTTPStatus] = {
     # No ready instance by the time the request reached the master
     "model_not_ready": HTTPStatus.SERVICE_UNAVAILABLE,
+    # A device serving the model can't be reached now: worth trying again later
+    "device_unreachable": HTTPStatus.SERVICE_UNAVAILABLE,
 }
 
 

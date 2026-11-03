@@ -15,6 +15,8 @@ from typing import Literal
 GenerationErrorCode = Literal[
     # A device serving the model disconnected or left the cluster
     "device_left",
+    # A device serving the model can't be reached now, as the node that answers sees it
+    "device_unreachable",
     # The model was stopped (its instance deleted) while the request was in flight
     "model_stopped",
     # A device serving the model ran out of GPU memory
@@ -39,6 +41,10 @@ DEVICE_DISCONNECTED = (
     "A device serving this model disconnected before the reply finished."
 )
 DEVICE_LEFT = "A device serving this model left the cluster before the reply finished."
+# A request whose model's instances all have a device this node can't reach now (Suspect or Gone
+# in its membership view), or that was running on one when the device became unreachable. It
+# ends at once rather than wait for output that can't arrive, or for the device to be removed.
+DEVICE_UNREACHABLE = "A device serving this model can't be reached right now."
 MODEL_STOPPED = "The model was stopped before the reply finished."
 # A request sent to an instance that was deleted (the model was stopped, or a node was lost)
 # just before the request could start
@@ -71,6 +77,7 @@ NO_INSTANCE_FOR_MODEL = "No instance found for model "
 _CODES: dict[str, GenerationErrorCode] = {
     DEVICE_DISCONNECTED: "device_left",
     DEVICE_LEFT: "device_left",
+    DEVICE_UNREACHABLE: "device_unreachable",
     MODEL_STOPPED: "model_stopped",
     INSTANCE_GONE_BEFORE_START: "model_stopped",
     OUT_OF_MEMORY: "out_of_memory",
