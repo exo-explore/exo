@@ -102,3 +102,27 @@ export function estimateRemainingMs(
   if (activity.rate === null || activity.rate <= 0) return null;
   return (remainingBytes / activity.rate) * 1000;
 }
+
+function duration(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+/**
+ * Why a stalled download is stalled, as far as /state tells: it has no file
+ * list yet (0 of 0 bytes: the model's files couldn't be listed), or how long
+ * it has had no data. Whether and when the downloader retries isn't in
+ * /state, so it isn't claimed.
+ */
+export function describeStall(
+  activity: DownloadActivity | undefined,
+  totalBytes: number,
+  now: number,
+): string {
+  if (totalBytes <= 0) return "Stalled: waiting for the model's file list";
+  if (!activity) return "Stalled";
+  return `Stalled: no data for ${duration(now - activity.progressAt)}`;
+}

@@ -163,8 +163,10 @@ export interface DownloadProgress {
   speed: number;
   // 0 when not known
   etaMs: number;
-  // No bytes for a while: the downloader is waiting to retry
+  // No bytes for a while
   stalled?: boolean;
+  // What /state tells about it, e.g. "Stalled: no data for 45s"
+  stalledText?: string;
   percentage: number;
   completedFiles: number;
   totalFiles: number;

@@ -75,3 +75,22 @@ test("finished downloads are forgotten", () => {
   const activity = tracker.observe({ [KEY]: 1 }, DOWNLOAD_STALL_MS * 2)[KEY];
   assert.equal(isStalled(activity, DOWNLOAD_STALL_MS * 2), false);
 });
+
+test("a stall says what is known about it, and no more", async () => {
+  const { describeStall } =
+    await import("../src/lib/utils/download_activity.ts");
+  const activity = { progressAt: 0, rate: 0 };
+  assert.equal(
+    describeStall(activity, 16 * 1024 * MB, 45_000),
+    "Stalled: no data for 45s",
+  );
+  assert.equal(
+    describeStall(activity, 16 * 1024 * MB, 80_000),
+    "Stalled: no data for 1m 20s",
+  );
+  assert.equal(
+    describeStall(activity, 0, 45_000),
+    "Stalled: waiting for the model's file list",
+  );
+  assert.doesNotMatch(describeStall(activity, 1, 1), /retry/i);
+});

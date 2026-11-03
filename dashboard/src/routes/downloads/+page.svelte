@@ -20,6 +20,7 @@
     extractShardMetadata,
   } from "$lib/utils/downloads";
   import {
+    describeStall,
     downloadKey,
     estimateRemainingMs,
     isStalled,
@@ -41,8 +42,9 @@
         speed: number;
         // 0 when not known
         etaMs: number;
-        // No bytes for a while: the downloader is waiting to retry
+        // No bytes for a while, and what /state tells about it
         stalled: boolean;
+        stalledText: string;
         modelDirectory?: string;
       }
     | {
@@ -302,6 +304,7 @@
               speed,
               etaMs,
               stalled: isStalled(activity, now),
+              stalledText: describeStall(activity, totalBytes, now),
               modelDirectory,
             };
           } else if (tag === "DownloadFailed") {
@@ -637,7 +640,7 @@
                         title="{formatBytes(
                           cell.downloadedBytes,
                         )} / {formatBytes(cell.totalBytes)} - {cell.stalled
-                          ? 'stalled, retrying'
+                          ? cell.stalledText
                           : formatSpeed(cell.speed)} - ETA {cell.etaMs > 0
                           ? formatEta(cell.etaMs)
                           : 'unknown'}"
@@ -656,8 +659,8 @@
                           ></div>
                         </div>
                         {#if cell.stalled}
-                          <span class="text-[10px] text-orange-400"
-                            >Stalled, retrying</span
+                          <span class="text-[10px] text-orange-400 text-center"
+                            >{cell.stalledText}</span
                           >
                         {:else}
                           <span class="text-[10px] text-white/70"
