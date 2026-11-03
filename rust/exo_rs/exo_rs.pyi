@@ -70,7 +70,13 @@ class Member:
     def reason(self) -> typing.Optional[LossReason]: ...
     @property
     def since(self) -> builtins.float: ...
-    def __new__(cls, node: builtins.str, state: MemberState, reason: typing.Optional[LossReason], since: builtins.float) -> Member: ...
+    @property
+    def counted(self) -> builtins.bool:
+        r"""
+        Whether it counts in the quorum read: a node Gone for a while (see FORGET_AFTER in the
+        membership module), or that left, doesn't, though it stays in the view until removed
+        """
+    def __new__(cls, node: builtins.str, state: MemberState, reason: typing.Optional[LossReason], since: builtins.float, counted: builtins.bool = True) -> Member: ...
 
 @typing.final
 class MembershipSnapshot:

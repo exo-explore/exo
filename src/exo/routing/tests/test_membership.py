@@ -22,6 +22,7 @@ from exo.routing.membership import (
     MembershipChange,
     MembershipView,
     MemberState,
+    MemberView,
     Reachability,
 )
 from exo.routing.membership import (
@@ -58,6 +59,16 @@ def member(
         state=state,
         reason=reason,
         since=datetime.fromtimestamp(since, tz=UTC),
+    )
+
+
+def in_view(node: Member, counted: bool = True) -> MemberView:
+    return MemberView(
+        node_id=node.node_id,
+        state=node.state,
+        reason=node.reason,
+        since=node.since,
+        counted=counted,
     )
 
 
@@ -255,6 +266,14 @@ async def test_the_view_is_the_networking_layers_snapshot_now() -> None:
             exo_rs.Member(
                 "PEER", exo_rs.MemberState.Gone, LossReason.Disconnected, SINCE + 1
             ),
+            # Gone for a while: in the view, not counted
+            exo_rs.Member(
+                "OTHER",
+                exo_rs.MemberState.Gone,
+                LossReason.Disconnected,
+                SINCE + 2,
+                counted=False,
+            ),
         ],
         Quorum.Minority,
         0,
@@ -268,8 +287,12 @@ async def test_the_view_is_the_networking_layers_snapshot_now() -> None:
             reachable=0,
             last_known=2,
             members=[
-                member(ME, "Resuming"),
-                member(PEER, "Gone", "Disconnected", since=SINCE + 1),
+                in_view(member(ME, "Resuming")),
+                in_view(member(PEER, "Gone", "Disconnected", since=SINCE + 1)),
+                in_view(
+                    member(OTHER, "Gone", "Disconnected", since=SINCE + 2),
+                    counted=False,
+                ),
             ],
         )
 

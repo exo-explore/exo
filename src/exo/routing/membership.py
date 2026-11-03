@@ -67,13 +67,21 @@ class Member(FrozenModel):
             since=_datetime(update.since),
         )
 
+
+class MemberView(Member):
+    """A node in this node's view, and whether it counts in the quorum read: one Gone for a while
+    (5 min), or that left, doesn't, though it stays in the view until the coordinator removes it"""
+
+    counted: bool
+
     @classmethod
-    def from_snapshot(cls, member: exo_rs.Member) -> "Member":
+    def from_snapshot(cls, member: exo_rs.Member) -> "MemberView":
         return cls(
             node_id=NodeId(member.node),
             state=_state(member.state),
             reason=_reason(member.reason),
             since=_datetime(member.since),
+            counted=member.counted,
         )
 
 
@@ -105,16 +113,16 @@ class MembershipView(FrozenModel):
     quorum: Quorum
     # The Alive peers, plus this node unless it is Resuming
     reachable: int
-    # This node and every peer seen Alive, except those that left
+    # This node and every peer it counts
     last_known: int
     # This node first, then its peers
-    members: Sequence[Member]
+    members: Sequence[MemberView]
 
     @classmethod
     def from_snapshot(
         cls, node_id: NodeId, snapshot: exo_rs.MembershipSnapshot
     ) -> "MembershipView":
-        members = [Member.from_snapshot(member) for member in snapshot.members]
+        members = [MemberView.from_snapshot(member) for member in snapshot.members]
         own = next((member for member in members if member.node_id == node_id), None)
         return cls(
             node_id=node_id,

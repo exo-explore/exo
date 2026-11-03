@@ -112,19 +112,29 @@ pub struct PyMember {
     state: PyMemberState,
     reason: Option<PyLossReason>,
     since: f64,
+    /// Whether it counts in the quorum read: a node Gone for a while (see FORGET_AFTER in the
+    /// membership module), or that left, doesn't, though it stays in the view until removed
+    counted: bool,
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyMember {
     #[new]
-    #[pyo3(signature = (node, state, reason, since))]
-    fn new(node: String, state: PyMemberState, reason: Option<PyLossReason>, since: f64) -> Self {
+    #[pyo3(signature = (node, state, reason, since, counted=true))]
+    fn new(
+        node: String,
+        state: PyMemberState,
+        reason: Option<PyLossReason>,
+        since: f64,
+        counted: bool,
+    ) -> Self {
         Self {
             node,
             state,
             reason,
             since,
+            counted,
         }
     }
 }
@@ -137,6 +147,7 @@ impl From<Member> for PyMember {
             state,
             reason,
             since: timestamp(member.since),
+            counted: member.counted,
         }
     }
 }
@@ -206,6 +217,7 @@ impl From<FromSwarm> for PyFromSwarm {
                     state,
                     reason,
                     since,
+                    ..
                 } = member.into();
                 Self::Membership {
                     node,

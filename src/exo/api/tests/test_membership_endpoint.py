@@ -61,18 +61,21 @@ def test_membership_shows_each_node_and_the_quorum_read() -> None:
                 "state": "Alive",
                 "reason": None,
                 "since": "2027-01-15T08:00:00Z",
+                "counted": True,
             },
             {
                 "nodeId": "b2",
                 "state": "Alive",
                 "reason": None,
                 "since": "2027-01-15T08:00:00Z",
+                "counted": True,
             },
             {
                 "nodeId": "c3",
                 "state": "Suspect",
                 "reason": "Disconnected",
                 "since": "2027-01-15T08:00:02.500000Z",
+                "counted": True,
             },
         ],
     }

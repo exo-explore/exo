@@ -20,10 +20,11 @@
 //! a wedged exo by a report from it. Each change is reported once, whichever input shows it
 //! first.
 //!
-//! The quorum read counts this node and every peer it knows, so a peer stops counting when it is
-//! forgotten: when it leaves, when the coordinator removes it (`forget`, unless this node still
-//! reaches it), and when it has been Gone for [`FORGET_AFTER`]. Otherwise every restart of a
-//! node, which comes back with a new id, would count as one more node for good.
+//! The quorum read counts this node and the peers it knows, and a peer stops counting (it stays
+//! in the view, as Gone, until it is removed) when it leaves, and when it has been Gone for
+//! [`FORGET_AFTER`]. The coordinator removing it (`forget`, unless this node still reaches it)
+//! takes it out of the view too. Otherwise every restart of a node, which comes back with a new
+//! id, would count as one more node for good. A peer that comes back counts again.
 //!
 //! The liveliness token is the main signal, but in a cluster of three or more zenoh can keep
 //! the token of a node that crashed (or lost power, or was cut off) for good. So a closed
@@ -143,10 +144,10 @@ pub const WEDGE_TIMEOUT: Duration = Duration::from_secs(30);
 /// `MINORITY_HOLD_LIMIT`.
 pub const SPLIT_HOLD: Duration = Duration::from_secs(5 * 60);
 
-/// How long a peer is Gone before it no longer counts in the quorum read. Forgetting it makes
-/// this side of a split a majority of fewer nodes, which ends the hold for its work, so it is
-/// the split hold: never sooner, or the hold would end early. A peer the coordinator removed is
-/// forgotten at once (`forget`), and one that left at once (`left`).
+/// How long a peer is Gone before it no longer counts in the quorum read (it stays in the view, as
+/// Gone, so that a coordinator can still remove it). Not counting it makes this side of a split a
+/// majority of fewer nodes, which ends the hold for its work, so it is the split hold: never
+/// sooner, or the hold would end early. A peer that left stops counting at once (`left`).
 pub const FORGET_AFTER: Duration = SPLIT_HOLD;
 
 // ---- States --------------------------------------------------------------------------------
@@ -251,6 +252,9 @@ pub struct Member {
     pub node: ZenohId,
     pub state: MemberState,
     pub since: SystemTime,
+    /// Whether it counts in the quorum read: a peer Gone for `FORGET_AFTER`, or that left,
+    /// doesn't (it stays in the view until the coordinator removes it)
+    pub counted: bool,
 }
 
 /// Every node this node knows of, with how much of the cluster it reaches
@@ -261,7 +265,7 @@ pub struct Snapshot {
     pub quorum: Quorum,
     /// The Alive peers, plus this node unless it is Resuming
     pub reachable: usize,
-    /// The nodes counted in the quorum: this node and every peer it knows (see `FORGET_AFTER`)
+    /// The nodes counted in the quorum: this node and every counted peer (see `FORGET_AFTER`)
     pub last_known: usize,
 }
 
@@ -286,6 +290,8 @@ struct Peer {
     /// Its time Suspect before the current state, since it was last Alive for `STEADY_AFTER`:
     /// it counts toward `GRACE` with the current time Suspect
     away_before: Duration,
+    /// Whether it counts in the quorum read (see `FORGET_AFTER`)
+    counted: bool,
 }
 
 #[derive(Debug)]
@@ -329,6 +335,7 @@ impl Membership {
             node: self.own,
             state: self.own_state,
             since: self.own_since,
+            counted: true,
         }
     }
 
@@ -408,13 +415,12 @@ impl Membership {
     }
 
     /// The node said it is leaving (a graceful quit): it is Gone at once, without a grace, and
-    /// forgotten (if it comes back, it is new).
+    /// stops counting in the quorum read (it stays in the view until it is removed).
     pub fn left(&mut self, node: ZenohId, now: Now) -> Option<Member> {
-        self.peers.contains_key(&node).then(|| {
-            let change = self.set(node, MemberState::Gone(Reason::Left), now);
-            self.peers.remove(&node);
-            change
-        })
+        let peer = self.peers.get_mut(&node)?;
+        peer.counted = false;
+        (peer.state != MemberState::Gone(Reason::Left))
+            .then(|| self.set(node, MemberState::Gone(Reason::Left), now))
     }
 
     /// exo on the node reported (its periodic node info). Only a report undoes a wedge.
@@ -497,15 +503,17 @@ impl Membership {
                 .map(|(node, state)| self.set(node, state, now)),
         );
 
-        // A peer Gone for FORGET_AFTER (not counting this node's stalls) no longer counts
+        // A peer Gone for FORGET_AFTER (not counting this node's stalls) no longer counts; it
+        // stays in the view until the coordinator removes it
         let resumed_at = self.resumed_at;
-        self.peers.retain(|_, peer| {
-            let MemberState::Gone(_) = peer.state else {
-                return true;
-            };
-            let from = resumed_at.map_or(peer.since.awake, |at| peer.since.awake.max(at));
-            now.awake < from + FORGET_AFTER
-        });
+        for peer in self.peers.values_mut() {
+            if let MemberState::Gone(_) = peer.state {
+                let from = resumed_at.map_or(peer.since.awake, |at| peer.since.awake.max(at));
+                if now.awake >= from + FORGET_AFTER {
+                    peer.counted = false;
+                }
+            }
+        }
 
         // Ask again, every REPROBE_INTERVAL, each node Alive without a connection of its own
         let mut ask = Vec::new();
@@ -545,6 +553,7 @@ impl Membership {
                 node,
                 state: peer.state,
                 since: peer.since.wall,
+                counted: peer.counted,
             }))
             .collect();
         Snapshot {
@@ -565,7 +574,7 @@ impl Membership {
     }
 
     fn last_known(&self) -> usize {
-        1 + self.peers.len()
+        1 + self.peers.values().filter(|peer| peer.counted).count()
     }
 
     /// The transport shows the node: it joins, rejoins, or is back from a lost transport
@@ -586,6 +595,7 @@ impl Membership {
                     next_probe: None,
                     last_heard: None,
                     away_before: Duration::ZERO,
+                    counted: true,
                 },
             );
             return Some(self.member(node));
@@ -647,6 +657,10 @@ impl Membership {
             peer.since = now;
             peer.next_probe = None;
             if state == MemberState::Alive {
+                // Back: it counts again
+                peer.counted = true;
+            }
+            if state == MemberState::Alive {
                 // It couldn't report while it was away: its wedge timeout starts again
                 peer.last_heard = peer.last_heard.map(|_| now.awake);
             }
@@ -666,11 +680,13 @@ impl Membership {
                 node,
                 state: MemberState::Gone(Reason::Disconnected),
                 since: SystemTime::UNIX_EPOCH,
+                counted: false,
             },
             |peer| Member {
                 node,
                 state: peer.state,
                 since: peer.since.wall,
+                counted: peer.counted,
             },
         )
     }
@@ -1345,15 +1361,57 @@ mod tests {
         );
     }
 
+    /// Whether the node is in the view, and if so whether it counts in the quorum read
+    fn counted(membership: &Membership, n: u8) -> Option<bool> {
+        membership
+            .snapshot()
+            .members
+            .into_iter()
+            .find(|member| member.node == zid(n))
+            .map(|member| member.counted)
+    }
+
     #[test]
-    fn a_node_that_left_is_forgotten_at_once() {
+    fn a_node_that_left_stops_counting_at_once_and_stays_in_view_until_removed() {
         let clock = Clock::new();
         let mut membership = membership(&clock);
         connected_peer(&mut membership, &clock, 1);
         membership.left(zid(1), clock.now);
         let snapshot = membership.snapshot();
-        assert_eq!(states(snapshot.members), vec![alive(OWN)]);
+        assert_eq!(
+            states(snapshot.members),
+            vec![alive(OWN), gone(1, Reason::Left)]
+        );
         assert_eq!(snapshot.last_known, 1);
+        assert_eq!(counted(&membership, 1), Some(false));
+        membership.forget(zid(1));
+        assert_eq!(counted(&membership, 1), None);
+    }
+
+    #[test]
+    fn a_node_gone_for_forget_after_stays_in_view_uncounted_until_removed_or_back() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        lose(&mut membership, clock.now, 1);
+        run_for(&mut membership, &mut clock, GRACE + FORGET_AFTER);
+        // Still in the view as Gone, so a coordinator can still remove it, but not counted
+        assert_eq!(
+            states(membership.snapshot().members),
+            vec![alive(OWN), gone(1, Reason::Disconnected)]
+        );
+        assert_eq!(counted(&membership, 1), Some(false));
+        assert_eq!(membership.quorum(), Quorum::Majority);
+
+        // Back: it counts again
+        membership.connection_opened(zid(1), clock.now);
+        assert_eq!(counted(&membership, 1), Some(true));
+        assert_eq!(membership.snapshot().last_known, 2);
+
+        // Lost and removed by the coordinator: out of the view
+        lose(&mut membership, clock.now, 1);
+        membership.forget(zid(1));
+        assert_eq!(counted(&membership, 1), None);
     }
 
     #[test]
@@ -1727,17 +1785,20 @@ mod tests {
                 Member {
                     node: zid(OWN),
                     state: MemberState::Alive,
-                    since: start
+                    since: start,
+                    counted: true,
                 },
                 Member {
                     node: zid(1),
                     state: MemberState::Alive,
-                    since: start
+                    since: start,
+                    counted: true,
                 },
                 Member {
                     node: zid(2),
                     state: MemberState::Suspect(Reason::Disconnected),
-                    since: lost_at.wall
+                    since: lost_at.wall,
+                    counted: true,
                 },
             ]
         );
