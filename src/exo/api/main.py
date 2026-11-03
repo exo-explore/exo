@@ -1026,6 +1026,7 @@ class API:
                 "stream": False,
                 "bench": True,
                 "use_prefix_cache": payload.use_prefix_cache,
+                "num_draft_tokens": payload.num_draft_tokens,
             }
         )
 

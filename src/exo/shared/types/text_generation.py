@@ -116,6 +116,8 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     tools: list[dict[str, Any]] | None = None
     bench: bool = False
     use_prefix_cache: bool = False
+    # Speculative decoding override (bench requests): 0 decodes without the draft
+    num_draft_tokens: int | None = None
     top_k: int | None = None
     stop: str | list[str] | None = None
     seed: int | None = None

@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
+from exo.shared.constants import EXO_MAX_NUM_DRAFT_TOKENS
 from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.memory import Memory
@@ -167,6 +168,9 @@ class GenerationStats(BaseModel):
     generation_tokens: int
     peak_memory_usage: Memory
     prefix_cache_hit: Literal["none", "partial", "exact"] = "none"
+    # Speculative decoding: draft tokens proposed and accepted (None without a draft)
+    draft_tokens_proposed: int | None = None
+    draft_tokens_accepted: int | None = None
 
 
 class ImageGenerationStats(BaseModel):
@@ -251,6 +255,11 @@ class ChatCompletionRequest(BaseModel):
 
 class BenchChatCompletionRequest(ChatCompletionRequest):
     use_prefix_cache: bool = False
+    # Draft tokens per round on an instance with a draft model: 0 decodes without the
+    # draft, None uses the instance's EXO_NUM_DRAFT_TOKENS. Ignored without a draft.
+    num_draft_tokens: int | None = Field(
+        default=None, ge=0, le=EXO_MAX_NUM_DRAFT_TOKENS
+    )
 
 
 class AddCustomModelParams(BaseModel):

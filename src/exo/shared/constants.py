@@ -111,4 +111,12 @@ ENABLE_DISAGGREGATION = os.getenv("ENABLE_DISAGGREGATION", "false").lower() == "
 
 EXO_MAX_CONCURRENT_REQUESTS = int(os.getenv("EXO_MAX_CONCURRENT_REQUESTS", "8"))
 
+# Speculative decoding with a draft model (exo.worker.engines.mlx.speculative). Read when a
+# runner loads its model. EXO_DRAFT_MODEL is a model id or local directory for every
+# single-node instance that decodes one request at a time, or target=draft pairs separated
+# by commas. EXO_NUM_DRAFT_TOKENS is the default number of draft tokens per round.
+EXO_DRAFT_MODEL_ENV = "EXO_DRAFT_MODEL"
+EXO_NUM_DRAFT_TOKENS_ENV = "EXO_NUM_DRAFT_TOKENS"
+EXO_MAX_NUM_DRAFT_TOKENS = 16
+
 EXO_MAX_INSTANCE_RETRIES = 5
