@@ -21,6 +21,7 @@ from exo.worker.runner.bootstrap import logger
 from exo.worker.runner.llm_inference.tool_parsers import (
     ToolParser,
     coerce_tool_calls_to_schemas,
+    tool_names,
 )
 
 
@@ -76,7 +77,12 @@ def apply_all_parsers(
                 tokenizer.think_end,
                 starts_in_thinking=detect_thinking_prompt_suffix(prompt, tokenizer),
             )
-        generator = output_parser.parse(generator)
+        if output_parser.parse_with_tool_names is not None and tools is not None:
+            generator = output_parser.parse_with_tool_names(
+                generator, tool_names(tools)
+            )
+        else:
+            generator = output_parser.parse(generator)
         if output_parser.coerces_to_tool_schemas and tools:
             generator = coerce_tool_call_responses(generator, tools)
     else:

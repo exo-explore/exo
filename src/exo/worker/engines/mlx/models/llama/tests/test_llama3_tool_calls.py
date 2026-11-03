@@ -14,6 +14,7 @@ import asyncio
 import json
 import re
 from collections.abc import AsyncGenerator, Generator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn, cast
 
@@ -43,10 +44,16 @@ from exo.shared.types.chunks import (
     ToolCallChunk,
 )
 from exo.shared.types.common import CommandId, ModelId
-from exo.shared.types.worker.runner_response import GenerationResponse
-from exo.worker.engines.mlx.models.llama.parser import in_ipython_environment
+from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
+from exo.worker.engines.mlx.models.llama.parser import (
+    in_ipython_environment,
+    parse_llama3,
+)
+from exo.worker.engines.mlx.models.llama.spec import LLAMA_3_EOS_TOKENS
+from exo.worker.engines.mlx.models.spec_registry import added_eos_tokens_for_model_id
 from exo.worker.engines.mlx.types import Model
 from exo.worker.engines.mlx.utils_mlx import (
+    add_eos_tokens,
     apply_chat_template,
     get_eos_token_ids_for_model,
 )
@@ -109,6 +116,7 @@ ADD_TOOL: dict[str, Any] = {
         },
     },
 }
+TOOLS = [WEATHER_TOOL, TIME_TOOL, ADD_TOOL]
 
 # What Llama 3.2 3B (4-bit) wrote on exo before this fix, at temperature 0, for "What's
 # the weather in Paris right now?" with WEATHER_TOOL: its JSON call, <|eom_id|>, and,
@@ -274,7 +282,7 @@ class _Tokenizer:
 def _chunks(
     text: str,
     prompt: str,
-    tools: list[dict[str, Any]] | None = None,
+    tools: list[dict[str, Any]] | None = TOOLS,
     finish_reason: str = "stop",
 ) -> list[GenerationChunk]:
     chunks = apply_all_parsers(
@@ -370,7 +378,8 @@ def test_a_built_in_tool_call_comes_back_as_a_tool_call() -> None:
     assert turn == '<|python_tag|>brave_search.call(query="weather in Paris")<|eom_id|>'
     assert in_ipython_environment(prompt)
 
-    chunks = _chunks(turn.removesuffix("<|eom_id|>"), prompt)
+    brave_search = {"type": "function", "function": {"name": "brave_search"}}
+    chunks = _chunks(turn.removesuffix("<|eom_id|>"), prompt, [brave_search])
 
     assert _calls(chunks) == [("brave_search", {"query": "weather in Paris"})]
     _assert_no_special_tokens(chunks)
@@ -519,10 +528,135 @@ def test_json_asked_for_without_tools_stays_content() -> None:
     )
     text = '{"name": "get_weather", "parameters": {"city": "Paris"}}'
 
-    chunks = _chunks(text, prompt)
+    chunks = _chunks(text, prompt, None)
 
     assert _calls(chunks) == []
     assert _content(chunks) == text
+
+
+def _streamed_late(chunks: list[GenerationChunk]) -> str:
+    """The content that came only with the message's last response."""
+    last = chunks[-1]
+    return last.text if isinstance(last, TokenChunk) else ""
+
+
+def test_json_in_an_answer_streams_once_it_is_no_call() -> None:
+    text = 'The config:\n{\n  "name": "exo",\n  "port": 52415\n}\nThen restart it.'
+    chunks = _chunks(text, _tool_prompt("3.2"))
+
+    assert _content(chunks) == text
+    # Held back only up to the "}" that ends the object.
+    assert "restart" not in _streamed_late(chunks)
+
+
+def test_code_with_a_brace_line_keeps_streaming() -> None:
+    # A "{" that opens a line is held back only while what follows can be JSON.
+    text = "Here:\nint main()\n{\n  return 0;\n}\n" + " ".join(
+        f"word{index}" for index in range(50)
+    )
+    chunks = _chunks(text, _tool_prompt("3.2"))
+
+    assert _calls(chunks) == []
+    assert _content(chunks) == text
+    assert "word" not in _streamed_late(chunks)
+    assert sum(1 for chunk in chunks if isinstance(chunk, TokenChunk)) > 50
+
+
+def test_a_fenced_json_example_in_an_answer_is_not_a_tool_call() -> None:
+    # Coding agents send tools with every request; an answer that shows a call as an
+    # example stays text.
+    text = (
+        "A call looks like this:\n```json\n"
+        '{"name": "get_weather", "arguments": {"city": "Paris"}}\n'
+        "```\nThat is all."
+    )
+    chunks = _chunks(text, _tool_prompt("3.2"))
+
+    assert _calls(chunks) == []
+    assert _content(chunks) == text
+
+    # After the fence, a call on a line of its own is one again.
+    call = '{"name": "get_weather", "parameters": {"city": "Rome"}}'
+    after = _chunks(text + "\n" + call, _tool_prompt("3.2"))
+    assert _calls(after) == [("get_weather", {"city": "Rome"})]
+    assert _content(after) == text
+
+
+@pytest.mark.parametrize("opener", ["", "<|python_tag|>"])
+def test_a_call_to_a_tool_the_request_has_not_stays_text(opener: str) -> None:
+    text = '{"name": "web_search", "parameters": {"query": "weather in Paris"}}'
+    chunks = _chunks(opener + text, _tool_prompt("3.2"), [WEATHER_TOOL])
+
+    assert _calls(chunks) == []
+    assert _content(chunks) == text
+    _assert_no_special_tokens(chunks)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"name": "add", "parameters": {"a": NaN, "b": 1}}',
+        '{"name": "add", "parameters": {"a": -Infinity, "b": 1}}',
+        # A number too big for a float, which Python reads as an infinity.
+        '{"name": "add", "parameters": {"a": 1e999, "b": 1}}',
+        '<|python_tag|>{"name": "add", "parameters": {"a": Infinity, "b": 1}}',
+        "<|python_tag|>add.call(a=1e999, b=1)",
+    ],
+)
+def test_arguments_json_cannot_hold_stay_text(text: str) -> None:
+    chunks = _chunks(text, _tool_prompt("3.2", [ADD_TOOL]), [ADD_TOOL])
+
+    assert _calls(chunks) == []
+    assert _content(chunks) == text.removeprefix("<|python_tag|>")
+
+
+def _parsed(pieces: list[str]) -> tuple[str, list[tuple[str, str]]]:
+    def responses() -> Generator[GenerationResponse | None]:
+        for index, piece in enumerate(pieces):
+            yield GenerationResponse(text=piece, token=index, usage=None)
+        yield GenerationResponse(
+            text="", token=len(pieces), usage=None, finish_reason="stop"
+        )
+
+    content = ""
+    calls: list[tuple[str, str]] = []
+    for response in parse_llama3(responses(), frozenset({"get_weather", "get_time"})):
+        if isinstance(response, ToolCallResponse):
+            calls += [(call.name, call.arguments) for call in response.tool_calls]
+        elif response is not None:
+            content += response.text
+    return content, calls
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        MAIN_OUTPUT,
+        'Checking.\n  {"name": "get_time", "parameters": {"city": "Rome"}}\nDone.',
+        'The config:\n{\n  "name": "exo",\n  "port": 52415\n}\n{"name": "get_time", '
+        '"parameters": {"city": "Rome"}}',
+        "Here:\nint main()\n{\n  return 0;\n}\nThat is C.",
+        '```json\n{"name": "get_time", "parameters": {}}\n```\n'
+        '{"name": "get_weather", "parameters": {"city": "Rome"}}',
+        'Text {not a call}\n{"a": [1, 2.5e3, true, null, "x\\"y"]}\nmore\n',
+        'Sure.\n{"name": "get_weather", "parameters": {"city": "Rome"}}; '
+        '{"name": "get_time", "parameters": {"city": "Rome"}}',
+        'Let me check. <|python_tag|>{"name": "get_time", "parameters": {}}',
+        '{\n<|python_tag|>{"name": "get_time", "parameters": {}}',
+    ],
+)
+def test_where_the_text_is_split_does_not_matter(text: str) -> None:
+    whole = _parsed([text])
+    # The tokenizer never splits a special token.
+    inside_special_tokens = {
+        index
+        for match in _SPECIAL.finditer(text)
+        for index in range(match.start() + 1, match.end())
+    }
+    for index in range(1, len(text)):
+        if index not in inside_special_tokens:
+            assert _parsed([text[:index], text[index:]]) == whole, index
+    assert _parsed(_pieces(text)) == whole
 
 
 async def _stream(
@@ -606,14 +740,109 @@ def test_the_api_returns_openai_tool_calls_streaming_and_not() -> None:
         "meta-llama/Meta-Llama-3-8B-Instruct",
     ],
 )
-def test_llama_3_stops_at_the_end_of_a_message(model_id: str) -> None:
-    # <|end_of_text|>, <|eom_id|>, <|eot_id|>: the checkpoints' config.json eos_token_id.
-    assert get_eos_token_ids_for_model(ModelId(model_id)) == [128001, 128008, 128009]
+def test_llama_3_ids_get_the_end_of_message_tokens(model_id: str) -> None:
+    # <|end_of_text|>, <|eom_id|>, <|eot_id|>: the checkpoints' config.json eos_token_id,
+    # added to the tokenizer's own EOS token, which no id rule replaces.
+    assert added_eos_tokens_for_model_id(model_id) == LLAMA_3_EOS_TOKENS
+    assert get_eos_token_ids_for_model(ModelId(model_id)) is None
 
 
 def test_other_llama_architecture_ids_keep_their_eos() -> None:
     for model_id in ("openlm-research/open_llama_3b", "mistralai/Mistral-7B-v0.3"):
         assert get_eos_token_ids_for_model(ModelId(model_id)) is None
+        assert added_eos_tokens_for_model_id(model_id) == ()
+
+
+@dataclass(frozen=True)
+class _AddedToken:
+    content: str
+    special: bool
+
+
+class _LoadedTokenizer:
+    """What add_eos_tokens reads and changes of a loaded tokenizer. Its EOS ids start as
+    mlx-lm's TokenizerWrapper sets them without explicit ids: the tokenizer's own."""
+
+    def __init__(
+        self, eos_token_id: int, added_tokens: dict[int, tuple[str, bool]]
+    ) -> None:
+        self.eos_token_ids = {eos_token_id}
+        self.added_tokens_decoder = {
+            token_id: _AddedToken(content, special)
+            for token_id, (content, special) in added_tokens.items()
+        }
+
+    def add_eos_token(self, token: str) -> None:
+        self.eos_token_ids.add(int(token))
+
+
+_END_OF_TEXT = ("<|end_of_text|>", True)
+_EOT = ("<|eot_id|>", True)
+_IM_END = ("<|im_end|>", True)
+
+
+@pytest.mark.parametrize(
+    ("model_id", "eos_token_id", "added_tokens", "expected"),
+    [
+        (
+            "mlx-community/Llama-3.2-3B-Instruct-4bit",
+            128009,
+            {128001: _END_OF_TEXT, 128008: ("<|eom_id|>", True), 128009: _EOT},
+            {128001, 128008, 128009},
+        ),
+        # Llama 3.0 has no <|eom_id|>: 128008 is a reserved token.
+        (
+            "mlx-community/Meta-Llama-3-8B-Instruct-4bit",
+            128009,
+            {
+                128001: _END_OF_TEXT,
+                128008: ("<|reserved_special_token_4|>", True),
+                128009: _EOT,
+            },
+            {128001, 128009},
+        ),
+        # ChatML fine-tunes named after Llama 3.1 and Llama 3 (the token layout of two on
+        # Hugging Face): their turns end with <|im_end|>, and the second gives 128008 to
+        # <tools>.
+        (
+            "example/Llama-3.1-8B-ChatML-fine-tune",
+            128040,
+            {
+                128001: _END_OF_TEXT,
+                128008: ("<|eom_id|>", True),
+                128009: _EOT,
+                128040: _IM_END,
+            },
+            {128001, 128008, 128009, 128040},
+        ),
+        (
+            "example/Llama-3-8B-ChatML-fine-tune",
+            128003,
+            {
+                128001: _END_OF_TEXT,
+                128003: _IM_END,
+                128008: ("<tools>", False),
+                128009: _EOT,
+            },
+            {128001, 128003, 128009},
+        ),
+    ],
+)
+def test_the_end_of_message_tokens_add_to_the_tokenizers_own(
+    model_id: str,
+    eos_token_id: int,
+    added_tokens: dict[int, tuple[str, bool]],
+    expected: set[int],
+) -> None:
+    # The tokenizers' added tokens at these ids, from their tokenizer_config.json.
+    tokenizer = _LoadedTokenizer(eos_token_id, added_tokens)
+
+    add_eos_tokens(
+        tokenizer,  # pyright: ignore[reportArgumentType]
+        added_eos_tokens_for_model_id(model_id),
+    )
+
+    assert tokenizer.eos_token_ids == expected
 
 
 def _history(version: str, results_in_order: bool) -> str:

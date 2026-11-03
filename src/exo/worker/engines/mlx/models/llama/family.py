@@ -33,6 +33,9 @@ FAMILY = ModelFamily(
                 applies_to_prompt=in_ipython_environment,
                 # Small models write numbers as strings now and then ("a": "17").
                 coerces_to_tool_schemas=True,
+                # A JSON object that names none of the tools is no call (e.g. one shown
+                # in an answer).
+                parse_with_tool_names=parse_llama3,
             ),
         ),
         Architecture(

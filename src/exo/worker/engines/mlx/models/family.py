@@ -52,6 +52,16 @@ class OutputParser:
     # Whether exo coerces the parsed tool-call arguments to the request's tool schemas,
     # for formats that write every value as text.
     coerces_to_tool_schemas: bool = False
+    # In place of `parse` when the request has tools, for formats whose calls read like
+    # other text (Llama 3's bare JSON calls): it is also given the tools' names, so that
+    # only a call to one of them is taken as a call.
+    parse_with_tool_names: (
+        Callable[
+            [Generator[GenerationResponse | None], frozenset[str]],
+            Generator[GenerationResponse | ToolCallResponse | None],
+        ]
+        | None
+    ) = None
 
 
 @final
