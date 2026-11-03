@@ -349,6 +349,9 @@ class Runner:
             for task_id, result in results:
                 match result:
                     case CancelledResponse():
+                        # Said once, so the supervisor can forget the request
+                        if task_id in self.active_tasks:
+                            self.send_task_status(task_id, TaskStatus.Cancelled)
                         finished.append(task_id)
                     case FinishedResponse():
                         self.send_task_status(task_id, TaskStatus.Complete)
