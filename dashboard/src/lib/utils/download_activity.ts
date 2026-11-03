@@ -126,3 +126,21 @@ export function describeStall(
   if (!activity) return "Stalled";
   return `Stalled: no data for ${duration(now - activity.progressAt)}`;
 }
+
+/**
+ * The same for a model downloading to several devices, all of them stalled:
+ * waiting for the file list if none has one, otherwise how long since any of
+ * them got data.
+ */
+export function describeStalls(
+  stalls: Array<{ activity: DownloadActivity | undefined; totalBytes: number }>,
+  now: number,
+): string {
+  const withFiles = stalls.filter((stall) => stall.totalBytes > 0);
+  if (withFiles.length === 0) return describeStall(undefined, 0, now);
+  const latest = Math.max(
+    ...withFiles.map((stall) => stall.activity?.progressAt ?? -Infinity),
+  );
+  if (!Number.isFinite(latest)) return "Stalled";
+  return describeStall({ progressAt: latest, rate: 0 }, 1, now);
+}

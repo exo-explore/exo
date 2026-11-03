@@ -91,6 +91,7 @@
   } from "$lib/utils/download_progress";
   import {
     describeStall,
+    describeStalls,
     downloadKey,
     estimateRemainingMs,
     isStalled,
@@ -1003,9 +1004,14 @@
           download.etaMs > 0 && download.percentage >= 1
             ? ` · ${formatRoughDuration(download.etaMs)} left`
             : "";
+        const amount = `${formatBytes(download.downloadedBytes, 1)} of ${formatBytes(download.totalBytes, 1)}`;
         return {
           percentage: download.percentage,
-          status: `Downloading · ${formatBytes(download.downloadedBytes, 1)} of ${formatBytes(download.totalBytes, 1)}${timeLeft}`,
+          // Stalled (e.g. Hugging Face unreachable): say so, as the model
+          // card and the Downloads page do
+          status: download.stalled
+            ? `${download.stalledText ?? "Stalled"} · ${amount}`
+            : `Downloading · ${amount}${timeLeft}`,
         };
       }
       const load = onboardingLoadProgress;
@@ -1989,6 +1995,8 @@
     const perNodeMap = new Map<string, NodeDownloadStatus>();
     // How much each device has and needs, for the total
     const amounts = new Map<string, NodeDownload>();
+    // The stalled devices, to say why the model's download is stalled
+    const stalls: Parameters<typeof describeStalls>[0] = [];
 
     const nodeIdSet = nodeIds ? new Set(nodeIds) : null;
     for (const [nodeId, nodeDownloads] of Object.entries(downloadsData)) {
@@ -2111,6 +2119,7 @@
             progress.totalBytes,
             now,
           );
+          stalls.push({ activity, totalBytes: progress.totalBytes });
         }
         progress.etaMs = nodeEtaMs ?? 0;
 
@@ -2187,6 +2196,9 @@
         // 0: not known yet
         etaMs: total.etaMs ?? 0,
         stalled: allStalled,
+        stalledText: allStalled
+          ? describeStalls(stalls, Date.now())
+          : undefined,
         percentage: total.percentage,
         completedFiles,
         totalFiles,

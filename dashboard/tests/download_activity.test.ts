@@ -94,3 +94,30 @@ test("a stall says what is known about it, and no more", async () => {
   );
   assert.doesNotMatch(describeStall(activity, 1, 1), /retry/i);
 });
+
+test("several stalled devices: one line for the model", async () => {
+  const { describeStalls } =
+    await import("../src/lib/utils/download_activity.ts");
+  // All still at 0 of 0 bytes (Hugging Face unreachable)
+  assert.equal(
+    describeStalls(
+      [
+        { activity: { progressAt: 0, rate: null }, totalBytes: 0 },
+        { activity: { progressAt: 0, rate: null }, totalBytes: 0 },
+      ],
+      30_000,
+    ),
+    "Stalled: waiting for the model's file list",
+  );
+  // The most recent data from any device counts
+  assert.equal(
+    describeStalls(
+      [
+        { activity: { progressAt: 10_000, rate: 0 }, totalBytes: 16 * MB },
+        { activity: { progressAt: 40_000, rate: 0 }, totalBytes: 16 * MB },
+      ],
+      60_000,
+    ),
+    "Stalled: no data for 20s",
+  );
+});
