@@ -47,17 +47,35 @@ def announcements(node: DownloadNode) -> int:
 FAST_RESCANS = Timing(rescan_interval=0.05)
 
 
-async def test_a_model_never_downloaded_is_never_announced(
+async def test_a_model_never_downloaded_is_announced_only_by_the_first_scan(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
-    # The cluster's state leaves out models a node has nothing of (most of the catalogue)
+    # Once, so a node back from a restart clears what the cluster still lists for it;
+    # the cluster's state leaves out models a node has nothing of (most of the catalogue)
     async with DownloadNode(
         hub, tmp_path, [card_for(repo)], worker=False, timing=FAST_RESCANS
     ) as node:
         await asyncio.sleep(0.5)  # about 10 rescans
-        assert announcements(node) == 0
+        assert announcements(node) == 1
         assert node.status(REPO) is None
         assert hub.requests == [], "no Hub request for a model nobody asked for"
+
+
+async def test_a_node_back_with_a_deleted_model_clears_its_stale_completed(
+    hub: FakeHub, repo: FakeRepo, tmp_path: Path
+) -> None:
+    async with DownloadNode(hub, tmp_path, [card_for(repo)], worker=False) as node:
+        await node.start_download(REPO)
+        await node.wait_for(REPO, DownloadCompleted)
+        await node.stop()
+        # Deleted while the node was down; the cluster still lists it as completed
+        for directory in node.model_dirs(REPO):
+            shutil.rmtree(directory)
+        assert isinstance(node.status(REPO), DownloadCompleted)
+        await node.start()
+        # It joins and re-announces before its first scan
+        await node.reannounce()
+        await node.wait_for_unlisted(REPO)
 
 
 async def test_a_model_whose_files_go_away_is_announced_once_as_gone(

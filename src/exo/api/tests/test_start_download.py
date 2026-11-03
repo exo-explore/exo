@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from exo.api.main import API
 from exo.api.types import StartDownloadParams
-from exo.shared.models.model_cards import ModelCard
+from exo.shared.models import model_cards
 from exo.shared.tests.conftest import get_pipeline_shard_metadata
 from exo.shared.types.commands import StartDownload
 from exo.shared.types.common import ModelId, NodeId
@@ -31,7 +31,9 @@ def test_a_catalogue_model_is_downloaded_whole_by_id() -> None:
         MODEL_A_ID, device_rank=0, world_size=1
     ).model_card
     api, sent = _api()
-    with patch.object(ModelCard, "load", AsyncMock(return_value=card)):
+    with patch.object(
+        model_cards.card_cache, "list_all", AsyncMock(return_value=[card])
+    ):
         response = TestClient(api.app).post(
             "/download/start", json={"targetNodeId": "node-1", "modelId": MODEL_A_ID}
         )
@@ -45,6 +47,23 @@ def test_a_catalogue_model_is_downloaded_whole_by_id() -> None:
         card.n_layers,
         1,
     )
+
+
+def test_a_model_not_in_the_catalogue_is_not_found() -> None:
+    card = get_pipeline_shard_metadata(
+        MODEL_A_ID, device_rank=0, world_size=1
+    ).model_card
+    api, sent = _api()
+    with patch.object(
+        model_cards.card_cache, "list_all", AsyncMock(return_value=[card])
+    ):
+        response = TestClient(api.app).post(
+            "/download/start",
+            json={"targetNodeId": "node-1", "modelId": "someone/not-a-catalogue-model"},
+        )
+    assert response.status_code == 404, response.text
+    assert "isn't in the model catalogue" in response.text
+    sent.assert_not_awaited()
 
 
 def test_a_shard_is_still_downloaded_as_given() -> None:

@@ -3568,9 +3568,6 @@ class AppStore {
     }
   }
 
-  /**
-   * Start a download on a specific node
-   */
   /** Download all of a model from the catalogue to a node. */
   async startModelDownload(nodeId: string, modelId: string): Promise<void> {
     const response = await fetch("/download/start", {
@@ -3586,6 +3583,9 @@ class AppStore {
     }
   }
 
+  /**
+   * Start a download on a specific node
+   */
   async startDownload(nodeId: string, shardMetadata: object): Promise<void> {
     try {
       const response = await fetch("/download/start", {

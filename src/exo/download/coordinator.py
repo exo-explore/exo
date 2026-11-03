@@ -8,7 +8,8 @@
 
 Idle models are reported from disk: Completed, or Pending with the bytes already
 there. A model with nothing on disk is reported only when that is news (its files
-went away, its download was cancelled), and the cluster's state leaves it out.
+went away, its download was cancelled) and on the first full scan after start, and
+the cluster's state leaves it out.
 Cancel and Delete stop a running download and wait for it to end before
 anything else happens. Commands never wait on the network. A failed download is
 retried by the next StartDownload; the worker sends those, with a backoff, for
@@ -488,6 +489,7 @@ class DownloadCoordinator:
     # --- the rescan ----------------------------------------------------------------
 
     async def _rescan_loop(self) -> None:
+        first_full_scan = True
         while True:
             try:
                 cards = await model_cards.card_cache.list_all()
@@ -496,7 +498,7 @@ class DownloadCoordinator:
                 cards = []
             for card in cards:
                 try:
-                    await self._rescan(card)
+                    await self._rescan(card, announce_idle=first_full_scan)
                 except (BrokenResourceError, ClosedResourceError):
                     raise
                 except Exception as error:
@@ -504,9 +506,11 @@ class DownloadCoordinator:
                     logger.opt(exception=error).warning(
                         f"Download rescan of {card.model_id} failed"
                     )
+            if cards:
+                first_full_scan = False
             await anyio.sleep(self.settings.rescan_interval)
 
-    async def _rescan(self, card: ModelCard) -> None:
+    async def _rescan(self, card: ModelCard, *, announce_idle: bool) -> None:
         model = self._models.setdefault(card.model_id, _Model(whole_model_shard(card)))
         if model.running is not None or isinstance(model.status, DownloadFailed):
             return
@@ -516,10 +520,14 @@ class DownloadCoordinator:
             return  # a command got there first
         previous, model.status = model.status, status
         # A model on this node is announced on every scan, so a status the master dropped
-        # heals within a minute. One with nothing on disk is announced only when it had
-        # something before: the state leaves such models out, so it is news only then.
-        if not is_not_on_disk(status) or (
-            previous is not None and not is_not_on_disk(previous)
+        # heals within a minute. One with nothing on disk is announced when it had something
+        # before, and on the first full scan after start: the cluster may still list what
+        # this node had before it restarted (a model deleted while it was down). The state
+        # leaves such models out, so these announcements only ever remove a stale entry.
+        if (
+            announce_idle
+            or not is_not_on_disk(status)
+            or (previous is not None and not is_not_on_disk(previous))
         ):
             await self._send(status)
 

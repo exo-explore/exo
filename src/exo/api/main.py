@@ -2560,8 +2560,23 @@ class API:
         if payload.shard_metadata is not None:
             shard = payload.shard_metadata
         else:
-            assert payload.model_id is not None
-            shard = whole_model_shard(await ModelCard.load(payload.model_id))
+            # Only the catalogue: no lookup on Hugging Face, which would add a card for an
+            # unknown id on this node alone
+            card = next(
+                (
+                    card
+                    for card in await model_cards.card_cache.list_all()
+                    if card.model_id == payload.model_id
+                ),
+                None,
+            )
+            if card is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"{payload.model_id} isn't in the model catalogue. Add it as "
+                    "a custom model first.",
+                )
+            shard = whole_model_shard(card)
         command = StartDownload(
             target_node_id=payload.target_node_id,
             shard_metadata=shard,
