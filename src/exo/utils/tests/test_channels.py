@@ -3,6 +3,7 @@ import multiprocessing as mp
 import os
 import threading
 import time
+from multiprocessing import queues
 from multiprocessing.connection import Connection
 
 import pytest
@@ -278,3 +279,26 @@ def test_closing_a_channel_from_several_threads_at_once_closes_it_once(
         for closer in closers:
             closer.join(5)
     assert failures == []
+
+
+def test_a_close_that_returns_has_closed_the_buffer(monkeypatch: pytest.MonkeyPatch):
+    # When two threads close a sender at once, the one that doesn't close the buffer itself
+    # must still return only once it is closed: joining, as the runner does right after
+    # closing, asserts that the queue is closed.
+    queue_close = queues.Queue[object].close
+    closing = threading.Event()
+
+    def slow_close(queue: queues.Queue[object]) -> None:
+        closing.set()
+        time.sleep(0.1)
+        queue_close(queue)
+
+    monkeypatch.setattr(queues.Queue, "close", slow_close)
+    send, _ = mp_channel[int]()
+    first = threading.Thread(target=send.close)
+    first.start()
+    assert closing.wait(2)
+    send.close()
+    send.join()
+    first.join(2)
+    assert not first.is_alive()

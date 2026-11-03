@@ -324,13 +324,14 @@ class MpState[T]:
         closes it when it reads the end-of-stream marker, which the receiver's close
         writes just before it closes the buffer itself. Closing a pipe twice closes its
         descriptor twice, which fails (EBADF), or closes whatever file was given that
-        number in between.
+        number in between. A thread that finds another closing the buffer waits for it,
+        so that the buffer is closed when either returns (joining asserts it is).
         """
         with self._buffer_close_lock:
             if self._buffer_closed:
                 return
             self._buffer_closed = True
-        self.buffer.close()
+            self.buffer.close()
 
     def __getstate__(self):
         d = self.__dict__.copy()
