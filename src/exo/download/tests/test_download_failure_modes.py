@@ -493,7 +493,8 @@ async def test_one_slow_model_does_not_hold_up_another(
 async def test_master_change_mid_download_resumes(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
-    """exo restarts the download coordinator when a new master is elected."""
+    """The node's download side restarts mid-download (exo did this on every new
+    master until the coordinator was kept across elections); it resumes."""
     hub.bandwidth = 400_000
     async with node_for(hub, repo, tmp_path) as node:
         node.want(REPO)
