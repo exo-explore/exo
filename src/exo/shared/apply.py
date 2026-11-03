@@ -183,11 +183,17 @@ def apply_task_created(event: TaskCreated, state: State) -> State:
         # stopping a runner): the deletion that removes an instance's tasks has already been
         # applied, so only the worker's report that it finished would remove it, and a worker
         # that stops first (its node quitting) never sends that. The worker carries the task
-        # out either way.
-        logger.warning(
+        # out either way. Every normal stop leaves one of these (the Shutdown the worker plans
+        # because the instance left the state), so only a request is worth a warning: it means
+        # a request raced the deletion of its instance.
+        message = (
             f"Not adding task {event.task_id}: its instance "
             f"{event.task.instance_id} no longer exists"
         )
+        if _is_generation(event.task):
+            logger.warning(message)
+        else:
+            logger.debug(message)
         return state
     new_tasks: Mapping[TaskId, Task] = {**state.tasks, event.task_id: event.task}
     return state.model_copy(update={"tasks": new_tasks})

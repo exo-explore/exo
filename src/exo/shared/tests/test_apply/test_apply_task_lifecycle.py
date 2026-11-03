@@ -2,6 +2,7 @@
 generation tasks wait for TaskDeleted, and are never added for an instance that is gone."""
 
 import pytest
+from loguru import logger
 
 from exo.shared.apply import apply
 from exo.shared.types.common import CommandId, ModelId, NodeId
@@ -196,6 +197,34 @@ def test_a_runner_shutdown_for_a_deleted_instance_is_not_added_and_its_end_is_ha
         TaskStatusUpdated(task_id=shutdown.task_id, task_status=TaskStatus.Complete),
     )
     assert not state.tasks
+
+
+def levels_logged_while(*events: Event) -> list[str]:
+    """The levels of the records apply logs for these events, in order."""
+    levels: list[str] = []
+    sink_id = logger.add(
+        lambda message: levels.append(message.record["level"].name), level="DEBUG"
+    )
+    try:
+        run(*events)
+    finally:
+        logger.remove(sink_id)
+    return levels
+
+
+def test_a_normal_stops_shutdown_is_not_a_warning_but_a_raced_request_is() -> None:
+    """Every normal stop leaves a Shutdown for an instance already gone (the worker plans it
+    because the instance left the state), on every node, so it is logged at debug. A request
+    for a deleted instance means it raced the deletion, which is worth a warning."""
+    shutdown = Shutdown(
+        instance_id=INSTANCE, runner_id=RUNNER, task_status=TaskStatus.Pending
+    )
+    assert levels_logged_while(
+        INSTANCE_CREATED, InstanceDeleted(instance_id=INSTANCE), created(shutdown)
+    ) == ["DEBUG"]
+    assert levels_logged_while(
+        INSTANCE_CREATED, InstanceDeleted(instance_id=INSTANCE), created(generation())
+    ) == ["WARNING"]
 
 
 def runner_tasks() -> list[Task]:
