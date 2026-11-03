@@ -17,6 +17,7 @@ log.workspace = true
 bytemuck = { workspace = true, features = ["derive"] }
 socket2.workspace = true
 blake3.workspace = true
+libc.workspace = true
 
 [lints]
 workspace = true

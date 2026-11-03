@@ -178,21 +178,64 @@ pub enum Quorum {
     Minority,
 }
 
-/// A reading of both clocks. The monotonic clock times everything. The wall clock shows a
-/// sleep, which macOS doesn't count on its monotonic clock, and dates what is reported.
+/// A reading of the clocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Now {
-    pub monotonic: Instant,
+    /// Times everything. It stops while the machine sleeps (Rust's `Instant`: the uptime clock on
+    /// macOS, `CLOCK_MONOTONIC` on Linux), so a grace doesn't run out during a sleep.
+    pub awake: Instant,
+    /// A clock that keeps counting while the machine sleeps (`CLOCK_MONOTONIC` on macOS,
+    /// `CLOCK_BOOTTIME` on Linux), as the time since some fixed point. Only compared with
+    /// `awake` to see that this node slept: unlike the wall clock it never jumps, so neither an
+    /// NTP step nor someone setting the time looks like a stall.
+    pub with_sleep: Duration,
+    /// Dates what is reported; never used to time anything
     pub wall: SystemTime,
 }
 
 impl Now {
     pub fn read() -> Self {
         Self {
-            monotonic: Instant::now(),
+            awake: Instant::now(),
+            with_sleep: clock_with_sleep(),
             wall: SystemTime::now(),
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+const CLOCK_WITH_SLEEP: libc::clockid_t = libc::CLOCK_MONOTONIC;
+#[cfg(target_os = "linux")]
+const CLOCK_WITH_SLEEP: libc::clockid_t = libc::CLOCK_BOOTTIME;
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+const CLOCK_WITH_SLEEP: libc::clockid_t = libc::CLOCK_MONOTONIC;
+
+/// The clock that keeps counting while the machine sleeps; zero if it can't be read (then only
+/// a frozen process shows as a stall, not a sleep)
+fn clock_with_sleep() -> Duration {
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: clock_gettime only writes into `time`, which outlives the call
+    if unsafe { libc::clock_gettime(CLOCK_WITH_SLEEP, &raw mut time) } != 0 {
+        return Duration::ZERO;
+    }
+    Duration::new(
+        u64::try_from(time.tv_sec).unwrap_or(0),
+        u32::try_from(time.tv_nsec).unwrap_or(0),
+    )
+}
+
+/// Whether the time from the tick at `before` to the one at `now` means this node was stopped:
+/// more than `STALL_THRESHOLD` late, on the clock that stops in a sleep (a frozen or starved
+/// process) or on the one that doesn't (a sleep). Returns how late it was. Membership and
+/// discovery both use this, so they agree on what a stall is.
+pub fn stall(before: Now, now: Now) -> Option<Duration> {
+    let awake = now.awake.saturating_duration_since(before.awake);
+    let with_sleep = now.with_sleep.saturating_sub(before.with_sleep);
+    let late = awake.max(with_sleep).saturating_sub(TICK);
+    (late >= STALL_THRESHOLD).then_some(late)
 }
 
 /// A node and the state it has been in since `since`. Reported once for each change.
@@ -243,7 +286,9 @@ pub struct Membership {
     grace: Duration,
     /// Every peer seen Alive, until it is forgotten (see `FORGET_AFTER`)
     peers: BTreeMap<ZenohId, Peer>,
-    last_tick: Now,
+    /// The previous tick; `None` before the first, which never counts as late (a node may
+    /// start ticking well after the membership was made)
+    last_tick: Option<Now>,
     /// When this node's latest stall stops counting: until then it is Resuming, and a peer's
     /// grace (or wedge timeout) is counted from no earlier than this
     resumed_at: Option<Instant>,
@@ -262,7 +307,7 @@ impl Membership {
             own_since: now.wall,
             grace,
             peers: BTreeMap::new(),
-            last_tick: now,
+            last_tick: None,
             resumed_at: None,
             stalled_for: None,
             probes: Vec::new(),
@@ -365,7 +410,7 @@ impl Membership {
     /// exo on the node reported (its periodic node info). Only a report undoes a wedge.
     pub fn heard_from(&mut self, node: ZenohId, now: Now) -> Option<Member> {
         let peer = self.peers.get_mut(&node)?;
-        peer.last_heard = Some(now.monotonic);
+        peer.last_heard = Some(now.awake);
         matches!(
             peer.state,
             MemberState::Suspect(Reason::Wedged) | MemberState::Gone(Reason::Wedged)
@@ -388,24 +433,24 @@ impl Membership {
     /// Called every `TICK`: notices this node's own stalls, and peers that are Suspect for
     /// `grace` (Gone) or Alive but unheard for `WEDGE_TIMEOUT` (Suspect(Wedged)).
     ///
-    /// A tick more than `STALL_THRESHOLD` late on either clock means this node was stopped.
-    /// Both clocks are read because each misses a case: when a Mac sleeps its monotonic clock
-    /// stops and only the wall clock shows the gap, and the wall clock can be set back while
-    /// the process is frozen. This node is then Resuming for `HOLD_OFF + REJOIN` (discovery
-    /// holds off, then the peers reconnect), and no peer's grace or wedge timeout counts the
-    /// time before that: a peer it lost meanwhile gets a full grace from the end of it.
+    /// A late tick (see `stall`) means this node was stopped: frozen, starved or asleep. It is
+    /// then Resuming for `HOLD_OFF + REJOIN` (discovery holds off, then the peers reconnect),
+    /// and no peer's grace or wedge timeout counts the time before that: a peer it lost
+    /// meanwhile gets a full grace from the end of it.
     pub fn tick(&mut self, now: Now) -> Vec<Member> {
         let mut changes = Vec::new();
-        let late = elapsed(self.last_tick, now).saturating_sub(TICK);
-        self.last_tick = now;
-        if late >= STALL_THRESHOLD {
+        let stalled = self
+            .last_tick
+            .replace(now)
+            .and_then(|before| stall(before, now));
+        if let Some(late) = stalled {
             self.stalled_for = Some(late);
-            self.resumed_at = Some(now.monotonic + HOLD_OFF + REJOIN);
+            self.resumed_at = Some(now.awake + HOLD_OFF + REJOIN);
             if self.own_state != MemberState::Resuming {
                 changes.push(self.set_own(MemberState::Resuming, now));
             }
         } else if self.own_state == MemberState::Resuming
-            && self.resumed_at.is_none_or(|at| now.monotonic >= at)
+            && self.resumed_at.is_none_or(|at| now.awake >= at)
         {
             changes.push(self.set_own(MemberState::Alive, now));
         }
@@ -416,14 +461,14 @@ impl Membership {
             .iter()
             .filter_map(|(&node, peer)| match peer.state {
                 MemberState::Suspect(reason)
-                    if now.monotonic >= timed_from(peer.since.monotonic) + self.grace =>
+                    if now.awake >= timed_from(peer.since.awake) + self.grace =>
                 {
                     Some((node, MemberState::Gone(reason)))
                 }
                 MemberState::Alive
-                    if peer.last_heard.is_some_and(|heard| {
-                        now.monotonic >= timed_from(heard) + WEDGE_TIMEOUT
-                    }) =>
+                    if peer
+                        .last_heard
+                        .is_some_and(|heard| now.awake >= timed_from(heard) + WEDGE_TIMEOUT) =>
                 {
                     Some((node, MemberState::Suspect(Reason::Wedged)))
                 }
@@ -444,8 +489,8 @@ impl Membership {
             let MemberState::Gone(_) = peer.state else {
                 return true;
             };
-            let from = resumed_at.map_or(peer.since.monotonic, |at| peer.since.monotonic.max(at));
-            now.monotonic < from + FORGET_AFTER
+            let from = resumed_at.map_or(peer.since.awake, |at| peer.since.awake.max(at));
+            now.awake < from + FORGET_AFTER
         });
 
         // Ask again, every REPROBE_INTERVAL, each node Alive without a connection of its own
@@ -455,8 +500,8 @@ impl Membership {
                 continue;
             }
             match peer.next_probe {
-                None => peer.next_probe = Some(now.monotonic + REPROBE_INTERVAL),
-                Some(at) if now.monotonic >= at => {
+                None => peer.next_probe = Some(now.awake + REPROBE_INTERVAL),
+                Some(at) if now.awake >= at => {
                     peer.next_probe = None;
                     ask.push(node);
                 }
@@ -570,7 +615,7 @@ impl Membership {
             peer.next_probe = None;
             if state == MemberState::Alive {
                 // It couldn't report while it was away: its wedge timeout starts again
-                peer.last_heard = peer.last_heard.map(|_| now.monotonic);
+                peer.last_heard = peer.last_heard.map(|_| now.awake);
             }
         }
         self.member(node)
@@ -607,14 +652,6 @@ pub fn quorum(reachable: usize, last_known: usize) -> Quorum {
     }
 }
 
-/// The time from `before` to `now` on whichever clock shows more of it. A wall clock set back
-/// counts as no time.
-fn elapsed(before: Now, now: Now) -> Duration {
-    let monotonic = now.monotonic.saturating_duration_since(before.monotonic);
-    let wall = now.wall.duration_since(before.wall).unwrap_or_default();
-    monotonic.max(wall)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -627,7 +664,7 @@ mod tests {
 
     const OWN: u8 = 0;
 
-    /// A clock the tests move by hand: both clocks advance together unless told otherwise
+    /// A clock the tests move by hand: every clock advances together unless told otherwise
     #[derive(Clone, Copy)]
     struct Clock {
         now: Now,
@@ -637,35 +674,44 @@ mod tests {
         fn new() -> Self {
             Self {
                 now: Now {
-                    monotonic: Instant::now(),
+                    awake: Instant::now(),
+                    with_sleep: Duration::from_secs(1_000),
                     wall: SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000),
                 },
             }
         }
 
-        /// Both clocks move on by `by` (a running or frozen process)
+        /// Every clock moves on by `by` (a running or frozen process)
         fn advance(&mut self, by: Duration) -> Now {
-            self.now.monotonic += by;
+            self.now.awake += by;
+            self.now.with_sleep += by;
             self.now.wall += by;
             self.now
         }
 
-        /// Only the wall clock moves on (a Mac asleep: its monotonic clock stops)
+        /// The machine sleeps for `by`: the clock that stops in a sleep doesn't move
         fn sleep(&mut self, by: Duration) -> Now {
+            self.now.with_sleep += by;
             self.now.wall += by;
             self.now
         }
 
-        /// The wall clock is set back (and the monotonic clock moves on by `by`)
-        fn set_wall_back(&mut self, back: Duration, by: Duration) -> Now {
-            self.now.monotonic += by;
-            self.now.wall -= back;
+        /// Someone (or NTP) sets the wall clock by `by`, forward or back; nothing else moves
+        fn set_wall(&mut self, forward: bool, by: Duration) -> Now {
+            if forward {
+                self.now.wall += by;
+            } else {
+                self.now.wall -= by;
+            }
             self.now
         }
     }
 
+    /// A membership that has ticked once, at the clock's time
     fn membership(clock: &Clock) -> Membership {
-        Membership::new(zid(OWN), GRACE, clock.now)
+        let mut membership = Membership::new(zid(OWN), GRACE, clock.now);
+        membership.tick(clock.now);
+        membership
     }
 
     fn state(change: Option<Member>) -> Option<(ZenohId, MemberState)> {
@@ -1342,11 +1388,11 @@ mod tests {
     }
 
     #[test]
-    fn a_sleeping_mac_is_resuming_though_its_monotonic_clock_stopped() {
+    fn a_sleeping_machine_is_resuming_though_its_awake_clock_stopped() {
         let mut clock = Clock::new();
         let mut membership = membership(&clock);
         membership.tick(clock.advance(TICK));
-        // Asleep for a minute: the next tick is one monotonic second later
+        // Asleep for a minute: the next tick is one awake second later
         clock.sleep(Duration::from_secs(60));
         assert_eq!(
             states(membership.tick(clock.advance(TICK))),
@@ -1355,27 +1401,54 @@ mod tests {
     }
 
     #[test]
-    fn a_wall_clock_set_back_while_frozen_is_still_a_stall() {
+    fn a_wall_clock_set_while_frozen_is_still_a_stall() {
         let mut clock = Clock::new();
         let mut membership = membership(&clock);
+        clock.set_wall(false, Duration::from_secs(60));
         assert_eq!(
-            states(
-                membership
-                    .tick(clock.set_wall_back(Duration::from_secs(60), Duration::from_secs(30)))
-            ),
+            states(membership.tick(clock.advance(Duration::from_secs(30)))),
             vec![(zid(OWN), MemberState::Resuming)]
         );
     }
 
     #[test]
-    fn a_wall_clock_set_back_while_running_is_no_stall() {
+    fn a_wall_clock_set_while_running_is_no_stall() {
+        // An NTP step, or someone setting the time, either way
+        for forward in [true, false] {
+            let mut clock = Clock::new();
+            let mut membership = membership(&clock);
+            clock.set_wall(forward, Duration::from_secs(3600));
+            assert_eq!(membership.tick(clock.advance(TICK)), vec![]);
+            assert_eq!(run_for(&mut membership, &mut clock, TICK * 3), vec![]);
+            assert_eq!(membership.own().state, MemberState::Alive);
+        }
+    }
+
+    #[test]
+    fn the_clock_that_counts_sleep_is_read_and_moves_with_the_awake_one() {
+        let before = Now::read();
+        std::thread::sleep(Duration::from_millis(50));
+        let after = Now::read();
+        assert!(before.with_sleep > Duration::ZERO, "clock_gettime failed");
+        let awake = after.awake - before.awake;
+        let with_sleep = after.with_sleep - before.with_sleep;
+        assert!(
+            with_sleep.abs_diff(awake) < Duration::from_millis(20),
+            "{awake:?} vs {with_sleep:?}"
+        );
+        assert_eq!(stall(before, after), None);
+    }
+
+    #[test]
+    fn the_first_tick_is_never_late() {
         let mut clock = Clock::new();
-        let mut membership = membership(&clock);
+        // Made long before it first ticks (exo read the stream late)
+        let mut membership = Membership::new(zid(OWN), GRACE, clock.now);
         assert_eq!(
-            membership.tick(clock.set_wall_back(Duration::from_secs(3600), TICK)),
+            membership.tick(clock.advance(Duration::from_secs(60))),
             vec![]
         );
-        assert_eq!(run_for(&mut membership, &mut clock, TICK * 3), vec![]);
+        assert_eq!(membership.own().state, MemberState::Alive);
     }
 
     #[test]
