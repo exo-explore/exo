@@ -159,6 +159,8 @@ class DownloadNode:
         self.worker = worker
         self.state = State()
         self.history: dict[ModelId, list[DownloadProgress]] = {}
+        # How many statuses each model had when its download was last started
+        self._started_at: dict[ModelId, int] = {}
         self.events: list[NodeDownloadProgress] = []
         self.wanted: dict[ModelId, ShardMetadata] = {}
         self.commands_sent: list[DownloadCommand] = []
@@ -238,6 +240,7 @@ class DownloadNode:
         self, model_id: str, shard: ShardMetadata | None = None
     ) -> None:
         card = self.cards[ModelId(model_id)]
+        self._started_at[ModelId(model_id)] = len(self.statuses(model_id))
         await self.send(
             StartDownload(
                 target_node_id=NODE_ID, shard_metadata=shard or shard_for(card)
@@ -304,17 +307,37 @@ class DownloadNode:
         )
 
     async def wait_until_idle(self, model_id: str, timeout: float = 10.0) -> None:
-        """Wait until the model is neither downloading nor failed here: Pending, or not
-        listed at all when nothing of it reached the disk. What a cancel leaves depends on
-        whether any bytes were written first."""
+        """Wait until the download last started has registered, then stopped, and the
+        model is idle here: Pending, or not listed when nothing of it reached the disk
+        (what a cancel leaves depends on whether any bytes were written first).
+
+        "Registered" is an Ongoing (or Failed) status since the start; "stopped" is a
+        Pending after it, which a cancel always announces, 0-byte or not. So neither a
+        status from before the start was handled, nor a rescan's, is taken for it."""
+        started_at = self._started_at.get(ModelId(model_id), 0)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            since_start = self.statuses(model_id)[started_at:]
+            registered = next(
+                (
+                    index
+                    for index, status in enumerate(since_start)
+                    if isinstance(status, (DownloadOngoing, DownloadFailed))
+                ),
+                None,
+            )
+            stopped = registered is not None and any(
+                isinstance(status, DownloadPending)
+                for status in since_start[registered + 1 :]
+            )
             status = self.status(model_id)
-            if status is None or isinstance(status, DownloadPending):
+            if stopped and (status is None or isinstance(status, DownloadPending)):
                 return
             await asyncio.sleep(0.01)
         raise AssertionError(
-            f"{model_id} is still {_describe(self.status(model_id))} after {timeout}s"
+            f"{model_id} didn't register and then stop within {timeout}s after its last "
+            f"start; status is {_describe(self.status(model_id))}, history since the "
+            f"start: {[type(s).__name__ for s in self.statuses(model_id)[started_at:]]}"
         )
 
     async def wait_for_unlisted(self, model_id: str, timeout: float = 10.0) -> None:

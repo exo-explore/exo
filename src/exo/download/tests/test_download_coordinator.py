@@ -226,3 +226,14 @@ async def test_resuming_keeps_the_pinned_commit(
         await node.wait_for(REPO, DownloadCompleted, timeout=10)
         assert node.files_on_disk(REPO) == expected_files(repo, first_commit)
         assert hub.count(kind="tree") == 1
+
+
+async def test_waiting_until_idle_needs_the_cancels_answer(
+    hub: FakeHub, repo: FakeRepo, tmp_path: Path
+) -> None:
+    # Idle isn't enough: the download may not have registered yet. A model that never
+    # started is idle (its first scan even announces it), but no download stopped
+    async with DownloadNode(hub, tmp_path, [card_for(repo)], worker=False) as node:
+        await node.cancel(REPO)
+        with pytest.raises(AssertionError, match="didn't register and then stop"):
+            await node.wait_until_idle(REPO, timeout=0.3)
