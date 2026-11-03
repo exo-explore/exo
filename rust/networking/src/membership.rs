@@ -441,24 +441,27 @@ impl Membership {
     }
 
     /// The coordinator removed the node from the cluster: it leaves the view (and no longer
-    /// counts), and if it comes back it is new. Only once this node reads Majority with it still
-    /// counted, now or later (when another node joins, say): a coordinator on the smaller side of a
-    /// split, or on either side of an even one, also removes the nodes it lost, and honouring that
-    /// at once would make this node read Majority before the split hold ends. A node this node
-    /// still reaches stays (it counts again).
+    /// counts), and if it comes back it is new. Only once it isn't Alive here, and this node reads
+    /// Majority with it still counted, now or later:
+    /// - a quitting node announces its departure (a removal) while it is still Alive here, and its
+    ///   token goes a few seconds later; a node this node still reaches for good (wrongly
+    ///   removed) stays, and a node that is back after a real loss is no longer removed;
+    /// - a coordinator on the smaller side of a split, or on either side of an even one, also
+    ///   removes the nodes it lost, and honouring that at once would make this node read Majority
+    ///   before the split hold ends.
     pub fn forget(&mut self, node: ZenohId) {
-        if let Some(peer) = self.peers.get_mut(&node)
-            && peer.state != MemberState::Alive
-        {
+        if let Some(peer) = self.peers.get_mut(&node) {
             peer.removed = true;
             self.apply_removals();
         }
     }
 
-    /// Takes the nodes the coordinator removed out of the view, if this node reads Majority
+    /// Takes the nodes the coordinator removed, and that aren't Alive here, out of the view, if
+    /// this node reads Majority
     fn apply_removals(&mut self) {
         if self.quorum() == Quorum::Majority {
-            self.peers.retain(|_, peer| !peer.removed);
+            self.peers
+                .retain(|_, peer| !(peer.removed && peer.state != MemberState::Alive));
         }
     }
 
@@ -1439,11 +1442,29 @@ mod tests {
 
     #[test]
     fn the_coordinator_removing_a_node_this_one_reaches_changes_nothing() {
-        let clock = Clock::new();
+        let mut clock = Clock::new();
         let mut membership = membership(&clock);
         connected_peer(&mut membership, &clock, 1);
+        connected_peer(&mut membership, &clock, 2);
         membership.forget(zid(1));
-        assert_eq!(membership.snapshot().last_known, 2);
+        run_for(&mut membership, &mut clock, GRACE);
+        assert_eq!(membership.snapshot().last_known, 3);
+    }
+
+    #[test]
+    fn a_node_back_after_its_removal_is_no_longer_removed() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        // Lost and removed while this node, alone, reads Half: the removal waits
+        lose(&mut membership, clock.now, 1);
+        membership.forget(zid(1));
+        // Back after that real loss: the removal no longer holds
+        membership.connection_opened(zid(1), clock.now);
+        lose(&mut membership, clock.now, 1);
+        connected_peer(&mut membership, &clock, 2);
+        run_for(&mut membership, &mut clock, TICK);
+        assert_eq!(counted(&membership, 1), Some(true));
     }
 
     #[test]
@@ -1468,6 +1489,46 @@ mod tests {
                 "after the restart as node {new}"
             );
             assert_eq!(counted(&membership, old), None, "removed once Majority");
+        }
+    }
+
+    #[test]
+    fn a_removal_of_a_node_still_alive_here_applies_once_it_leaves() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        connected_peer(&mut membership, &clock, 2);
+        // A quitting node announces its departure (a removal) before its token goes
+        membership.forget(zid(1));
+        assert_eq!(counted(&membership, 1), Some(true), "still Alive here");
+        run_for(&mut membership, &mut clock, Duration::from_secs(3));
+        lose(&mut membership, clock.now, 1);
+        run_for(&mut membership, &mut clock, TICK);
+        assert_eq!(counted(&membership, 1), None);
+        assert_eq!(membership.snapshot().last_known, 2);
+    }
+
+    #[test]
+    fn a_pair_whose_other_node_announces_each_quit_stays_a_majority() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        for (old, new) in [(1, 2), (2, 3), (3, 4)] {
+            run_for(&mut membership, &mut clock, Duration::from_secs(20));
+            // It quits: its departure first, while it is still Alive here; its token 3 s later
+            membership.forget(zid(old));
+            run_for(&mut membership, &mut clock, Duration::from_secs(3));
+            lose(&mut membership, clock.now, old);
+            run_for(&mut membership, &mut clock, Duration::from_secs(10));
+            // It comes back under a new id
+            connected_peer(&mut membership, &clock, new);
+            run_for(&mut membership, &mut clock, TICK);
+            let snapshot = membership.snapshot();
+            assert_eq!(
+                (snapshot.quorum, snapshot.reachable, snapshot.last_known),
+                (Quorum::Majority, 2, 2),
+                "after the restart as node {new}"
+            );
         }
     }
 
