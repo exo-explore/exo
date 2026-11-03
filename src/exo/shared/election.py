@@ -1,4 +1,5 @@
 import math
+import secrets
 from collections import Counter
 from typing import Self
 
@@ -88,6 +89,18 @@ def choose_master(candidates: list[ElectionMessage]) -> ElectionMessage:
     return max(candidates)
 
 
+def start_session(node_id: NodeId) -> SessionId:
+    """The session a node is master of when it starts, before any election: its own, and new
+    for every start.
+
+    A node keeps its id across restarts, and a master keeps the session it started with, so the
+    rest of the cluster may still follow the session of the node's previous run. Starting in that
+    same session, the new run would be taken for that master although it has none of its state.
+    The clock is negative so it never equals an election round's (those count up from 1).
+    """
+    return SessionId(master_node_id=node_id, election_clock=-1 - secrets.randbits(62))
+
+
 class ElectionResult(FrozenModel):
     session_id: SessionId
     won_clock: int
@@ -106,6 +119,7 @@ class Election:
         command_receiver: Receiver[ForwarderCommand],
         is_candidate: bool = True,
         seniority: int = 0,
+        initial_session: SessionId | None = None,
     ):
         # If we aren't a candidate, simply don't increment seniority.
         # For reference: This node can be elected master if all nodes are not master candidates
@@ -115,8 +129,8 @@ class Election:
         self.node_id = node_id
         self.commands_seen = 0
         # Every node spawns as master
-        self.current_session: SessionId = SessionId(
-            master_node_id=node_id, election_clock=0
+        self.current_session: SessionId = (
+            initial_session if initial_session is not None else start_session(node_id)
         )
 
         # Senders/Receivers

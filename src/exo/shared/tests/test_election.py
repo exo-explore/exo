@@ -380,6 +380,7 @@ async def test_tie_breaker_prefers_node_with_more_commands_seen() -> None:
         is_candidate=True,
         seniority=0,
     )
+    start = election.current_session
 
     async with create_task_group() as tg:
         with fail_after(2):
@@ -407,7 +408,11 @@ async def test_tie_breaker_prefers_node_with_more_commands_seen() -> None:
             while True:
                 result = await er_rx.receive()
                 if result.session_id.master_node_id == me:
-                    assert result.session_id.election_clock in (0, 1)
+                    # The session we started in (we were master already) or round 1's
+                    assert result.session_id in (
+                        start,
+                        SessionId(master_node_id=me, election_clock=1),
+                    )
                     break
 
             em_in_tx.close()
