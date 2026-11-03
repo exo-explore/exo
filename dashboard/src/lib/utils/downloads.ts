@@ -209,3 +209,78 @@ export function indexModelDownloads(
   }
   return index;
 }
+
+// Runner statuses with the model's weights in memory
+const IN_MEMORY = new Set([
+  "RunnerLoaded",
+  "RunnerWarmingUp",
+  "RunnerReady",
+  "RunnerRunning",
+]);
+// Runner statuses after which the model no longer runs there
+const STOPPED = new Set([
+  "RunnerFailed",
+  "RunnerShuttingDown",
+  "RunnerShutdown",
+]);
+
+/**
+ * Whether a model runs on a node (its weights are in memory there), is
+ * starting there (an instance has a runner there, still downloading,
+ * connecting or loading), or neither. Instances and runner statuses are
+ * tagged: { MlxRingInstance: { shardAssignments } }, { RunnerReady: {...} }.
+ */
+export function modelStateOnNode(
+  instances: Record<string, unknown>,
+  runners: Record<string, unknown>,
+  nodeId: string,
+  modelId: string,
+): "running" | "starting" | null {
+  for (const wrapped of Object.values(instances)) {
+    if (!wrapped || typeof wrapped !== "object") continue;
+    const unwrapped = unwrapTagged(wrapped as Record<string, unknown>);
+    if (!unwrapped) continue;
+    const assignments = unwrapped[1].shardAssignments as
+      | { modelId?: string; nodeToRunner?: Record<string, string> }
+      | undefined;
+    if (assignments?.modelId !== modelId) continue;
+    const runnerId = assignments.nodeToRunner?.[nodeId];
+    if (!runnerId) continue;
+    const status = runners[runnerId];
+    const tag =
+      status && typeof status === "object"
+        ? unwrapTagged(status as Record<string, unknown>)?.[0]
+        : undefined;
+    if (tag && IN_MEMORY.has(tag)) return "running";
+    if (tag && STOPPED.has(tag)) continue;
+    return "starting";
+  }
+  return null;
+}
+
+/** What to ask before deleting a model's files from a device. */
+export function deleteDownloadQuestion(options: {
+  modelName: string;
+  deviceName: string;
+  /** e.g. "16 GB", or "6.8 GB downloaded" */
+  size: string | null;
+  state: "running" | "starting" | null;
+}): string {
+  const { modelName, deviceName, size, state } = options;
+  const question = `Delete ${modelName}${size ? ` (${size})` : ""} from ${deviceName}?`;
+  if (state === "running") {
+    return (
+      `${question}\n\n` +
+      `It's running on ${deviceName}. It keeps running from memory for now, ` +
+      `and ${deviceName} will download it again the next time it starts.`
+    );
+  }
+  if (state === "starting") {
+    return (
+      `${question}\n\n` +
+      `It's starting on ${deviceName}, which needs these files: ` +
+      `${deviceName} will download them again.`
+    );
+  }
+  return `${question}\n\nYou'll need to download it again to run it on this device.`;
+}
