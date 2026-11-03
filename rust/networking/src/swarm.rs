@@ -199,7 +199,9 @@ async fn drive_membership(
     // Every log call below is outside `members.with` (see `Members`)
     loop {
         let reported: Vec<Member> = tokio::select! {
-            // The tick first: after a stall it tells us so before any queued input is handled
+            // The tick first: after a stall it tells us so before any queued input is handled.
+            // Then the inputs a node has few of (probe answers, connections) ahead of tokens, so
+            // that a burst of tokens can't hold them up.
             biased;
             _ = tick.tick() => {
                 let (changes, stalled_for) = members.with(|membership| {
@@ -213,6 +215,34 @@ async fn drive_membership(
                     );
                 }
                 changes
+            }
+            Some((zid, answered)) = finished_probes.recv() => {
+                let change = members
+                    .with(|membership| membership.probe_finished(zid, answered, Now::read()));
+                if answered {
+                    log::debug!("{zid} answered that it is still there");
+                } else if change.is_some() {
+                    log::info!("{zid} didn't answer within {PROBE_TIMEOUT:?}");
+                }
+                change.into_iter().collect()
+            }
+            event = connections.recv_async() => {
+                let Ok(event) = event else { return };
+                let zid = *event.transport().zid();
+                match event.kind() {
+                    SampleKind::Put => {
+                        log::info!("connected to {zid}");
+                        members
+                            .with(|membership| membership.connection_opened(zid, Now::read()))
+                            .into_iter()
+                            .collect()
+                    }
+                    SampleKind::Delete => {
+                        log::info!("connection to {zid} closed");
+                        members.with(|membership| membership.connection_closed(zid));
+                        Vec::new()
+                    }
+                }
             }
             token = tokens.recv_async() => {
                 // The session is closed
@@ -235,44 +265,16 @@ async fn drive_membership(
                 };
                 change.into_iter().collect()
             }
-            event = connections.recv_async() => {
-                let Ok(event) = event else { return };
-                let zid = *event.transport().zid();
-                match event.kind() {
-                    SampleKind::Put => {
-                        log::info!("connected to {zid}");
-                        members
-                            .with(|membership| membership.connection_opened(zid, Now::read()))
-                            .into_iter()
-                            .collect()
-                    }
-                    SampleKind::Delete => {
-                        log::info!("connection to {zid} closed");
-                        if members.with(|membership| membership.connection_closed(zid)) {
-                            let session = session.clone();
-                            let probe_results = probe_results.clone();
-                            tokio::spawn(async move {
-                                let answered = answers(&session, zid).await;
-                                _ = probe_results.send((zid, answered));
-                            });
-                        }
-                        Vec::new()
-                    }
-                }
-            }
-            Some((zid, answered)) = finished_probes.recv() => {
-                let change = members
-                    .with(|membership| membership.probe_finished(zid, answered, Now::read()));
-                if answered {
-                    log::info!("{zid} is still reachable after its connection closed");
-                } else if change.is_some() {
-                    log::info!(
-                        "{zid} didn't answer within {PROBE_TIMEOUT:?} after its connection closed"
-                    );
-                }
-                change.into_iter().collect()
-            }
         };
+        // Ask each node the membership wants asked, outside its lock
+        for zid in members.with(Membership::take_probes) {
+            let session = session.clone();
+            let probe_results = probe_results.clone();
+            tokio::spawn(async move {
+                let answered = answers(&session, zid).await;
+                _ = probe_results.send((zid, answered));
+            });
+        }
         for change in reported {
             log::info!("membership: {} is {:?}", change.node, change.state);
             if changes.send(change).is_err() {
@@ -495,7 +497,7 @@ mod tests {
     use zenoh_plugin_trait::PluginsManager;
 
     use super::{FromSwarm, Swarm};
-    use crate::membership::{GRACE, LEASE, MemberState, PROBE_TIMEOUT};
+    use crate::membership::{GRACE, LEASE, MemberState, PROBE_TIMEOUT, REPROBE_INTERVAL, TICK};
 
     const NODE_ENV: &str = "EXO_SWARM_TEST_NODE";
     /// Set to make these tests fail, instead of skipping, where there is no IPv6 loopback
@@ -601,11 +603,15 @@ mod tests {
     }
 
     /// The direct connection between two nodes closes while both still reach each other
-    /// through the third one: the probe must be answered through it. Asked at once, before
-    /// zenoh had recomputed its routes, it wasn't always.
+    /// through the third one: the probe must be answered through it (asked at once, before
+    /// zenoh had recomputed its routes, it wasn't always), and so must the probes repeated while
+    /// it has no connection of its own. Then that node crashes: nothing closes on the far end of
+    /// the cut and zenoh may keep its token, but the repeated probe shows it, and it is Gone a
+    /// grace later (it used to stay Alive for good).
     #[test]
-    fn a_node_still_reachable_through_another_node_stays_alive() {
-        const NAME: &str = "swarm::tests::a_node_still_reachable_through_another_node_stays_alive";
+    fn a_node_reached_through_another_node_stays_alive_until_it_crashes() {
+        const NAME: &str =
+            "swarm::tests::a_node_reached_through_another_node_stays_alive_until_it_crashes";
         if let Ok(spec) = std::env::var(NODE_ENV) {
             run_node(&spec);
             return;
@@ -619,7 +625,8 @@ mod tests {
         let (dialer, dialed) = if ids[0] > ids[1] { (0, 1) } else { (1, 0) };
         let proxy_port = ports[3];
         let proxy = Proxy::start(proxy_port, ports[dialed]);
-        let mut cluster = Cluster::spawn(NAME, GRACE, &zids, &ports[..3], |from, to| {
+        let grace = Duration::from_secs(3);
+        let mut cluster = Cluster::spawn(NAME, grace, &zids, &ports[..3], |from, to| {
             if from == dialer && to == dialed {
                 proxy_port
             } else {
@@ -633,12 +640,35 @@ mod tests {
         // Both ends see the direct connection close...
         cluster.wait_for_all(&[dialer], dialed, "closed", cut, cut + SLACK);
         cluster.wait_for_all(&[dialed], dialer, "closed", cut, cut + SLACK);
-        // ... and neither takes the other for unreachable
-        std::thread::sleep(PROBE_TIMEOUT + SLACK);
+        // ... and neither takes the other for unreachable, also when asked again
+        let asked_again = REPROBE_INTERVAL + TICK + PROBE_TIMEOUT;
+        std::thread::sleep(asked_again + SLACK);
         let suspect = cluster.reported("Suspect");
         assert!(
             suspect.is_empty(),
             "nodes reported as unreachable though still reachable: {suspect:#?}"
+        );
+
+        let killed = Instant::now();
+        cluster.kill(dialed);
+        let suspect = cluster.wait_for_all(
+            &[dialer],
+            dialed,
+            "Suspect(Disconnected)",
+            killed,
+            killed + asked_again + SLACK,
+        );
+        let gone = cluster.wait_for_all(
+            &[dialer],
+            dialed,
+            "Gone(Disconnected)",
+            killed,
+            suspect[&dialer] + grace + SLACK,
+        );
+        eprintln!(
+            "the node reached through another: suspect {:?} after it was killed, gone {:?} later",
+            suspect[&dialer] - killed,
+            gone[&dialer] - suspect[&dialer]
         );
     }
 

@@ -6,7 +6,7 @@
 //! ```text
 //!                 token put | connection opened
 //!   (unknown) ------------------------------------------------------> Alive
-//!   Alive -- token deleted | connection closed, probe unanswered ---> Suspect(Disconnected)
+//!   Alive -- token deleted, no connection | probe unanswered -------> Suspect(Disconnected)
 //!   Alive -- transport up, no report from exo on it for WEDGE_TIMEOUT -> Suspect(Wedged)
 //!   Alive | Suspect -- it announced that it is leaving --------------> Gone(Left)
 //!   Suspect(Disconnected) -- token put | connection opened | probe answered -> Alive
@@ -26,7 +26,10 @@
 //! connection to a node closes it is asked whether it is still there (it may still be reachable
 //! through another node). If it doesn't answer within [`PROBE_TIMEOUT`] it is Suspect. The
 //! answer comes from zenoh's own threads, not from exo's Python code, so a busy node is never
-//! taken for one that has gone.
+//! taken for one that has gone. A node is asked too when its token is deleted while its
+//! connection is still open, and, every [`REPROBE_INTERVAL`], while it is Alive without a
+//! connection of its own: nothing else would show that it crashed. The probes to make are taken
+//! with [`Membership::take_probes`], and each one's answer comes back to `probe_finished`.
 //!
 //! This node watches its own clocks too (see [`Membership::tick`]): after it was stopped
 //! (frozen, starved, or asleep) it is Resuming for a while, and the peers it loses then aren't
@@ -69,6 +72,14 @@ const ZENOH_ROUTES_RECOMPUTED_AFTER: Duration = Duration::from_millis(100);
 /// reachable through a third one was taken for lost in every one of 12 trials on one machine;
 /// asked this way, in none of 12.
 pub const PROBE_FIRST_ASK_DELAY: Duration = ZENOH_ROUTES_RECOMPUTED_AFTER.saturating_mul(3);
+
+/// How often a node that is Alive without a direct connection (it is reached through another
+/// node) is asked again whether it is still there. When such a node crashes no connection of
+/// this node closes, and in a cluster of three or more zenoh may keep its token, so only asking
+/// shows it. Asked every lease, its crash is noticed within `REPROBE_INTERVAL + TICK +
+/// PROBE_TIMEOUT` (13 s), about when a frozen peer with a direct connection is (`LEASE +
+/// PROBE_TIMEOUT`, 12 s). Each ask is one small query routed through another node.
+pub const REPROBE_INTERVAL: Duration = LEASE;
 
 /// How often the membership checks its timers and its own clocks.
 pub const TICK: Duration = Duration::from_secs(1);
@@ -203,6 +214,13 @@ struct Peer {
     connected: bool,
     /// Whether it is being asked whether it is still there
     probing: bool,
+    /// Whether to ask it again as soon as the current probe ends: something happened while it
+    /// was asked (its connection closed again, or its token went) that the answer may predate
+    probe_again: bool,
+    /// Whether a connection to it opened while it was asked
+    opened_while_probing: bool,
+    /// When to ask it again, while it is Alive without a connection of its own
+    next_probe: Option<Instant>,
     /// When exo on it last reported; `None` until it first does, and then it isn't checked
     last_heard: Option<Instant>,
 }
@@ -221,6 +239,8 @@ pub struct Membership {
     resumed_at: Option<Instant>,
     /// How late the latest tick was, when that was a stall, until `take_stall` reads it
     stalled_for: Option<Duration>,
+    /// The nodes to ask whether they are still there, until `take_probes` reads them
+    probes: Vec<ZenohId>,
 }
 
 impl Membership {
@@ -235,6 +255,7 @@ impl Membership {
             last_tick: now,
             resumed_at: None,
             stalled_for: None,
+            probes: Vec::new(),
         }
     }
 
@@ -250,7 +271,14 @@ impl Membership {
         self.reachable_again(node, now)
     }
 
+    /// A node's token was deleted. With its connection still open, it is asked first: zenoh
+    /// can drop a token while the node is there.
     pub fn token_deleted(&mut self, node: ZenohId, now: Now) -> Option<Member> {
+        let peer = self.peers.get(&node)?;
+        if peer.state == MemberState::Alive && peer.connected {
+            self.ask(node);
+            return None;
+        }
         self.lost(node, Reason::Disconnected, now)
     }
 
@@ -263,38 +291,55 @@ impl Membership {
         let change = self.reachable_again(node, now);
         if let Some(peer) = self.peers.get_mut(&node) {
             peer.connected = true;
+            peer.opened_while_probing |= peer.probing;
+            peer.next_probe = None;
         }
         change
     }
 
-    /// A connection to a node closed. Returns whether to ask the node if it is still there
-    /// (and then `probe_finished` must follow).
-    pub fn connection_closed(&mut self, node: ZenohId) -> bool {
+    /// A connection to a node closed: an Alive node is asked whether it is still there (it may be
+    /// reachable through another node; see `take_probes`).
+    pub fn connection_closed(&mut self, node: ZenohId) {
         let Some(peer) = self.peers.get_mut(&node) else {
-            return false;
+            return;
         };
         peer.connected = false;
-        if peer.state != MemberState::Alive || peer.probing {
-            return false;
+        if peer.state == MemberState::Alive {
+            self.ask(node);
         }
-        peer.probing = true;
-        true
     }
 
-    /// The answer to whether a node whose connection closed is still there
+    /// The answer to whether a node is still there, for each node `take_probes` gave
     pub fn probe_finished(&mut self, node: ZenohId, answered: bool, now: Now) -> Option<Member> {
         let peer = self.peers.get_mut(&node)?;
         peer.probing = false;
-        if answered {
-            // Reachable through another node: the probe undoes a lost transport, nothing else
-            return (peer.state == MemberState::Suspect(Reason::Disconnected))
-                .then(|| self.set(node, MemberState::Alive, now));
-        }
-        if peer.connected {
+        let ask_again = std::mem::take(&mut peer.probe_again);
+        let reopened = std::mem::take(&mut peer.opened_while_probing);
+        let change = if answered {
+            // Reachable (perhaps through another node): the probe undoes a lost transport,
+            // nothing else
+            (peer.state == MemberState::Suspect(Reason::Disconnected))
+                .then(|| self.set(node, MemberState::Alive, now))
+        } else if reopened && peer.connected {
             // Its connection opened again while it was asked
-            return None;
+            None
+        } else {
+            self.lost(node, Reason::Disconnected, now)
+        };
+        if ask_again
+            && self
+                .peers
+                .get(&node)
+                .is_some_and(|peer| peer.state == MemberState::Alive && !peer.connected)
+        {
+            self.ask(node);
         }
-        self.lost(node, Reason::Disconnected, now)
+        change
+    }
+
+    /// The nodes to ask whether they are still there (each answer goes to `probe_finished`)
+    pub fn take_probes(&mut self) -> Vec<ZenohId> {
+        std::mem::take(&mut self.probes)
     }
 
     /// The node said it is leaving (a graceful quit): it is Gone at once, without a grace.
@@ -373,6 +418,25 @@ impl Membership {
             due.into_iter()
                 .map(|(node, state)| self.set(node, state, now)),
         );
+
+        // Ask again, every REPROBE_INTERVAL, each node Alive without a connection of its own
+        let mut ask = Vec::new();
+        for (&node, peer) in &mut self.peers {
+            if peer.state != MemberState::Alive || peer.connected || peer.probing {
+                continue;
+            }
+            match peer.next_probe {
+                None => peer.next_probe = Some(now.monotonic + REPROBE_INTERVAL),
+                Some(at) if now.monotonic >= at => {
+                    peer.next_probe = None;
+                    ask.push(node);
+                }
+                Some(_) => {}
+            }
+        }
+        for node in ask {
+            self.ask(node);
+        }
         changes
     }
 
@@ -433,6 +497,9 @@ impl Membership {
                     since: now,
                     connected: false,
                     probing: false,
+                    probe_again: false,
+                    opened_while_probing: false,
+                    next_probe: None,
                     last_heard: None,
                 },
             );
@@ -451,6 +518,19 @@ impl Membership {
         }
     }
 
+    /// Asks the node whether it is still there, or again once the probe in flight ends
+    fn ask(&mut self, node: ZenohId) {
+        let Some(peer) = self.peers.get_mut(&node) else {
+            return;
+        };
+        if peer.probing {
+            peer.probe_again = true;
+        } else {
+            peer.probing = true;
+            self.probes.push(node);
+        }
+    }
+
     fn lost(&mut self, node: ZenohId, reason: Reason, now: Now) -> Option<Member> {
         let peer = self.peers.get(&node)?;
         (peer.state == MemberState::Alive)
@@ -462,6 +542,7 @@ impl Membership {
         if let Some(peer) = self.peers.get_mut(&node) {
             peer.state = state;
             peer.since = now;
+            peer.next_probe = None;
             if state == MemberState::Alive {
                 // It couldn't report while it was away: its wedge timeout starts again
                 peer.last_heard = peer.last_heard.map(|_| now.monotonic);
@@ -605,6 +686,19 @@ mod tests {
         membership.connection_opened(zid(n), clock.now);
     }
 
+    /// Closes the node's connection, and says whether that made the membership ask it
+    fn closed(membership: &mut Membership, n: u8) -> bool {
+        membership.connection_closed(zid(n));
+        membership.take_probes().contains(&zid(n))
+    }
+
+    /// The node's connection closes and it doesn't answer
+    fn lose(membership: &mut Membership, now: Now, n: u8) -> Option<Member> {
+        membership.connection_closed(zid(n));
+        membership.take_probes();
+        membership.probe_finished(zid(n), false, now)
+    }
+
     // ---- Joining, and reporting each change once ----
 
     #[test]
@@ -643,7 +737,7 @@ mod tests {
         let clock = Clock::new();
         let mut membership = membership(&clock);
         assert_eq!(membership.token_deleted(zid(1), clock.now), None);
-        assert!(!membership.connection_closed(zid(1)));
+        assert!(!closed(&mut membership, 1));
         assert_eq!(membership.probe_finished(zid(1), false, clock.now), None);
         assert_eq!(membership.left(zid(1), clock.now), None);
         assert_eq!(membership.heard_from(zid(1), clock.now), None);
@@ -657,35 +751,56 @@ mod tests {
         connected_peer(&mut membership, &clock, 1);
 
         // The connection closes and the probe fails, then the token goes too
-        assert!(membership.connection_closed(zid(1)));
+        assert!(closed(&mut membership, 1));
         assert_eq!(
             state(membership.probe_finished(zid(1), false, clock.now)),
             Some(suspect(1, Reason::Disconnected))
         );
         assert_eq!(membership.token_deleted(zid(1), clock.now), None);
 
-        // And the other way round
-        connected_peer(&mut membership, &clock, 2);
+        // And the other way round: the token of a node without a connection of its own goes
+        membership.token_put(zid(2), clock.now);
         assert_eq!(
             state(membership.token_deleted(zid(2), clock.now)),
             Some(suspect(2, Reason::Disconnected))
         );
         assert!(
-            !membership.connection_closed(zid(2)),
-            "a node whose token went first isn't asked"
+            !closed(&mut membership, 2),
+            "a node already suspect isn't asked"
         );
     }
 
     // ---- Alive -> Suspect ----
 
     #[test]
-    fn a_node_whose_token_is_deleted_is_suspect() {
+    fn a_node_whose_token_is_deleted_without_a_connection_is_suspect() {
         let clock = Clock::new();
         let mut membership = membership(&clock);
-        connected_peer(&mut membership, &clock, 1);
+        membership.token_put(zid(1), clock.now);
         assert_eq!(
             state(membership.token_deleted(zid(1), clock.now)),
             Some(suspect(1, Reason::Disconnected))
+        );
+    }
+
+    #[test]
+    fn a_node_whose_token_goes_while_its_connection_is_open_is_asked_first() {
+        let clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        connected_peer(&mut membership, &clock, 2);
+
+        // It answers: it is still there, whatever zenoh did with its token
+        assert_eq!(membership.token_deleted(zid(1), clock.now), None);
+        assert_eq!(membership.take_probes(), vec![zid(1)]);
+        assert_eq!(membership.probe_finished(zid(1), true, clock.now), None);
+
+        // It doesn't (its connection still open): Suspect
+        assert_eq!(membership.token_deleted(zid(2), clock.now), None);
+        assert_eq!(membership.take_probes(), vec![zid(2)]);
+        assert_eq!(
+            state(membership.probe_finished(zid(2), false, clock.now)),
+            Some(suspect(2, Reason::Disconnected))
         );
     }
 
@@ -695,7 +810,7 @@ mod tests {
         let mut membership = membership(&clock);
         connected_peer(&mut membership, &clock, 1);
 
-        assert!(membership.connection_closed(zid(1)));
+        assert!(closed(&mut membership, 1));
         // Its token is never deleted (the zenoh bug this works around)
         assert_eq!(
             state(membership.probe_finished(zid(1), false, clock.now)),
@@ -710,11 +825,11 @@ mod tests {
         connected_peer(&mut membership, &clock, 1);
 
         // Reachable through another node
-        assert!(membership.connection_closed(zid(1)));
+        assert!(closed(&mut membership, 1));
         assert_eq!(membership.probe_finished(zid(1), true, clock.now), None);
 
         // ... or its connection reopened while it was asked
-        assert!(membership.connection_closed(zid(1)));
+        assert!(closed(&mut membership, 1));
         assert_eq!(membership.connection_opened(zid(1), clock.now), None);
         assert_eq!(membership.probe_finished(zid(1), false, clock.now), None);
         assert_eq!(membership.quorum(), Quorum::Majority);
@@ -726,9 +841,12 @@ mod tests {
         let mut membership = membership(&clock);
         connected_peer(&mut membership, &clock, 1);
 
-        assert!(membership.connection_closed(zid(1)));
+        assert!(closed(&mut membership, 1));
         membership.connection_opened(zid(1), clock.now);
-        assert!(!membership.connection_closed(zid(1)));
+        assert!(!closed(&mut membership, 1), "one probe at a time");
+        // It closed again while it was asked: asked again as soon as the answer is in
+        assert_eq!(membership.probe_finished(zid(1), true, clock.now), None);
+        assert_eq!(membership.take_probes(), vec![zid(1)]);
     }
 
     #[test]
@@ -743,11 +861,11 @@ mod tests {
         assert_eq!(membership.left(zid(1), clock.now), None);
         // Its token and connection going afterwards change nothing
         assert_eq!(membership.token_deleted(zid(1), clock.now), None);
-        assert!(!membership.connection_closed(zid(1)));
+        assert!(!closed(&mut membership, 1));
 
         // A suspect node that announces its leave is gone at once too
         connected_peer(&mut membership, &clock, 2);
-        membership.token_deleted(zid(2), clock.now);
+        lose(&mut membership, clock.now, 2);
         assert_eq!(
             state(membership.left(zid(2), clock.now)),
             Some(gone(2, Reason::Left))
@@ -782,6 +900,130 @@ mod tests {
         }
     }
 
+    /// Answers every probe the membership asks for, as a node that is up (`true`) or crashed,
+    /// collecting what changed
+    fn answer_probes(
+        membership: &mut Membership,
+        now: Now,
+        answered: bool,
+    ) -> Vec<(ZenohId, MemberState)> {
+        let mut changes = Vec::new();
+        for node in membership.take_probes() {
+            changes.extend(state(membership.probe_finished(node, answered, now)));
+        }
+        changes
+    }
+
+    /// Ticks for `duration`, answering every probe as `answered`
+    fn run_answering(
+        membership: &mut Membership,
+        clock: &mut Clock,
+        duration: Duration,
+        answered: bool,
+    ) -> Vec<(ZenohId, MemberState)> {
+        let mut changes = Vec::new();
+        let mut waited = Duration::ZERO;
+        while waited < duration {
+            waited += TICK;
+            changes.extend(states(membership.tick(clock.advance(TICK))));
+            changes.extend(answer_probes(membership, clock.now, answered));
+        }
+        changes
+    }
+
+    #[test]
+    fn a_node_reached_only_through_another_is_asked_again_until_it_crashes() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        // Its direct connection closes; it answers through another node
+        assert!(closed(&mut membership, 1));
+        membership.probe_finished(zid(1), true, clock.now);
+
+        // It keeps answering: it stays Alive, asked about every REPROBE_INTERVAL
+        let mut asked = 0;
+        for _ in 0..(3 * REPROBE_INTERVAL.as_secs()) {
+            membership.tick(clock.advance(TICK));
+            let probes = membership.take_probes();
+            asked += probes.len();
+            for node in probes {
+                assert_eq!(membership.probe_finished(node, true, clock.now), None);
+            }
+        }
+        assert_eq!(asked, 2, "asked about every REPROBE_INTERVAL (plus a tick)");
+
+        // It crashes (no connection of this node closes, its token stays): Suspect at the next
+        // ask, Gone a grace later
+        let changes = run_answering(
+            &mut membership,
+            &mut clock,
+            REPROBE_INTERVAL + TICK + GRACE + TICK,
+            false,
+        );
+        assert_eq!(
+            changes,
+            vec![
+                suspect(1, Reason::Disconnected),
+                gone(1, Reason::Disconnected)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_node_that_answered_before_its_token_went_is_asked_again() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        assert!(closed(&mut membership, 1));
+        // It crashed just after answering: its token goes before the answer is in
+        membership.token_deleted(zid(1), clock.now);
+        assert_eq!(
+            state(membership.probe_finished(zid(1), true, clock.now)),
+            Some(alive(1))
+        );
+        // Nothing would show its crash but asking again
+        let changes = run_answering(
+            &mut membership,
+            &mut clock,
+            REPROBE_INTERVAL + TICK + GRACE + TICK,
+            false,
+        );
+        assert_eq!(
+            changes,
+            vec![
+                suspect(1, Reason::Disconnected),
+                gone(1, Reason::Disconnected)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_node_whose_link_closed_again_while_it_was_asked_is_asked_again_at_once() {
+        let clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        assert!(closed(&mut membership, 1));
+        // The link is back, and lost again (a crash), before the first answer is in
+        membership.connection_opened(zid(1), clock.now);
+        assert!(!closed(&mut membership, 1));
+        // That answer predates the second loss: it is asked again, and doesn't answer
+        assert_eq!(membership.probe_finished(zid(1), true, clock.now), None);
+        assert_eq!(membership.take_probes(), vec![zid(1)]);
+        assert_eq!(
+            state(membership.probe_finished(zid(1), false, clock.now)),
+            Some(suspect(1, Reason::Disconnected))
+        );
+    }
+
+    #[test]
+    fn a_node_with_a_connection_of_its_own_isnt_asked_again() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        run_for(&mut membership, &mut clock, REPROBE_INTERVAL * 3);
+        assert_eq!(membership.take_probes(), vec![]);
+    }
+
     // ---- Suspect -> Alive ----
 
     #[test]
@@ -790,21 +1032,21 @@ mod tests {
         let mut membership = membership(&clock);
         connected_peer(&mut membership, &clock, 1);
 
-        membership.token_deleted(zid(1), clock.now);
+        lose(&mut membership, clock.now, 1);
         assert_eq!(
             state(membership.token_put(zid(1), clock.now)),
             Some(alive(1))
         );
 
-        membership.token_deleted(zid(1), clock.now);
+        lose(&mut membership, clock.now, 1);
         assert_eq!(
             state(membership.connection_opened(zid(1), clock.now)),
             Some(alive(1))
         );
 
         // The probe was asked before the token went, and answered after
-        assert!(membership.connection_closed(zid(1)));
-        membership.token_deleted(zid(1), clock.now);
+        assert!(closed(&mut membership, 1));
+        lose(&mut membership, clock.now, 1);
         assert_eq!(
             state(membership.probe_finished(zid(1), true, clock.now)),
             Some(alive(1))
@@ -825,7 +1067,7 @@ mod tests {
         // The transport says nothing about exo on the node
         assert_eq!(membership.token_put(zid(1), clock.now), None);
         assert_eq!(membership.connection_opened(zid(1), clock.now), None);
-        assert!(!membership.connection_closed(zid(1)));
+        assert!(!closed(&mut membership, 1));
         assert_eq!(membership.probe_finished(zid(1), true, clock.now), None);
 
         assert_eq!(
@@ -845,7 +1087,7 @@ mod tests {
         let mut membership = membership(&clock);
         connected_peer(&mut membership, &clock, 1);
         membership.heard_from(zid(1), clock.now);
-        membership.token_deleted(zid(1), clock.now);
+        lose(&mut membership, clock.now, 1);
         run_for(&mut membership, &mut clock, GRACE - TICK);
 
         // Back just before the grace: it couldn't report while it was away
@@ -866,7 +1108,7 @@ mod tests {
         let mut clock = Clock::new();
         let mut membership = membership(&clock);
         connected_peer(&mut membership, &clock, 1);
-        membership.token_deleted(zid(1), clock.now);
+        lose(&mut membership, clock.now, 1);
 
         assert_eq!(run_for(&mut membership, &mut clock, GRACE - TICK), vec![]);
         assert_eq!(
@@ -900,7 +1142,7 @@ mod tests {
         let mut clock = Clock::new();
         let mut membership = Membership::new(zid(OWN), Duration::from_secs(3), clock.now);
         connected_peer(&mut membership, &clock, 1);
-        membership.token_deleted(zid(1), clock.now);
+        lose(&mut membership, clock.now, 1);
         assert_eq!(
             run_for(&mut membership, &mut clock, Duration::from_secs(3)),
             vec![gone(1, Reason::Disconnected)]
@@ -936,12 +1178,12 @@ mod tests {
         let mut clock = Clock::new();
         let mut membership = membership(&clock);
         connected_peer(&mut membership, &clock, 1);
-        membership.token_deleted(zid(1), clock.now);
+        lose(&mut membership, clock.now, 1);
         run_for(&mut membership, &mut clock, GRACE - TICK);
         membership.token_put(zid(1), clock.now);
 
         // Lost again: the grace starts over
-        membership.token_deleted(zid(1), clock.now);
+        lose(&mut membership, clock.now, 1);
         assert_eq!(run_for(&mut membership, &mut clock, GRACE - TICK), vec![]);
     }
 
@@ -950,7 +1192,7 @@ mod tests {
         let clock = Clock::new();
         let mut membership = membership(&clock);
         connected_peer(&mut membership, &clock, 1);
-        membership.token_deleted(zid(1), clock.now);
+        lose(&mut membership, clock.now, 1);
         membership.forget(zid(1));
         assert_eq!(membership.snapshot().last_known, 1);
         assert_eq!(
@@ -1053,12 +1295,12 @@ mod tests {
         connected_peer(&mut membership, &clock, 1);
         connected_peer(&mut membership, &clock, 2);
         // Node 1 was lost before this node froze for 40 s, node 2 just after it resumed
-        membership.token_deleted(zid(1), clock.now);
+        lose(&mut membership, clock.now, 1);
         run_for(&mut membership, &mut clock, Duration::from_secs(5));
         membership.tick(clock.advance(Duration::from_secs(40)));
         // Its loss is reported at once (and starts an election as before): only its grace waits
         assert_eq!(
-            state(membership.token_deleted(zid(2), clock.now)),
+            state(lose(&mut membership, clock.now, 2)),
             Some(suspect(2, Reason::Disconnected))
         );
 
@@ -1104,12 +1346,12 @@ mod tests {
             connected_peer(&mut membership, &clock, n);
         }
         for n in 1..=(away + gone) {
-            membership.token_deleted(zid(n), clock.now);
+            lose(&mut membership, clock.now, n);
         }
         run_for(&mut membership, &mut clock, GRACE - TICK);
         for n in 1..=away {
             membership.token_put(zid(n), clock.now);
-            membership.token_deleted(zid(n), clock.now);
+            lose(&mut membership, clock.now, n);
         }
         run_for(&mut membership, &mut clock, TICK);
         let snapshot = membership.snapshot();
@@ -1211,7 +1453,7 @@ mod tests {
         connected_peer(&mut membership, &clock, 2);
         connected_peer(&mut membership, &clock, 1);
         let lost_at = clock.advance(Duration::from_secs(3));
-        membership.token_deleted(zid(2), lost_at);
+        lose(&mut membership, lost_at, 2);
         let snapshot = membership.snapshot();
         assert_eq!(
             snapshot.members,
@@ -1252,6 +1494,8 @@ mod tests {
         assert!(STALL_THRESHOLD > TICK);
         // A split hold outlasts any blip the grace rides out, and the 90 s outages that healed
         assert!(SPLIT_HOLD > GRACE);
+        // A crash of a node reached only through another is noticed about when a frozen peer is
+        assert!(REPROBE_INTERVAL + TICK + PROBE_TIMEOUT <= LEASE + PROBE_TIMEOUT + TICK);
         assert!(SPLIT_HOLD >= Duration::from_secs(90) * 3);
         assert_eq!(PROBE_FIRST_ASK_DELAY, ZENOH_ROUTES_RECOMPUTED_AFTER * 3);
         assert!(
