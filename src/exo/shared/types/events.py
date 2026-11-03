@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import final
+from typing import Annotated, final
 
 from pydantic import Field
 
@@ -14,7 +14,7 @@ from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo
-from exo.utils.pydantic_ext import FrozenModel, TaggedModel
+from exo.utils.pydantic_ext import ByTag, FrozenModel, TaggedModel
 
 
 class EventId(Id):
@@ -147,7 +147,9 @@ class InstanceLinkDeleted(BaseEvent):
     link_id: InstanceLinkId
 
 
-Event = (
+# Validated by tag (see ByTag): a follower parses every event of the cluster, one per token
+# of every reply
+Event = Annotated[
     TestEvent
     | TaskCreated
     | TaskStatusUpdated
@@ -169,8 +171,9 @@ Event = (
     | CustomModelCardAdded
     | CustomModelCardDeleted
     | InstanceLinkCreated
-    | InstanceLinkDeleted
-)
+    | InstanceLinkDeleted,
+    ByTag(),
+]
 
 
 class IndexedEvent(FrozenModel):

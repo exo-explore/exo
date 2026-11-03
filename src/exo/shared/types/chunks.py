@@ -1,5 +1,5 @@
 from collections.abc import Generator
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from exo.api.types import (
     FinishReason,
@@ -10,7 +10,7 @@ from exo.api.types import (
     Usage,
 )
 from exo.shared.models.model_cards import ModelId
-from exo.utils.pydantic_ext import TaggedModel
+from exo.utils.pydantic_ext import ByTag, TaggedModel
 from exo.worker.runner.diagnostics import KnownRunnerDiagnostic
 
 from .common import CommandId
@@ -93,4 +93,5 @@ class PrefillProgressChunk(BaseChunk):
 
 StatusChunk = PrefillProgressChunk
 GenerationChunk = TokenChunk | ImageChunk | ToolCallChunk | ErrorChunk
-Chunk = StatusChunk | GenerationChunk
+# Validated by tag (see ByTag): every token of a reply is a ChunkGenerated event
+Chunk = Annotated[StatusChunk | GenerationChunk, ByTag()]
