@@ -689,6 +689,57 @@ def mlx_generate(
             )
     cache_snapshots: list[CacheSnapshot] | None = ssm_snapshots_list or None
 
+    # stream_generate starts from the last token
+    last_token = prompt_tokens[-2:]
+    max_tokens = task.max_output_tokens or MAX_TOKENS
+
+    # Speculative decoding: the draft starts from its cache stored with the target's prefix
+    # cache entry (trimmed to where the target was restored), or empty, and is prefilled
+    # over the rest of the prompt to wherever the target's cache ends; both then decode
+    # from last_token. Aligned before the prefix cache stores this request, so the entry
+    # keeps the draft's cache too.
+    decode_caches: KVCacheType = caches
+    decode_draft_model: Model | None = None
+    spec_stats: SpeculativeStats | None = None
+    aligned_draft_caches: KVCacheType | None = None
+    if draft is not None:
+        num_draft_tokens = (
+            task.num_draft_tokens
+            if task.num_draft_tokens is not None
+            else draft.num_draft_tokens
+        )
+        draft_caches: KVCacheType | None = None
+        if kv_prefix_cache is not None and matched_index is not None:
+            draft_caches = kv_prefix_cache.get_draft_cache(
+                matched_index, prefix_hit_length
+            )
+        if draft_caches is None:
+            draft_caches = make_kv_cache(model=draft.model)
+        blocker = speculation_blocker(
+            model,
+            caches,
+            draft,
+            draft_caches,
+            group,
+            has_vision=vision is not None,
+            num_draft_tokens=num_draft_tokens,
+        ) or align_draft(
+            draft, draft_caches, all_prompt_tokens, caches, len(last_token)
+        )
+        if blocker is None:
+            aligned_draft_caches = draft_caches
+            # mlx-lm splits target and draft caches at len(model.layers)
+            decode_caches = [*caches, *draft_caches]
+            decode_draft_model = draft.model
+            spec_stats = SpeculativeStats(
+                num_draft_tokens=num_draft_tokens, max_tokens=max_tokens
+            )
+            logger.info(
+                f"Speculative decoding with {draft.name}, num_draft_tokens={num_draft_tokens}"
+            )
+        else:
+            logger.info(f"Decoding without the draft model: {blocker}")
+
     if kv_prefix_cache is not None and matched_index is not None and is_exact_hit:
         prefill_tps = kv_prefix_cache.prefill_tps[matched_index]
 
@@ -710,6 +761,7 @@ def mlx_generate(
                 restore_pos=prefix_hit_length,
                 media_regions=media_regions,
                 prefill_tps=prefill_tps,
+                draft_cache=aligned_draft_caches,
             )
         else:
             kv_prefix_cache.add_kv_cache(
@@ -718,47 +770,8 @@ def mlx_generate(
                 cache_snapshots,
                 media_regions=media_regions,
                 prefill_tps=prefill_tps,
+                draft_cache=aligned_draft_caches,
             )
-
-    # stream_generate starts from the last token
-    last_token = prompt_tokens[-2:]
-    max_tokens = task.max_output_tokens or MAX_TOKENS
-
-    # Speculative decoding: the draft has no prefix cache, so it is prefilled over the whole
-    # prompt to wherever the target's cache ends, and both decode from last_token
-    decode_caches: KVCacheType = caches
-    decode_draft_model: Model | None = None
-    spec_stats: SpeculativeStats | None = None
-    if draft is not None:
-        num_draft_tokens = (
-            task.num_draft_tokens
-            if task.num_draft_tokens is not None
-            else draft.num_draft_tokens
-        )
-        draft_caches = make_kv_cache(model=draft.model)
-        blocker = speculation_blocker(
-            model,
-            caches,
-            draft,
-            draft_caches,
-            group,
-            has_vision=vision is not None,
-            num_draft_tokens=num_draft_tokens,
-        ) or align_draft(
-            draft, draft_caches, all_prompt_tokens, caches, len(last_token)
-        )
-        if blocker is None:
-            # mlx-lm splits target and draft caches at len(model.layers)
-            decode_caches = [*caches, *draft_caches]
-            decode_draft_model = draft.model
-            spec_stats = SpeculativeStats(
-                num_draft_tokens=num_draft_tokens, max_tokens=max_tokens
-            )
-            logger.info(
-                f"Speculative decoding with {draft.name}, num_draft_tokens={num_draft_tokens}"
-            )
-        else:
-            logger.info(f"Decoding without the draft model: {blocker}")
 
     accumulated_text = ""
     generated_text_parts: list[str] = []

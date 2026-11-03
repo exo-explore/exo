@@ -40,6 +40,7 @@ from exo.shared.types.text_generation import (
     TextGenerationTaskParams,
 )
 from exo.worker.engines.mlx import builder, speculative
+from exo.worker.engines.mlx import cache as cache_module
 from exo.worker.engines.mlx.cache import KVPrefixCache
 from exo.worker.engines.mlx.generator import generate
 from exo.worker.engines.mlx.generator.generate import mlx_generate
@@ -54,7 +55,7 @@ from exo.worker.engines.mlx.speculative import (
     resolve_draft_path,
     speculation_blocker,
 )
-from exo.worker.engines.mlx.types import Model
+from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.runner.bootstrap import logger
 
 VOCAB = 64
@@ -441,8 +442,9 @@ def test_builder_ignores_a_malformed_setting(
 # Greedy decoding: identical output, and acceptance that proves the draft ran aligned
 
 
-# The prefix cache restores the target to different positions; the draft has no prefix
-# cache and must still start where the target does. (earlier prompt, expected hit log)
+# The prefix cache restores the target to different positions; the earlier request ran
+# without the draft, so the entry has no draft cache and the draft must still start where
+# the target does. (earlier prompt, expected hit log)
 _PREFIX_CASES = {
     "none": (None, None),
     # Shares 12 tokens, stored as 10: the target prefills the rest, decode starts from 2
@@ -556,6 +558,328 @@ def test_stop_sequence_and_short_max_tokens() -> None:
         assert tokens == expected
         assert len(expected) < len(plain)
         assert stats.draft_tokens_proposed is not None
+
+
+# The draft's own prefix cache: stored with the target's entry, restored and trimmed with it
+
+
+@pytest.fixture
+def draft_prefill_counts(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Tokens the draft prefills in each request (one entry per prefill_draft call)."""
+    counts: list[int] = []
+    original = speculative.prefill_draft
+
+    def counting(draft_model: Model, tokens: mx.array, cache: Any) -> None:
+        counts.append(len(tokens))
+        original(draft_model, tokens, cache)
+
+    monkeypatch.setattr(speculative, "prefill_draft", counting)
+    return counts
+
+
+# Over 1000 tokens, so a second request that shares most of it updates the matched entry
+# (the path a long conversation takes), not just adds a new one
+_LONG = 1200
+
+# Each case: earlier requests as (prompt length, uses the draft), then the request under
+# test (prompt length), and the draft prefill tokens that request needs. The target ends 2
+# tokens short of the prompt (1 on an exact hit); the draft starts from what its stored
+# cache restores.
+_DRAFT_CACHE_CASES: dict[str, tuple[list[tuple[int, bool]], int, int]] = {
+    # No earlier request: the draft prefills everything the target holds
+    "miss": ([], _LONG, _LONG - 2),
+    # The same long prompt again (update path): target and draft restored to 1198, the
+    # draft prefills nothing
+    "repeat": ([(_LONG, True)], _LONG, 0),
+    # A follow-up turn 40 tokens longer (update path): the draft prefills the 40 new tokens
+    "extend": ([(_LONG, True)], _LONG + 40, 40),
+    # A short partial hit (add path): stored 10 of 12 shared tokens, the draft prefills 8
+    "partial": ([(12, True)], 20, 8),
+    # A longer earlier prompt: an exact hit at 19 tokens, nothing for the draft to prefill
+    "exact": ([(24, True)], 20, 0),
+    # The earlier request decoded without the draft: no draft cache, full re-prefill
+    "earlier-without-draft": ([(_LONG, False)], _LONG + 40, _LONG + 38),
+    # A request without the draft in between updates the entry and keeps the draft cache
+    # valid to where that request's prompt matched (1198): the draft prefills 1198 to 1258
+    "without-draft-in-between": (
+        [(_LONG, True), (_LONG + 40, False)],
+        _LONG + 60,
+        60,
+    ),
+}
+
+
+def _run_history(
+    target: Model,
+    tokenizer: TokenizerWrapper,
+    draft: DraftModel,
+    earlier: list[tuple[int, bool]],
+) -> KVPrefixCache:
+    kv_prefix_cache = KVPrefixCache(None)
+    for length, with_draft in earlier:
+        _run(
+            target,
+            tokenizer,
+            _prompt(length),
+            _task(max_output_tokens=4, num_draft_tokens=None if with_draft else 0),
+            draft,
+            kv_prefix_cache,
+        )
+    return kv_prefix_cache
+
+
+@pytest.mark.usefixtures("cpu_device")
+@pytest.mark.parametrize("case", list(_DRAFT_CACHE_CASES))
+def test_draft_cache_is_restored_with_the_prefix_cache(
+    case: str, draft_prefill_counts: list[int], log_messages: list[str]
+) -> None:
+    tokenizer = _word_tokenizer()
+    target = _llama(1)
+    earlier, length, expected_prefill = _DRAFT_CACHE_CASES[case]
+    # A draft with the target's weights accepts every token only if its restored cache
+    # holds this prompt's tokens at the target's position
+    draft = _draft(_perturbed(target, 9, 0.0), k=3)
+    prompt = _prompt(length)
+
+    plain_cache = _run_history(target, tokenizer, draft, earlier)
+    plain, _ = _run(target, tokenizer, prompt, _task(), None, plain_cache)
+    uncached, _ = _run(target, tokenizer, prompt, _task())
+
+    kv_prefix_cache = _run_history(target, tokenizer, draft, earlier)
+    draft_prefill_counts.clear()
+    log_messages.clear()
+    tokens, stats = _run(target, tokenizer, prompt, _task(), draft, kv_prefix_cache)
+
+    assert tokens == plain == uncached
+    assert _acceptance(stats) == 1.0
+    assert sum(draft_prefill_counts) == expected_prefill
+    # The entry this request stored or updated holds the draft at the target's position
+    index = next(
+        i
+        for i, p in enumerate(kv_prefix_cache.prompts)
+        if len(p) == length and kv_prefix_cache._draft_caches[i] is not None
+    )
+    stored = kv_prefix_cache._draft_caches[index]
+    assert stored is not None
+    target_length = speculative.cache_length(kv_prefix_cache.caches[index])
+    assert speculative.cache_length(stored) == target_length
+    assert kv_prefix_cache._draft_lengths[index] == target_length
+    restored = target_length - expected_prefill
+    if restored:
+        assert any(
+            f"({restored} restored from the prefix cache)" in m for m in log_messages
+        )
+
+
+@pytest.mark.usefixtures("cpu_device")
+def test_draft_cache_is_valid_only_to_where_a_request_without_it_matched(
+    draft_prefill_counts: list[int],
+) -> None:
+    """A request without the draft that diverges from the entry's prompt at 1100 updates
+    the entry: the draft cache (1198 tokens) is then valid only to 1100, and the next
+    draft request must prefill the draft from there, not reuse the stale 1100 to 1198."""
+    tokenizer = _word_tokenizer()
+    target = _llama(1)
+    draft = _draft(_perturbed(target, 9, 0.0), k=3)
+    first = _prompt(_LONG)
+    diverged = _prompt(1100) + " " + _prompt(140, 3)
+    follow_up = diverged + " " + _prompt(20, 11)
+    kv_prefix_cache = KVPrefixCache(None)
+    _run(target, tokenizer, first, _task(max_output_tokens=4), draft, kv_prefix_cache)
+    _run(
+        target,
+        tokenizer,
+        diverged,
+        _task(max_output_tokens=4, num_draft_tokens=0),
+        draft,
+        kv_prefix_cache,
+    )
+    assert len(kv_prefix_cache.prompts) == 1
+    assert kv_prefix_cache._draft_lengths == [1100]
+
+    plain, _ = _run(target, tokenizer, follow_up, _task())
+    draft_prefill_counts.clear()
+    tokens, stats = _run(target, tokenizer, follow_up, _task(), draft, kv_prefix_cache)
+    assert tokens == plain
+    assert _acceptance(stats) == 1.0
+    assert sum(draft_prefill_counts) == 1258 - 1100
+
+
+@pytest.mark.usefixtures("cpu_device")
+def test_draft_cache_of_another_prompt_is_caught_by_acceptance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Negative control for the test above: a restored draft cache at the right position
+    but from another prompt still gives the target's output, and only acceptance shows it
+    is wrong. So acceptance 1.0 there does prove the restored cache matches the prompt."""
+    tokenizer = _word_tokenizer()
+    target = _llama(1)
+    draft = _draft(_perturbed(target, 9, 0.0), k=3)
+    other = KVPrefixCache(None)
+    _run(target, tokenizer, _prompt(_LONG, 5), _task(max_output_tokens=4), draft, other)
+    wrong = other.get_draft_cache(0, _LONG - 2)
+    assert wrong is not None
+
+    kv_prefix_cache = _run_history(target, tokenizer, draft, [(_LONG, True)])
+    monkeypatch.setattr(kv_prefix_cache, "get_draft_cache", lambda index, length: wrong)
+    plain, _ = _run(target, tokenizer, _prompt(_LONG + 40), _task())
+    tokens, stats = _run(
+        target, tokenizer, _prompt(_LONG + 40), _task(), draft, kv_prefix_cache
+    )
+    assert tokens == plain
+    assert _acceptance(stats) < 1.0
+
+
+@pytest.mark.usefixtures("cpu_device")
+def test_decode_does_not_change_the_stored_draft_cache(
+    draft_prefill_counts: list[int],
+) -> None:
+    tokenizer = _word_tokenizer()
+    target = _llama(1)
+    draft = _draft(_perturbed(target, 9, 0.0), k=3)
+    kv_prefix_cache = _run_history(target, tokenizer, draft, [(_LONG, True)])
+    stored = kv_prefix_cache._draft_caches[0]
+    assert stored is not None
+    stored_kv = [cast(KVCache, c) for c in stored]
+    before = [mx.array(cast(mx.array, c.keys)) for c in stored_kv]
+    first, _ = _run(target, tokenizer, _prompt(_LONG), _task(), draft, kv_prefix_cache)
+    draft_prefill_counts.clear()
+    second, stats = _run(
+        target, tokenizer, _prompt(_LONG), _task(), draft, kv_prefix_cache
+    )
+    assert first == second
+    assert _acceptance(stats) == 1.0
+    assert sum(draft_prefill_counts) == 0
+    for c, keys in zip(stored_kv, before, strict=True):
+        assert mx.array_equal(cast(mx.array, c.keys), keys).item()
+
+
+def _nbytes(cache: KVCacheType) -> int:
+    return sum(int(c.nbytes) for c in cache)
+
+
+@pytest.mark.usefixtures("cpu_device")
+def test_draft_cache_counts_towards_the_entry_size() -> None:
+    tokenizer = _word_tokenizer()
+    target = _llama(1)
+    draft = _draft(_llama(4, hidden=32, layers=1), k=3)
+    kv_prefix_cache = _run_history(target, tokenizer, draft, [(_LONG, True)])
+    stored = kv_prefix_cache._draft_caches[0]
+    assert stored is not None
+    target_bytes = _nbytes(kv_prefix_cache.caches[0])
+    assert _nbytes(stored) > 0
+    assert kv_prefix_cache._entry_bytes == [target_bytes + _nbytes(stored)]
+
+    # A request without the draft updates the entry: the draft cache is kept (valid to
+    # where the prompt matched) and still counted
+    _run(
+        target,
+        tokenizer,
+        _prompt(_LONG + 40),
+        _task(max_output_tokens=4, num_draft_tokens=0),
+        draft,
+        kv_prefix_cache,
+    )
+    assert len(kv_prefix_cache.prompts) == 1
+    assert kv_prefix_cache._draft_lengths == [_LONG - 2]
+    assert kv_prefix_cache._entry_bytes == [
+        _nbytes(kv_prefix_cache.caches[0]) + _nbytes(stored)
+    ]
+
+
+@pytest.mark.usefixtures("cpu_device")
+def test_draft_cache_is_evicted_with_its_entry(
+    monkeypatch: pytest.MonkeyPatch, draft_prefill_counts: list[int]
+) -> None:
+    monkeypatch.setattr(cache_module, "get_memory_used_percentage", lambda: 0.0)
+    tokenizer = _word_tokenizer()
+    target = _llama(1)
+    draft = _draft(_perturbed(target, 9, 0.0), k=3)
+    first, second = _prompt(_LONG), _prompt(_LONG, 5)
+
+    sizing = _run_history(target, tokenizer, draft, [(_LONG, True)])
+    stored = sizing._draft_caches[0]
+    assert stored is not None
+    target_bytes, draft_bytes = _nbytes(sizing.caches[0]), _nbytes(stored)
+    # Two entries fit without their draft caches, not with them: only counting the draft
+    # cache evicts the first entry
+    monkeypatch.setattr(cache_module, "_MAX_BYTES", 2 * target_bytes + draft_bytes)
+
+    without = KVPrefixCache(None)
+    for prompt in (first, second):
+        _run(
+            target,
+            tokenizer,
+            prompt,
+            _task(max_output_tokens=4, num_draft_tokens=0),
+            draft,
+            without,
+        )
+    assert len(without.prompts) == 2
+    assert without._draft_caches == [None, None]
+
+    kv_prefix_cache = KVPrefixCache(None)
+    for prompt in (first, second):
+        _run(
+            target,
+            tokenizer,
+            prompt,
+            _task(max_output_tokens=4),
+            draft,
+            kv_prefix_cache,
+        )
+    assert len(kv_prefix_cache.prompts) == 1
+    assert mx.array_equal(
+        kv_prefix_cache.prompts[0],
+        speculative.mx.array(tokenizer.encode(second, add_special_tokens=False)),
+    ).item()
+    assert (
+        len(kv_prefix_cache._draft_caches) == len(kv_prefix_cache._draft_lengths) == 1
+    )
+
+    # The remaining draft cache is the second prompt's: a repeat restores it and accepts all
+    draft_prefill_counts.clear()
+    _, stats = _run(target, tokenizer, second, _task(), draft, kv_prefix_cache)
+    assert sum(draft_prefill_counts) == 0
+    assert _acceptance(stats) == 1.0
+
+    kv_prefix_cache.clear()
+    assert kv_prefix_cache._draft_caches == []
+    assert kv_prefix_cache._draft_lengths == []
+
+
+def test_get_draft_cache_trims_to_the_valid_length() -> None:
+    kv_prefix_cache = KVPrefixCache(None)
+    target_cache = [KVCache()]
+    draft_cache = [KVCache()]
+    keys = mx.zeros((1, 2, 30, 8))
+    target_cache[0].update_and_fetch(keys, keys)
+    draft_cache[0].update_and_fetch(keys, keys)
+    kv_prefix_cache.add_kv_cache(
+        mx.arange(32), target_cache, None, draft_cache=draft_cache
+    )
+    assert kv_prefix_cache._draft_lengths == [30]
+
+    restored = kv_prefix_cache.get_draft_cache(0, 20)
+    assert restored is not None and restored[0].offset == 20
+    # The stored copy is untouched
+    stored = kv_prefix_cache._draft_caches[0]
+    assert stored is not None and stored[0].offset == 30
+    full = kv_prefix_cache.get_draft_cache(0, 40)
+    assert full is not None and full[0].offset == 30
+
+    # Updated without a draft: valid only to where the prompt matched
+    kv_prefix_cache.update_kv_cache(
+        0, mx.arange(40), target_cache, None, restore_pos=12
+    )
+    assert kv_prefix_cache._draft_lengths == [12]
+    again = kv_prefix_cache.get_draft_cache(0, 30)
+    assert again is not None and again[0].offset == 12
+    # Matched nothing: the draft cache is dropped
+    kv_prefix_cache.update_kv_cache(0, mx.arange(40), target_cache, None, restore_pos=0)
+    assert kv_prefix_cache._draft_caches == [None]
+    assert kv_prefix_cache.get_draft_cache(0, 30) is None
+    assert kv_prefix_cache._entry_bytes == [_nbytes(target_cache)]
 
 
 # Fallbacks: decode as without a draft, and say why

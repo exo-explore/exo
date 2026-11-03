@@ -193,6 +193,10 @@ class KVPrefixCache:
         self._last_used: list[int] = []  # monotonic counter of last access per entry
         self._entry_bytes: list[int] = []
         self.prefill_tps: list[float] = []
+        # A speculative-decoding draft model's cache for each entry (speculative.py), and
+        # how many of its tokens are still the entry's prompt; None where no draft ran
+        self._draft_caches: list[KVCacheType | None] = []
+        self._draft_lengths: list[int] = []
         self._access_counter: int = 0
         self._group = group
 
@@ -205,6 +209,8 @@ class KVPrefixCache:
         self._last_used.clear()
         self._entry_bytes.clear()
         self.prefill_tps.clear()
+        self._draft_caches.clear()
+        self._draft_lengths.clear()
 
     def add_kv_cache(
         self,
@@ -213,9 +219,13 @@ class KVPrefixCache:
         ssm_snapshots: list[CacheSnapshot] | None = None,
         media_regions: list["MediaRegion"] | None = None,
         prefill_tps: float = 0.0,
+        draft_cache: KVCacheType | None = None,
     ):
-        """Add a new cache entry. Evicts LRU entries if memory is high or the cache is full."""
-        entry_bytes = _entry_nbytes(cache, ssm_snapshots)
+        """Add a new cache entry. Evicts LRU entries if memory is high or the cache is full.
+
+        `draft_cache` is the draft model's cache at the same position as `cache`, kept with
+        the entry so a later hit restores the draft too instead of prefilling it again."""
+        entry_bytes = _entry_nbytes(cache, ssm_snapshots, draft_cache)
         self._evict_if_needed(entry_bytes)
         self.prompts.append(prompt_tokens)
         self.caches.append(deepcopy(cache))
@@ -225,6 +235,12 @@ class KVPrefixCache:
         self._access_counter += 1
         self._last_used.append(self._access_counter)
         self._entry_bytes.append(entry_bytes)
+        self._draft_caches.append(
+            deepcopy(draft_cache) if draft_cache is not None else None
+        )
+        self._draft_lengths.append(
+            cache_length(draft_cache) if draft_cache is not None else 0
+        )
         logger.info(f"KV cache added: {len(prompt_tokens)} tokens")
 
     def update_kv_cache(
@@ -236,8 +252,12 @@ class KVPrefixCache:
         restore_pos: int,
         media_regions: list["MediaRegion"] | None = None,
         prefill_tps: float = 0.0,
+        draft_cache: KVCacheType | None = None,
     ):
-        """Update an existing cache entry in-place."""
+        """Update an existing cache entry in-place.
+
+        Without a `draft_cache` (no draft ran for this request), the entry keeps its
+        earlier draft cache, valid only up to `restore_pos`: past it the prompt changed."""
         old_snapshots = self._snapshots[index]
         merged: list[CacheSnapshot] = []
         if old_snapshots:
@@ -252,8 +272,40 @@ class KVPrefixCache:
         self.prefill_tps[index] = prefill_tps
         self._access_counter += 1
         self._last_used[index] = self._access_counter
-        self._entry_bytes[index] = _entry_nbytes(cache, self._snapshots[index])
+        if draft_cache is not None:
+            self._draft_caches[index] = deepcopy(draft_cache)
+            self._draft_lengths[index] = cache_length(draft_cache)
+        else:
+            self._draft_lengths[index] = min(self._draft_lengths[index], restore_pos)
+            if self._draft_lengths[index] <= 0:
+                self._draft_caches[index] = None
+        self._entry_bytes[index] = _entry_nbytes(
+            cache, self._snapshots[index], self._draft_caches[index]
+        )
         logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens")
+
+    def get_draft_cache(self, index: int, length: int) -> KVCacheType | None:
+        """A copy of entry `index`'s draft cache, trimmed to at most `length` tokens (where
+        the target was restored to), or None if the entry has no usable draft cache.
+
+        The copy may be shorter than `length` (the entry's prompt changed past it while no
+        draft ran); the caller prefills the draft over the rest."""
+        stored = self._draft_caches[index]
+        if stored is None:
+            return None
+        usable = min(self._draft_lengths[index], length)
+        if usable <= 0:
+            return None
+        draft_cache = deepcopy(stored)
+        to_trim = cache_length(draft_cache) - usable
+        for c in draft_cache:
+            if is_non_trimmable_cache_entry(c) or not c.is_trimmable():  # type: ignore[reportUnknownMemberType]
+                return None
+            if to_trim > 0:
+                c.trim(to_trim)  # type: ignore[reportUnknownMemberType]
+        if cache_length(draft_cache) != usable:
+            return None
+        return draft_cache
 
     def _get_snapshot(
         self, entry_index: int, target_token_count: int
@@ -404,6 +456,8 @@ class KVPrefixCache:
             self._last_used.pop(lru_index)
             self._entry_bytes.pop(lru_index)
             self.prefill_tps.pop(lru_index)
+            self._draft_caches.pop(lru_index)
+            self._draft_lengths.pop(lru_index)
 
             evicted_any = True
             logger.info(f"KV cache evicted LRU entry ({evicted_tokens} tokens)")
@@ -436,8 +490,13 @@ class KVPrefixCache:
         return worst_pressure > _MEMORY_THRESHOLD or any_over_budget > 0
 
 
-def _entry_nbytes(cache: KVCacheType, snapshots: list[CacheSnapshot] | None) -> int:
+def _entry_nbytes(
+    cache: KVCacheType,
+    snapshots: list[CacheSnapshot] | None,
+    draft_cache: KVCacheType | None = None,
+) -> int:
     total = sum(int(c.nbytes) for c in cache)
+    total += sum(int(c.nbytes) for c in draft_cache or [])
     for snapshot in snapshots or []:
         total += sum(
             int(state.nbytes) for state in snapshot.states if state is not None

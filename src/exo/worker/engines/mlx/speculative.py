@@ -265,16 +265,27 @@ def align_draft(
 
     The target may have been filled from the prefix cache (partly or exactly), remotely or
     locally, so the draft follows the target's actual length rather than what was
-    prefilled this request. Decoding then starts both from the last
-    `decode_prompt_length` prompt tokens."""
+    prefilled this request. `draft_caches` may already hold a prefix of the prompt
+    (restored from the prefix cache with the target's entry); only the rest is prefilled.
+    Decoding then starts both from the last `decode_prompt_length` prompt tokens."""
     target_length = cache_length(caches)
     expected = len(all_prompt_tokens) - decode_prompt_length
     if target_length != expected:
         return f"the target cache holds {target_length} tokens, expected {expected}"
-    prefill_draft(draft.model, all_prompt_tokens[:target_length], draft_caches)
+    restored = cache_length(draft_caches)
+    if restored > target_length:
+        return f"the draft cache holds {restored} tokens, past the target's {target_length}"
+    if restored < target_length:
+        prefill_draft(
+            draft.model, all_prompt_tokens[restored:target_length], draft_caches
+        )
     draft_length = cache_length(draft_caches)
     if draft_length != target_length:
         return f"the draft cache holds {draft_length} tokens, expected {target_length}"
+    logger.info(
+        f"Draft prefilled {target_length - restored} tokens"
+        + (f" ({restored} restored from the prefix cache)" if restored else "")
+    )
     return None
 
 
