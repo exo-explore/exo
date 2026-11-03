@@ -34,6 +34,7 @@ from exo.shared.types.events import (
     InstanceDeleted,
     NodeDownloadProgress,
     NodeGatheredInfo,
+    NodeTimedOut,
     RunnerStatusUpdated,
     StateSnapshot,
     TaskCreated,
@@ -124,6 +125,9 @@ class Worker:
         )
         # When this worker last asked for an instance it gave up on to be deleted
         self._deletion_requested: dict[InstanceId, float] = {}
+        # The runners this process has started. A runner of this node that the cluster state has,
+        # but that isn't among them, belonged to this node's run before exo restarted here.
+        self._runners_started: set[RunnerId] = set()
         self._stopped: anyio.Event = anyio.Event()
 
         # The latest information of each kind gathered about this node, so that a new
@@ -195,6 +199,15 @@ class Worker:
                 if isinstance(event, InstanceDeleted):
                     self._instance_backoff.reset(event.instance_id)
                     self._deletion_requested.pop(event.instance_id, None)
+
+                if isinstance(event, NodeTimedOut) and event.node_id == self.node_id:
+                    # The cluster removed this node, and what it had told about itself, while it
+                    # is up: it was frozen, or restarted just as the master was missing it (it
+                    # keeps its id). Some of that is only gathered once, so tell it again.
+                    logger.warning(
+                        "The cluster removed this node while it is up; announcing it again"
+                    )
+                    await self.announce_to_master()
 
                 # Our runner for an instance has started: the attempts before it no longer
                 # count towards giving up on the instance, which is for one that can't start
@@ -337,11 +350,22 @@ class Worker:
             await anyio.sleep(0.1)
             if self._awaiting_state_of is not None:
                 continue
+            previous_run = self._instances_of_previous_run()
+            for instance_id in previous_run:
+                await self._request_deletion(
+                    instance_id,
+                    f"Instance {instance_id} had a runner here before exo restarted: its "
+                    "model stopped with the restart, requesting deletion",
+                )
             task: Task | None = plan(
                 self.node_id,
                 self.runners,
                 self.state.downloads,
-                self.state.instances,
+                {
+                    instance_id: instance
+                    for instance_id, instance in self.state.instances.items()
+                    if instance_id not in previous_run
+                },
                 self.state.runners,
                 self.state.tasks,
                 self._instance_backoff,
@@ -354,24 +378,10 @@ class Worker:
             if isinstance(task, CreateRunner):
                 iid = task.instance_id
                 if self._instance_backoff.attempts(iid) >= EXO_MAX_INSTANCE_RETRIES:
-                    # Plan comes back to this instance every 0.1 s until it is deleted: ask
-                    # once, and again only if it is still here after a while (the request
-                    # may have been lost, e.g. while the master changed)
-                    requested_at = self._deletion_requested.get(iid)
-                    if (
-                        requested_at is None
-                        or time.monotonic() - requested_at >= DELETION_REQUEST_RETRY
-                    ):
-                        logger.warning(
-                            f"Instance {iid} exceeded {EXO_MAX_INSTANCE_RETRIES} retries, requesting deletion"
-                        )
-                        self._deletion_requested[iid] = time.monotonic()
-                        await self.command_sender.send(
-                            ForwarderCommand(
-                                origin=self._system_id,
-                                command=DeleteInstance(instance_id=iid),
-                            )
-                        )
+                    await self._request_deletion(
+                        iid,
+                        f"Instance {iid} exceeded {EXO_MAX_INSTANCE_RETRIES} retries, requesting deletion",
+                    )
                     continue
 
             logger.info(f"Worker plan: {task.__class__.__name__}")
@@ -545,6 +555,48 @@ class Worker:
                 case task:
                     await self._start_runner_task(task)
 
+    async def _request_deletion(self, instance_id: InstanceId, reason: str) -> None:
+        """Ask the master to delete an instance this worker can't run.
+
+        Plan comes back to it every 0.1 s until it is deleted: ask once, and again only if it
+        is still here after a while (the request may have been lost, e.g. while the master
+        changed)."""
+        requested_at = self._deletion_requested.get(instance_id)
+        if (
+            requested_at is not None
+            and time.monotonic() - requested_at < DELETION_REQUEST_RETRY
+        ):
+            return
+        logger.warning(reason)
+        self._deletion_requested[instance_id] = time.monotonic()
+        await self.command_sender.send(
+            ForwarderCommand(
+                origin=self._system_id,
+                command=DeleteInstance(instance_id=instance_id),
+            )
+        )
+
+    def _instances_of_previous_run(self) -> set[InstanceId]:
+        """Instances that had a runner on this node before exo restarted here.
+
+        The node keeps its id across restarts, so when it comes back before the master misses
+        it, the cluster still has these instances, with the status of a runner that is gone and
+        requests it will never finish. Starting a runner again in its place would leave the
+        instance's other runners waiting for the old one and send those requests again, so the
+        instance is deleted, as if the node had been missed: its requests end with an error and
+        its model can be started again."""
+        return {
+            instance.instance_id
+            for instance in self.state.instances.values()
+            if (
+                runner_id := instance.shard_assignments.node_to_runner.get(self.node_id)
+            )
+            is not None
+            and runner_id in self.state.runners
+            and runner_id not in self.runners
+            and runner_id not in self._runners_started
+        }
+
     def follow_new_master(self, session_id: SessionId) -> None:
         """Carry on under a new master, keeping this node's runners.
 
@@ -582,6 +634,7 @@ class Worker:
 
     async def _create_supervisor(self, task: CreateRunner) -> RunnerSupervisor:
         """Creates and stores a new AssignedRunner with initial downloading status."""
+        self._runners_started.add(task.bound_instance.bound_runner_id)
         runner = await RunnerSupervisor.create(
             bound_instance=task.bound_instance,
             event_sender=self.event_sender.clone(),

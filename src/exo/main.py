@@ -33,9 +33,9 @@ from exo.shared.constants import (
     EXO_LOG,
     EXO_PID_FILE,
 )
-from exo.shared.election import Election, ElectionResult
+from exo.shared.election import Election, ElectionResult, start_session
 from exo.shared.logging import logger_cleanup, logger_setup
-from exo.shared.types.common import NodeId, SessionId
+from exo.shared.types.common import NodeId
 from exo.shared.types.state import State
 from exo.utils import STDIO_FDS
 from exo.utils.channels import Receiver, channel
@@ -71,7 +71,7 @@ class Node:
             listen_on_api_port(args.api_port) if args.spawn_api else None
         )
         node_id = get_node_zid()
-        session_id = SessionId(master_node_id=node_id, election_clock=0)
+        session_id = start_session(node_id)
         router = Router.create(
             node_id,
             namespace=args.namespace,
@@ -152,6 +152,7 @@ class Node:
             node_id,
             # If someone manages to assemble 1 MILLION devices into an exo cluster then. well done. good job champ.
             seniority=1_000_000 if args.force_master else 0,
+            initial_session=session_id,
             # nb: this DOES feedback right now. i have thoughts on how to address this,
             # but ultimately it seems not worth the complexity
             election_message_sender=router.sender(topics.ELECTION_MESSAGES),

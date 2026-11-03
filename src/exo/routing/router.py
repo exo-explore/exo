@@ -1,4 +1,3 @@
-import os
 from copy import copy
 from itertools import count
 from math import inf
@@ -24,6 +23,7 @@ from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 
 from .connection_message import ConnectionMessage
+from .node_identity import load_or_create_node_id
 from .topics import CONNECTION_MESSAGES, PublishPolicy, TypedTopic
 
 
@@ -245,36 +245,6 @@ class Router:
                 await self._net.gossipsub_publish(topic, data)
 
 
-def get_node_zid(
-    path: Path = EXO_NODE_ZID,
-) -> NodeId:
-    """
-    Obtains the :class:`Keypair` associated with this node-ID.
-    Obtain the :class:`PeerId` by from it.
-    """
-    # TODO(evan): bring back node id persistence once we figure out how to deal with duplicates
-    return NodeId(os.urandom(16).hex().lstrip("0"))
-
-    """
-    def lock_path(path: str | bytes | PathLike[str] | PathLike[bytes]) -> Path:
-        return Path(str(path) + ".lock")
-
-    # operate with cross-process lock to avoid race conditions
-    with FileLock(lock_path(path)):
-        with open(path, "a+b") as f:  # opens in append-mode => starts at EOF
-            # if non-zero EOF, then file exists => use to get node-ID
-            if f.tell() != 0:
-                f.seek(0)  # go to start & read protobuf-encoded bytes
-                protobuf_encoded = f.read()
-
-                try:  # if decoded successfully, save & return
-                    return Keypair.from_bytes(protobuf_encoded)
-                except ValueError as e:  # on runtime error, assume corrupt file
-                    logger.warning(f"Encountered error when trying to get keypair: {e}")
-
-        # if no valid credentials, create new ones and persist
-        with open(path, "w+b") as f:
-            keypair = Keypair.generate()
-            f.write(keypair.to_bytes())
-            return keypair
-    """
+def get_node_zid(path: Path = EXO_NODE_ZID) -> NodeId:
+    """This node's id, kept across restarts (see exo.routing.node_identity)."""
+    return load_or_create_node_id(path)
