@@ -84,6 +84,10 @@
     checkInstanceHealth,
     describeInstanceHealth,
   } from "$lib/utils/instance_health";
+  import {
+    totalDownload,
+    type NodeDownload,
+  } from "$lib/utils/download_progress";
   import type { ChatUploadedFile } from "$lib/types/files";
 
   const chatStarted = $derived(hasStartedChat());
@@ -1945,9 +1949,13 @@
 
   // Shared helper: collect per-node download status for a model across a set of nodes.
   // Handles deduplication, entry parsing, and aggregation in one place.
+  // With nodeIds (the devices of an instance), every one of them counts in the
+  // total, finished or not started yet; a device that hasn't said how much it
+  // needs counts as estimatedNodeBytes (see totalDownload).
   function collectDownloadStatus(
     modelId: string,
     nodeIds?: string[],
+    estimatedNodeBytes = 0,
   ): {
     isDownloading: boolean;
     progress: DownloadProgress | null;
@@ -1969,6 +1977,8 @@
     // (e.g. PipelineShardMetadata + TensorShardMetadata). Keep the last entry,
     // which is the most recently applied event.
     const perNodeMap = new Map<string, NodeDownloadStatus>();
+    // How much each device has and needs, for the total
+    const amounts = new Map<string, NodeDownload>();
 
     const nodeIdSet = nodeIds ? new Set(nodeIds) : null;
     for (const [nodeId, nodeDownloads] of Object.entries(downloadsData)) {
@@ -2021,6 +2031,17 @@
             percentage: 100,
             progress: null,
           });
+          amounts.set(nodeId, {
+            nodeId,
+            state: "completed",
+            downloadedBytes: 0,
+            totalBytes: getBytes(
+              downloadPayload.total ??
+                downloadPayload.total_bytes ??
+                downloadPayload.totalBytes,
+            ),
+            speed: 0,
+          });
           continue;
         }
 
@@ -2045,6 +2066,13 @@
             percentage: pct,
             progress: null,
           });
+          amounts.set(nodeId, {
+            nodeId,
+            state: "pending",
+            downloadedBytes: pendingDownloaded,
+            totalBytes: pendingTotal,
+            speed: 0,
+          });
           continue;
         }
 
@@ -2063,14 +2091,30 @@
           percentage: progress.percentage,
           progress,
         });
+        amounts.set(nodeId, {
+          nodeId,
+          state: "downloading",
+          downloadedBytes: progress.downloadedBytes,
+          totalBytes: progress.totalBytes,
+          speed: progress.speed,
+        });
+      }
+    }
+    // Devices of the instance that haven't reported any progress yet
+    for (const nodeId of nodeIds ?? []) {
+      if (!amounts.has(nodeId)) {
+        amounts.set(nodeId, {
+          nodeId,
+          state: "missing",
+          downloadedBytes: 0,
+          totalBytes: 0,
+          speed: 0,
+        });
       }
     }
 
     // Aggregate from deduplicated per-node entries
     const perNode = Array.from(perNodeMap.values());
-    let totalBytes = 0;
-    let downloadedBytes = 0;
-    let totalSpeed = 0;
     let completedFiles = 0;
     let totalFiles = 0;
     let isDownloading = false;
@@ -2079,9 +2123,6 @@
     for (const node of perNode) {
       if (node.status === "downloading" && node.progress) {
         isDownloading = true;
-        totalBytes += node.progress.totalBytes;
-        downloadedBytes += node.progress.downloadedBytes;
-        totalSpeed += node.progress.speed;
         completedFiles += node.progress.completedFiles;
         totalFiles += node.progress.totalFiles;
         allFiles.push(...node.progress.files);
@@ -2097,17 +2138,22 @@
       };
     }
 
-    const remainingBytes = totalBytes - downloadedBytes;
-    const etaMs = totalSpeed > 0 ? (remainingBytes / totalSpeed) * 1000 : 0;
+    // Every device counts, finished ones too, so the total only goes forward
+    const knownTotals = [...amounts.values()].map((node) => node.totalBytes);
+    const total = totalDownload(
+      [...amounts.values()],
+      estimatedNodeBytes > 0 ? estimatedNodeBytes : Math.max(0, ...knownTotals),
+    );
 
     return {
       isDownloading: true,
       progress: {
-        totalBytes,
-        downloadedBytes,
-        speed: totalSpeed,
-        etaMs,
-        percentage: totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : 0,
+        totalBytes: total.totalBytes,
+        downloadedBytes: total.downloadedBytes,
+        speed: total.speed,
+        // 0 shows as "--": not known yet
+        etaMs: total.etaMs ?? 0,
+        percentage: total.percentage,
         completedFiles,
         totalFiles,
         files: allFiles,
@@ -2126,6 +2172,20 @@
     perNode: NodeDownloadStatus[];
   } {
     return collectDownloadStatus(modelId, nodeIds);
+  }
+
+  // The size of an instance's model (its card's storage size), which is the
+  // most any one device downloads; 0 when unknown
+  function getInstanceModelBytes(runnerToShard: Record<string, unknown>) {
+    for (const shardWrapped of Object.values(runnerToShard)) {
+      const [, shard] = getTagged(shardWrapped);
+      const bytes = getBytes(
+        (shard as { modelCard?: { storageSize?: unknown } } | null)?.modelCard
+          ?.storageSize,
+      );
+      if (bytes > 0) return bytes;
+    }
+    return 0;
   }
 
   // Helper to get download status for an instance
@@ -2185,7 +2245,11 @@
       .map((runnerId) => runnerToNode[runnerId])
       .filter(Boolean);
 
-    const result = collectDownloadStatus(instanceModelId, instanceNodeIds);
+    const result = collectDownloadStatus(
+      instanceModelId,
+      instanceNodeIds,
+      getInstanceModelBytes(runnerToShard),
+    );
 
     if (result.failedError) {
       return {
