@@ -27,6 +27,8 @@ GenerationErrorCode = Literal[
     "model_failed",
     # The request's stream ended for another reason (such as a change of master)
     "interrupted",
+    # The model isn't ready to serve yet (downloading, loading, or failed to start)
+    "model_not_ready",
 ]
 
 DEVICE_DISCONNECTED = (
@@ -52,6 +54,8 @@ MODEL_FAILED = "The model stopped unexpectedly before the reply finished."
 # Followed by what the model's own error says
 MODEL_FAILED_BECAUSE = "The model stopped before the reply finished: "
 INTERRUPTED = "The model instance serving this request stopped before it finished"
+# Followed by what the model is doing: see exo.shared.model_readiness
+MODEL_NOT_READY = "The model is not ready yet: "
 # Followed by the model's name: the master had no instance of the model for a request that the
 # API had sent because it saw one, so it had just been deleted
 NO_INSTANCE_FOR_MODEL = "No instance found for model "
@@ -70,6 +74,7 @@ _CODES: dict[str, GenerationErrorCode] = {
 _PREFIX_CODES: tuple[tuple[str, GenerationErrorCode], ...] = (
     (MODEL_FAILED_BECAUSE, "model_failed"),
     (NO_INSTANCE_FOR_MODEL, "model_stopped"),
+    (MODEL_NOT_READY, "model_not_ready"),
 )
 
 

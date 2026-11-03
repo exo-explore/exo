@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from functools import partial
 from http import HTTPStatus
 from pathlib import Path
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, cast, final
 from uuid import uuid4
 
 import anyio
@@ -158,6 +158,11 @@ from exo.shared.constants import (
 )
 from exo.shared.election import ElectionMessage
 from exo.shared.logging import InterceptLogger
+from exo.shared.model_readiness import (
+    MODEL_READY_WAIT_SECONDS,
+    NotReady,
+    model_readiness,
+)
 from exo.shared.models import model_cards
 from exo.shared.models.model_cards import (
     ModelCard,
@@ -169,6 +174,7 @@ from exo.shared.request_errors import (
     INSTANCE_GONE_BEFORE_START,
     INTERRUPTED,
     MODEL_STOPPED,
+    GenerationErrorCode,
 )
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.chunks import (
@@ -235,6 +241,8 @@ from exo.utils.task_group import TaskGroup
 # Where that log used to be written; removed when the API starts
 _OLD_API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
 ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
+# How often a request waiting for its model to be ready checks on it
+_MODEL_READY_POLL_SECONDS = 0.2
 
 
 # How long to wait for the cluster to accept a chat request before sending it again. A busy
@@ -273,6 +281,20 @@ def _require_disaggregation_enabled() -> None:
                 "Prefill/decode disaggregation is disabled. "
                 "Set ENABLE_DISAGGREGATION=true to enable."
             ),
+        )
+
+
+@final
+class ModelNotReadyError(HTTPException):
+    """A 503 for a request whose model isn't ready to serve"""
+
+    code: GenerationErrorCode = "model_not_ready"
+
+    def __init__(self, not_ready: NotReady):
+        super().__init__(
+            status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+            detail=not_ready.message,
+            headers={"Retry-After": str(not_ready.retry_after_seconds)},
         )
 
 
@@ -380,10 +402,14 @@ class API:
             error=ErrorInfo(
                 message=exc.detail,
                 type=HTTPStatus(exc.status_code).phrase,
-                code=exc.status_code,
+                code=exc.code
+                if isinstance(exc, ModelNotReadyError)
+                else exc.status_code,
             )
         )
-        return JSONResponse(err.model_dump(), status_code=exc.status_code)
+        return JSONResponse(
+            err.model_dump(), status_code=exc.status_code, headers=exc.headers
+        )
 
     def _setup_cors(self) -> None:
         self.app.add_middleware(
@@ -1056,12 +1082,27 @@ class API:
         return await self._collect_text_generation_with_stats(command)
 
     async def _validate_model_has_instance(self, model_id: ModelId) -> ModelId:
-        """Validate a model has an active instance.
+        """Validate a model has an instance that is ready to serve.
         If the model isn't even downloaded, triggers notification to user to download model.
 
+        A model that isn't ready is waited for, up to MODEL_READY_WAIT_SECONDS
+        (EXO_MODEL_READY_WAIT_SECONDS).
 
-        Raises HTTPException 404 if no instance is found for the model.
+        Raises HTTPException 404 if no instance is found for the model, and 503 (with
+        Retry-After, and what the model is doing) if it isn't ready after the wait, or failed
+        to start.
         """
+        await self._validate_model_has_any_instance(model_id)
+        deadline = anyio.current_time() + MODEL_READY_WAIT_SECONDS
+        while (not_ready := model_readiness(self.state, model_id)) is not None:
+            if not_ready.failed or anyio.current_time() >= deadline:
+                raise ModelNotReadyError(not_ready)
+            await anyio.sleep(_MODEL_READY_POLL_SECONDS)
+            # It may have been deleted meanwhile
+            await self._validate_model_has_any_instance(model_id)
+        return model_id
+
+    async def _validate_model_has_any_instance(self, model_id: ModelId) -> None:
         if not any(
             instance.shard_assignments.model_id == model_id
             for instance in self.state.instances.values()
@@ -1079,7 +1120,6 @@ class API:
             raise HTTPException(
                 status_code=404, detail=f"No instance found for model {model_id}"
             )
-        return model_id
 
     async def get_events(self) -> Response:
         # A copy: events keep arriving while it is serialized

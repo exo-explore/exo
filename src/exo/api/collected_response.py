@@ -16,6 +16,14 @@ class GenerationFailedError(ValueError):
         self.code: GenerationErrorCode | None = generation_error_code(message)
 
 
+# The HTTP status of a whole response whose generation failed, for the errors that aren't
+# the server's fault (500 otherwise)
+_STATUS_OF_CODE: dict[GenerationErrorCode, HTTPStatus] = {
+    # No ready instance by the time the request reached the master
+    "model_not_ready": HTTPStatus.SERVICE_UNAVAILABLE,
+}
+
+
 class CollectedResponse(StreamingResponse):
     """A non-streaming response that sends nothing until its body is complete.
 
@@ -29,13 +37,16 @@ class CollectedResponse(StreamingResponse):
         try:
             body = "".join([chunk async for chunk in self._collect()])
         except ValueError as error:
-            self.status_code = HTTPStatus.INTERNAL_SERVER_ERROR
             code = error.code if isinstance(error, GenerationFailedError) else None
+            status = (
+                _STATUS_OF_CODE.get(code, HTTPStatus.INTERNAL_SERVER_ERROR)
+                if code is not None
+                else HTTPStatus.INTERNAL_SERVER_ERROR
+            )
+            self.status_code = status
             body = ErrorResponse(
                 error=ErrorInfo(
-                    message=str(error),
-                    type=HTTPStatus.INTERNAL_SERVER_ERROR.phrase,
-                    code=code or HTTPStatus.INTERNAL_SERVER_ERROR,
+                    message=str(error), type=status.phrase, code=code or status
                 )
             ).model_dump_json()
         content = body.encode(self.charset)

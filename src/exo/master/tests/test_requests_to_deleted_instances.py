@@ -42,7 +42,12 @@ from exo.shared.types.text_generation import (
     TextGenerationTaskParams,
 )
 from exo.shared.types.worker.instances import InstanceId, MlxRingInstance
-from exo.shared.types.worker.runners import RunnerId, ShardAssignments
+from exo.shared.types.worker.runners import (
+    RunnerId,
+    RunnerLoading,
+    RunnerReady,
+    ShardAssignments,
+)
 from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.utils.channels import Receiver, channel
 
@@ -111,6 +116,11 @@ def master_with(*instances: MlxRingInstance) -> tuple[Master, Receiver[Event]]:
             topology=topology,
             last_seen={NODE: datetime.now(tz=timezone.utc)},
             instances={instance.instance_id: instance for instance in instances},
+            runners={
+                runner: RunnerReady()
+                for instance in instances
+                for runner in instance.shard_assignments.runner_to_shard
+            },
         ),
     )
     return master, events
@@ -189,3 +199,24 @@ async def test_a_request_right_after_a_node_loss_ends_with_an_error() -> None:
     (ended,) = [event for event in output if isinstance(event, ChunkGenerated)]
     assert ended.command_id == request.command_id
     assert isinstance(ended.chunk, ErrorChunk)
+
+
+async def test_a_request_for_a_model_that_is_not_ready_ends_with_why() -> None:
+    """The API waits for a model to be ready, but a runner can fail just after it looked."""
+    instance = instance_on(NODE)
+    master, events = master_with(instance)
+    (runner,) = instance.shard_assignments.runner_to_shard
+    master.state = master.state.model_copy(
+        update={"runners": {runner: RunnerLoading(layers_loaded=1, total_layers=2)}}
+    )
+    request = chat_request()
+
+    output = await process(master, events, request)
+
+    assert not [event for event in output if isinstance(event, TaskCreated)]
+    (ended,) = [event for event in output if isinstance(event, ChunkGenerated)]
+    assert ended.chunk == ErrorChunk(
+        model=MODEL,
+        error_message="The model is not ready yet: loading (1 of 2 layers). "
+        "Try again in 5 s.",
+    )
