@@ -7,7 +7,9 @@
       └─────────── failed ──Start──> running
 
 Idle models are reported from disk: Completed, or Pending with the bytes already
-there. Cancel and Delete stop a running download and wait for it to end before
+there. A model with nothing on disk is reported only when that is news (its files
+went away, its download was cancelled), and the cluster's state leaves it out.
+Cancel and Delete stop a running download and wait for it to end before
 anything else happens. Commands never wait on the network. A failed download is
 retried by the next StartDownload; the worker sends those, with a backoff, for
 as long as an instance on this node needs the model.
@@ -18,7 +20,6 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass, field
-from itertools import count
 from pathlib import Path
 
 import anyio
@@ -56,15 +57,11 @@ from exo.shared.types.worker.downloads import (
     DownloadPending,
     DownloadProgress,
     DownloadProgressData,
+    is_not_on_disk,
 )
-from exo.shared.types.worker.shards import PipelineShardMetadata, ShardMetadata
+from exo.shared.types.worker.shards import ShardMetadata, whole_model_shard
 from exo.utils.channels import Receiver, Sender
 from exo.utils.task_group import TaskGroup
-
-# Every rescan re-announces models with files on this node, so a status the master
-# dropped heals within a minute; models never downloaded are announced when they
-# change, and on every this-many-th scan.
-_FULL_RESCAN_EVERY = 10
 
 
 @dataclass
@@ -88,17 +85,6 @@ class _Model:
     running: _Running | None = None
     # bumped on every change of phase, so a rescan that raced a command backs off
     generation: int = 0
-
-
-def _full_shard(card: ModelCard) -> ShardMetadata:
-    return PipelineShardMetadata(
-        model_card=card,
-        device_rank=0,
-        world_size=1,
-        start_layer=0,
-        end_layer=card.n_layers,
-        n_layers=card.n_layers,
-    )
 
 
 @dataclass
@@ -502,7 +488,7 @@ class DownloadCoordinator:
     # --- the rescan ----------------------------------------------------------------
 
     async def _rescan_loop(self) -> None:
-        for scan in count():
+        while True:
             try:
                 cards = await model_cards.card_cache.list_all()
             except Exception as error:
@@ -510,7 +496,7 @@ class DownloadCoordinator:
                 cards = []
             for card in cards:
                 try:
-                    await self._rescan(card, resend=scan % _FULL_RESCAN_EVERY == 0)
+                    await self._rescan(card)
                 except (BrokenResourceError, ClosedResourceError):
                     raise
                 except Exception as error:
@@ -520,20 +506,21 @@ class DownloadCoordinator:
                     )
             await anyio.sleep(self.settings.rescan_interval)
 
-    async def _rescan(self, card: ModelCard, *, resend: bool) -> None:
-        model = self._models.setdefault(card.model_id, _Model(_full_shard(card)))
+    async def _rescan(self, card: ModelCard) -> None:
+        model = self._models.setdefault(card.model_id, _Model(whole_model_shard(card)))
         if model.running is not None or isinstance(model.status, DownloadFailed):
             return
         generation = model.generation
         status = await to_thread.run_sync(self._idle_status, model)
         if model.generation != generation or model.running is not None:
             return  # a command got there first
-        changed = status != model.status
-        model.status = status
-        has_files = not (
-            isinstance(status, DownloadPending) and status.downloaded.in_bytes == 0
-        )
-        if changed or resend or has_files:
+        previous, model.status = model.status, status
+        # A model on this node is announced on every scan, so a status the master dropped
+        # heals within a minute. One with nothing on disk is announced only when it had
+        # something before: the state leaves such models out, so it is news only then.
+        if not is_not_on_disk(status) or (
+            previous is not None and not is_not_on_disk(previous)
+        ):
             await self._send(status)
 
 

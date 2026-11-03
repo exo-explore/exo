@@ -284,3 +284,61 @@ export function deleteDownloadQuestion(options: {
   }
   return `${question}\n\nYou'll need to download it again to run it on this device.`;
 }
+
+/** What the downloads page shows about a model, from its card. */
+export type ModelCardInfo = {
+  family: string;
+  quantization: string;
+  baseModel: string;
+  capabilities: string[];
+  storageSize: number;
+  nLayers: number;
+  supportsTensor: boolean;
+};
+
+/** A model as `GET /models` lists it: the fields the downloads page uses. */
+export type CatalogueModel = {
+  id: string;
+  family?: string;
+  quantization?: string;
+  base_model?: string;
+  capabilities?: string[];
+  storage_size_megabytes?: number;
+  supports_tensor?: boolean;
+};
+
+/** A model's display name, "Llama 3.2 1B · 4bit", or null without a base model. */
+export function modelDisplayName(
+  baseModel: string,
+  quantization: string,
+): string | null {
+  if (!baseModel) return null;
+  return quantization ? `${baseModel} · ${quantization}` : baseModel;
+}
+
+/**
+ * The display name and card details of a model in the catalogue. exo lists a
+ * model on a device only when the device has some of it, so the downloads page
+ * takes every other model from the catalogue.
+ */
+export function catalogueModelInfo(model: CatalogueModel): {
+  prettyName: string | null;
+  card: ModelCardInfo;
+} {
+  const baseModel = model.base_model ?? "";
+  const quantization = model.quantization ?? "";
+  return {
+    prettyName: modelDisplayName(baseModel, quantization),
+    card: {
+      family: model.family ?? "",
+      quantization,
+      baseModel,
+      capabilities: model.capabilities ?? [],
+      // The catalogue gives whole megabytes
+      storageSize: (model.storage_size_megabytes ?? 0) * 1024 * 1024,
+      // Not in the catalogue; the details leave it out when 0
+      nLayers: 0,
+      supportsTensor: model.supports_tensor ?? false,
+    },
+  };
+}

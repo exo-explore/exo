@@ -212,9 +212,13 @@ def _state() -> State:
                 download_progress=_progress(downloaded=1, total=1000),
             )
         ),
+        # Paused part way. A model with nothing on disk isn't listed at all.
         NodeDownloadProgress(
             download_progress=DownloadPending(
-                node_id=other, shard_metadata=shard(not_started)
+                node_id=other,
+                shard_metadata=shard(not_started),
+                downloaded=Memory.from_bytes(300),
+                total=Memory.from_bytes(1000),
             )
         ),
         TaskCreated(

@@ -303,6 +303,17 @@ class DownloadNode:
             f"history: {[type(s).__name__ for s in self.statuses(model_id)]}"
         )
 
+    async def wait_for_unlisted(self, model_id: str, timeout: float = 10.0) -> None:
+        """Wait until the state doesn't list the model on this node: nothing of it is on disk."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.status(model_id) is None:
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError(
+            f"{model_id} is still listed after {timeout}s: {_describe(self.status(model_id))}"
+        )
+
     async def wait_for_failure(
         self, model_id: str, timeout: float = 10.0
     ) -> DownloadFailed:

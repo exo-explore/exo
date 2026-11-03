@@ -244,7 +244,7 @@ from exo.shared.types.text_generation import (
 )
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
-from exo.shared.types.worker.shards import Sharding
+from exo.shared.types.worker.shards import Sharding, whole_model_shard
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.power_sampler import PowerSampler
@@ -2557,9 +2557,14 @@ class API:
     async def start_download(
         self, payload: StartDownloadParams
     ) -> StartDownloadResponse:
+        if payload.shard_metadata is not None:
+            shard = payload.shard_metadata
+        else:
+            assert payload.model_id is not None
+            shard = whole_model_shard(await ModelCard.load(payload.model_id))
         command = StartDownload(
             target_node_id=payload.target_node_id,
-            shard_metadata=payload.shard_metadata,
+            shard_metadata=shard,
         )
         await self._send_download(command)
         return StartDownloadResponse(command_id=command.command_id)

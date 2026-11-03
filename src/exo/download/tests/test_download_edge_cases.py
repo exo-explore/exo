@@ -456,7 +456,7 @@ async def test_cancel_while_the_hub_is_a_black_hole_is_prompt(
         await node.start_download(REPO)
         await asyncio.sleep(0.3)
         await node.cancel(REPO)
-        await node.wait_for(REPO, DownloadPending, timeout=1)
+        await node.wait_for_unlisted(REPO, timeout=1)
         await node.delete(REPO)
         await asyncio.sleep(0.2)
         assert coordinator_crash(node) is None
@@ -794,7 +794,7 @@ async def test_delete_during_slow_writes_leaves_nothing_behind(
             await node.start_download(REPO)
             await asyncio.sleep(0.5)
             await node.delete(REPO)
-            await node.wait_for(REPO, DownloadPending, timeout=5)
+            await node.wait_for_unlisted(REPO, timeout=5)
             await asyncio.sleep(1.0)
             assert node.model_dirs(REPO) == [], "files came back after the delete"
             assert len(os.listdir("/dev/fd")) <= before + 2

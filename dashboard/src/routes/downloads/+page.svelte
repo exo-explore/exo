@@ -12,6 +12,7 @@
     refreshState,
     lastUpdate as lastUpdateStore,
     startDownload,
+    startModelDownload,
     cancelDownload,
     deleteDownload,
   } from "$lib/stores/app.svelte";
@@ -22,6 +23,10 @@
     extractShardMetadata,
     deleteDownloadQuestion,
     modelStateOnNode,
+    catalogueModelInfo,
+    modelDisplayName,
+    type CatalogueModel,
+    type ModelCardInfo,
   } from "$lib/utils/downloads";
   import {
     describeStall,
@@ -59,16 +64,6 @@
       }
     | { kind: "failed"; errorMessage?: string; modelDirectory?: string }
     | { kind: "not_present" };
-
-  type ModelCardInfo = {
-    family: string;
-    quantization: string;
-    baseModel: string;
-    capabilities: string[];
-    storageSize: number;
-    nLayers: number;
-    supportsTensor: boolean;
-  };
 
   type ModelRow = {
     modelId: string;
@@ -182,12 +177,7 @@
     // The model's display name ("Llama 3.2 1B · 4bit"); the repo id is shown
     // under it
     const prettyName =
-      (meta.prettyName as string) ??
-      (baseModel
-        ? quantization
-          ? `${baseModel} · ${quantization}`
-          : baseModel
-        : null);
+      (meta.prettyName as string) ?? modelDisplayName(baseModel, quantization);
 
     const card: ModelCardInfo = {
       family: (meta.family as string) ?? "",
@@ -210,23 +200,51 @@
   let modelRows = $state<ModelRow[]>([]);
   let nodeColumns = $state<NodeColumn[]>([]);
   let infoRow = $state<ModelRow | null>(null);
+  // Every model exo knows. exo lists a model on a device only when the device
+  // has some of it, so the rest of the catalogue comes from here.
+  let catalogue = $state<CatalogueModel[]>([]);
+
+  async function loadCatalogue() {
+    try {
+      const response = await fetch("/models");
+      if (!response.ok) return;
+      const body = (await response.json()) as { data?: CatalogueModel[] };
+      catalogue = body.data ?? [];
+    } catch {
+      // The models on devices still show
+    }
+  }
+
+  // A model no device lists has no shard to copy: download it whole
+  async function downloadTo(nodeId: string, row: ModelRow) {
+    try {
+      if (row.shardMetadata) await startDownload(nodeId, row.shardMetadata);
+      else await startModelDownload(nodeId, row.modelId);
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: `Couldn't start downloading ${row.prettyName ?? row.modelId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      });
+    }
+  }
 
   $effect(() => {
     try {
-      if (!downloadsData || Object.keys(downloadsData).length === 0) {
+      // Every device in the cluster gets a column, even one with nothing
+      // downloaded, so it can still be downloaded to.
+      const allNodeIds = [
+        ...new Set([
+          ...Object.keys(data?.nodes ?? {}),
+          ...Object.keys(downloadsData ?? {}),
+        ]),
+      ];
+      if (allNodeIds.length === 0) {
         modelRows = [];
         nodeColumns = [];
         return;
       }
-
-      // Every device in the cluster gets a column, even one whose download
-      // statuses haven't been announced (yet), so it can still be downloaded to.
-      const allNodeIds = [
-        ...new Set([
-          ...Object.keys(data?.nodes ?? {}),
-          ...Object.keys(downloadsData),
-        ]),
-      ];
       const columns: NodeColumn[] = allNodeIds.map((nodeId) => {
         const diskInfo = nodeDiskData?.[nodeId];
         return {
@@ -239,7 +257,9 @@
 
       const rowMap = new Map<string, ModelRow>();
 
-      for (const [nodeId, nodeDownloads] of Object.entries(downloadsData)) {
+      for (const [nodeId, nodeDownloads] of Object.entries(
+        downloadsData ?? {},
+      )) {
         const entries = Array.isArray(nodeDownloads)
           ? nodeDownloads
           : nodeDownloads && typeof nodeDownloads === "object"
@@ -338,6 +358,18 @@
             row.cells[nodeId] = cell;
           }
         }
+      }
+
+      for (const model of catalogue) {
+        if (rowMap.has(model.id)) continue;
+        const { prettyName, card } = catalogueModelInfo(model);
+        rowMap.set(model.id, {
+          modelId: model.id,
+          prettyName,
+          cells: {},
+          shardMetadata: null,
+          modelCard: card,
+        });
       }
 
       function rowSortKey(row: ModelRow): number {
@@ -449,6 +481,7 @@
 
   onMount(() => {
     refreshState();
+    loadCatalogue();
   });
 </script>
 
@@ -798,17 +831,14 @@
                         <span class="text-exo-medium-gray text-lg leading-none"
                           >--</span
                         >
-                        {#if row.shardMetadata}
-                          <button
-                            type="button"
-                            class="text-white/50 hover:text-exo-yellow transition-colors mt-0.5 opacity-0 group-hover:opacity-100 cursor-pointer"
-                            onclick={() =>
-                              startDownload(col.nodeId, row.shardMetadata!)}
-                            title="Download to this device"
-                          >
-                            {@render downloadIcon()}
-                          </button>
-                        {/if}
+                        <button
+                          type="button"
+                          class="text-white/50 hover:text-exo-yellow transition-colors mt-0.5 opacity-0 group-hover:opacity-100 cursor-pointer"
+                          onclick={() => downloadTo(col.nodeId, row)}
+                          title="Download to this device"
+                        >
+                          {@render downloadIcon()}
+                        </button>
                       </div>
                     {/if}
                   </td>

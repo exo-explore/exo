@@ -50,7 +50,7 @@ from exo.shared.types.tasks import (
     TextGeneration,
 )
 from exo.shared.types.topology import Connection, RDMAConnection
-from exo.shared.types.worker.downloads import DownloadProgress
+from exo.shared.types.worker.downloads import DownloadProgress, is_not_on_disk
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import (
     RunnerId,
@@ -145,33 +145,39 @@ def apply(state: State, event: IndexedEvent) -> State:
 
 def apply_node_download_progress(event: NodeDownloadProgress, state: State) -> State:
     """
-    Update or add a node download progress to state.
+    Update or add a node download progress to state. A model that isn't on the node at
+    all (Pending with no bytes) is left out, and removed if it was listed.
     """
     dp = event.download_progress
     node_id = dp.node_id
 
     current = list(state.downloads.get(node_id, ()))
-
-    replaced = False
-    for i, existing_dp in enumerate(current):
-        # TODO(ciaran): deduplicate by model_id for now. Will need to use
-        # shard_metadata again when pipeline and tensor downloads differ.
-        # For now this is fine
-        if (
-            existing_dp.shard_metadata.model_card.model_id
+    # TODO(ciaran): deduplicate by model_id for now. Will need to use
+    # shard_metadata again when pipeline and tensor downloads differ.
+    # For now this is fine
+    listed = next(
+        (
+            i
+            for i, existing_dp in enumerate(current)
+            if existing_dp.shard_metadata.model_card.model_id
             == dp.shard_metadata.model_card.model_id
-        ):
-            current[i] = dp
-            replaced = True
-            break
-
-    if not replaced:
+        ),
+        None,
+    )
+    if is_not_on_disk(dp):
+        if listed is None:
+            return state
+        del current[listed]
+    elif listed is None:
         current.append(dp)
+    else:
+        current[listed] = dp
 
-    new_downloads: Mapping[NodeId, Sequence[DownloadProgress]] = {
-        **state.downloads,
-        node_id: current,
-    }
+    new_downloads: Mapping[NodeId, Sequence[DownloadProgress]] = (
+        {**state.downloads, node_id: current}
+        if current
+        else {key: value for key, value in state.downloads.items() if key != node_id}
+    )
     return state.model_copy(update={"downloads": new_downloads})
 
 

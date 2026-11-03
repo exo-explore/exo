@@ -1,13 +1,12 @@
 """The coordinator's own rules: what it announces, when, and how it retries."""
 
 import asyncio
-from collections.abc import AsyncIterator, Iterator
+import shutil
+from collections.abc import AsyncIterator
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
-from exo.download import coordinator
 from exo.download.tests.fake_hub import (
     FakeHub,
     FakeRepo,
@@ -37,12 +36,6 @@ def repo(hub: FakeHub) -> FakeRepo:
     return hub.add_repo(FakeRepo(REPO, model_repo_files(REPO)))
 
 
-@pytest.fixture
-def rare_full_rescans() -> Iterator[None]:
-    with patch.object(coordinator, "_FULL_RESCAN_EVERY", 1_000_000):
-        yield
-
-
 def announcements(node: DownloadNode) -> int:
     return sum(
         1
@@ -54,33 +47,45 @@ def announcements(node: DownloadNode) -> int:
 FAST_RESCANS = Timing(rescan_interval=0.05)
 
 
-@pytest.mark.usefixtures("rare_full_rescans")
-async def test_model_never_downloaded_is_announced_once_from_its_card(
+async def test_a_model_never_downloaded_is_never_announced(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
+    # The cluster's state leaves out models a node has nothing of (most of the catalogue)
     async with DownloadNode(
         hub, tmp_path, [card_for(repo)], worker=False, timing=FAST_RESCANS
     ) as node:
-        status = await node.wait_for(REPO, DownloadPending)
-        await asyncio.sleep(0.5)
-        assert announcements(node) == 1
-        assert isinstance(status, DownloadPending)
-        assert status.total == card_for(repo).storage_size
+        await asyncio.sleep(0.5)  # about 10 rescans
+        assert announcements(node) == 0
+        assert node.status(REPO) is None
         assert hub.requests == [], "no Hub request for a model nobody asked for"
 
 
-async def test_full_rescans_repeat_models_never_downloaded(
+async def test_a_model_whose_files_go_away_is_announced_once_as_gone(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
-    with patch.object(coordinator, "_FULL_RESCAN_EVERY", 2):
-        async with DownloadNode(
-            hub, tmp_path, [card_for(repo)], worker=False, timing=FAST_RESCANS
-        ) as node:
-            await asyncio.sleep(0.5)
-            assert announcements(node) >= 3
+    model_dir = tmp_path / "models" / ModelId(REPO).normalize()
+    model_dir.mkdir(parents=True)
+    (model_dir / (SHARD1 + ".partial")).write_bytes(b"x" * 1000)
+    async with DownloadNode(
+        hub, tmp_path, [card_for(repo)], worker=False, timing=FAST_RESCANS
+    ) as node:
+        await node.wait_for(REPO, DownloadPending)
+        shutil.rmtree(model_dir)
+        await node.wait_for_unlisted(REPO)
+        gone = [
+            status
+            for status in node.statuses(REPO)
+            if isinstance(status, DownloadPending) and status.downloaded.in_bytes == 0
+        ]
+        await asyncio.sleep(0.5)
+        later = [
+            status
+            for status in node.statuses(REPO)
+            if isinstance(status, DownloadPending) and status.downloaded.in_bytes == 0
+        ]
+        assert len(gone) == len(later) == 1
 
 
-@pytest.mark.usefixtures("rare_full_rescans")
 async def test_model_with_files_is_announced_every_rescan(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
@@ -174,7 +179,7 @@ async def test_cancelling_a_failed_download_shows_what_is_on_disk(
         await node.start_download(REPO)
         await node.wait_for(REPO, DownloadFailed)
         await node.cancel(REPO)
-        await node.wait_for(REPO, DownloadPending)
+        await node.wait_for_unlisted(REPO)
 
 
 async def test_cancel_of_an_unknown_model_does_nothing(

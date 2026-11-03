@@ -440,7 +440,7 @@ async def test_delete_during_download_removes_everything(
         await node.start_download(REPO)
         await sent(hub, SHARD1, 100_000).wait()
         await node.delete(REPO)
-        await node.wait_for(REPO, DownloadPending, timeout=5)
+        await node.wait_for_unlisted(REPO, timeout=5)
         await asyncio.sleep(1.0)
         bytes_after_delete = hub.body_bytes(REPO)
         await asyncio.sleep(1.0)
