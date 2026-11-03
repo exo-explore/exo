@@ -36,12 +36,14 @@ import exo.worker.main as worker_mod
 import exo.worker.plan as plan_mod
 import exo.worker.runner.supervisor as supervisor_mod
 from exo.shared.types.commands import ForwarderCommand, ForwarderDownloadCommand
+from exo.shared.types.common import SessionId, SystemId
 from exo.shared.types.events import (
     Event,
     IndexedEvent,
     InstanceCreated,
     NodeDownloadProgress,
     RunnerStatusUpdated,
+    StateSnapshot,
     TaskAcknowledged,
 )
 from exo.shared.types.memory import Memory
@@ -650,3 +652,83 @@ async def test_replacements_that_are_slow_to_start_are_left_to_start(
         await node.peer_is(RunnerIdle())
         new.say(RunnerStatusUpdated(runner_id=RUNNER_1_ID, runner_status=RunnerIdle()))
         assert isinstance(await new.told(ConnectToGroup), ConnectToGroup)
+
+
+class _SlowSender:
+    """The worker's event sender, recording what it sends. Each send yields, as the real one
+    does; `during_first_send` runs at the first: whatever plan_step does between two of
+    announce_to_master's sends."""
+
+    def __init__(self, during_first_send: Callable[[], None] | None) -> None:
+        self.events: list[Event] = []
+        self._hook = during_first_send
+
+    async def send(self, event: Event) -> None:
+        self.events.append(event)
+        if self._hook is not None:
+            hook, self._hook = self._hook, None
+            hook()
+        await anyio.sleep(0)
+
+
+def _bare_worker() -> Worker:
+    _, from_master = channel[IndexedEvent]()
+    event_sender, _ = channel[Event]()
+    command_sender, _ = channel[ForwarderCommand]()
+    download_sender, _ = channel[ForwarderDownloadCommand]()
+    return Worker(
+        NODE_A,
+        event_receiver=from_master,
+        event_sender=event_sender,
+        command_sender=command_sender,
+        download_command_sender=download_sender,
+        api_port=52415,
+    )
+
+
+async def test_a_runner_replaced_during_an_announcement_is_not_reported_going() -> None:
+    """Two of this node's runners are gone (two instances restarting) when the master changes,
+    and the plan replaces the second while the first is being announced. Its replacement is
+    live: reported going, it would stop its peers at this master change and every later one.
+    (Found in review.)"""
+    worker = _bare_worker()
+    worker._gone = {RUNNER_1_ID: FAILED, RUNNER_2_ID: FAILED}  # pyright: ignore[reportPrivateUsage]
+    replacement = cast(
+        RunnerSupervisor,
+        cast(object, FakeRunnerSupervisor(bound_instance=BOUND, status=RunnerReady())),
+    )
+
+    def plan_replaces_runner_2() -> None:
+        worker._gone.pop(RUNNER_2_ID, None)  # pyright: ignore[reportPrivateUsage]
+        worker.runners[RUNNER_2_ID] = replacement
+
+    sender = _SlowSender(plan_replaces_runner_2)
+    worker.event_sender = cast(Sender[Event], cast(object, sender))
+    await worker.announce_to_master()
+
+    going_reports = [
+        e.runner_id
+        for e in sender.events
+        if isinstance(e, RunnerStatusUpdated)
+        and isinstance(e.runner_status, (RunnerFailed, RunnerShuttingDown))
+    ]
+    assert going_reports == [RUNNER_1_ID]
+    assert RUNNER_2_ID not in worker._gone  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_gone_runners_of_an_instance_deleted_within_a_snapshot_are_forgotten() -> (
+    None
+):
+    """An instance deleted while this node waited for a new master's state: its gone runners
+    are never replaced, and aren't announced to later masters."""
+    to_worker, from_master = channel[IndexedEvent | StateSnapshot]()
+    worker = _bare_worker()
+    worker.event_receiver = from_master
+    worker._gone = {RUNNER_1_ID: FAILED}  # pyright: ignore[reportPrivateUsage]
+    session = SessionId(master_node_id=NODE_B, election_clock=1)
+    await to_worker.send(
+        StateSnapshot(state=State(), session=session, requester=SystemId())
+    )
+    to_worker.close()
+    await worker._event_applier()  # pyright: ignore[reportPrivateUsage]
+    assert worker._gone == {}  # pyright: ignore[reportPrivateUsage]

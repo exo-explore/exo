@@ -220,6 +220,8 @@ class Worker:
                             (RunnerFailed, RunnerShuttingDown),
                         ):
                             del self._gone_unconfirmed[runner_id]
+                    # ... nor does an instance's deletion
+                    self._forget_gone_of_deleted_instances()
                     if update.session == self._awaiting_state_of:
                         self._awaiting_state_of = None
                         # Every request from before the change of master has ended
@@ -232,13 +234,7 @@ class Worker:
                 if isinstance(event, InstanceDeleted):
                     self._instance_backoff.reset(event.instance_id)
                     self._deletion_requested.pop(event.instance_id, None)
-                    for runner_id in list(self._gone):
-                        if not any(
-                            runner_id in instance.shard_assignments.runner_to_shard
-                            for instance in self.state.instances.values()
-                        ):
-                            self._gone.pop(runner_id)
-                            self._gone_unconfirmed.pop(runner_id, None)
+                    self._forget_gone_of_deleted_instances()
 
                 if isinstance(event, RunnerStatusUpdated):
                     if self._gone_unconfirmed.get(event.runner_id) == event.event_id:
@@ -301,6 +297,16 @@ class Worker:
                         cmd_id := self._tasks_with_inputs.pop(event.task_id, None)
                     ) is not None:
                         self._drop_inputs(cmd_id)
+
+    def _forget_gone_of_deleted_instances(self) -> None:
+        """A gone runner of an instance that no longer exists is never replaced"""
+        for runner_id in list(self._gone):
+            if not any(
+                runner_id in instance.shard_assignments.runner_to_shard
+                for instance in self.state.instances.values()
+            ):
+                self._gone.pop(runner_id)
+                self._gone_unconfirmed.pop(runner_id, None)
 
     def _keep_inputs_if_needed_here(self, task: TextGeneration | ImageEdits) -> None:
         """Every node receives every request's images; only the nodes that run it keep them."""
@@ -620,8 +626,10 @@ class Worker:
             )
         # Runners that are gone too: their instance's other runners must still be stopped,
         # and this node waits for the report to come back before it replaces them
-        for runner_id, status in list(self._gone.items()):
-            await self._report_gone(runner_id, status)
+        for runner_id in list(self._gone):
+            # The plan may replace one during a send: its replacement isn't going
+            if runner_id in self._gone and runner_id not in self.runners:
+                await self._report_gone(runner_id, self._gone[runner_id])
 
     async def _report_gone(self, runner_id: RunnerId, status: RunnerStatus) -> None:
         event = RunnerStatusUpdated(runner_id=runner_id, runner_status=status)
