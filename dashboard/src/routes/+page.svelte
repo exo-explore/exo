@@ -71,7 +71,22 @@
     type NodeInfo,
     type PlacementPreview,
   } from "$lib/stores/app.svelte";
-  import { addToast, dismissByMessage } from "$lib/stores/toast.svelte";
+  import {
+    addToast,
+    dismissByMessage,
+    dismissToast,
+  } from "$lib/stores/toast.svelte";
+  import {
+    STOPPED_MODELS_KEY,
+    THIS_DEVICE_IDS_KEY,
+    parseNotices,
+    stoppedModelMessage,
+    whyModelStopped,
+    withNotice,
+    withThisDeviceId,
+    withoutNotice,
+    type StoppedModelNotice,
+  } from "$lib/utils/stopped_models";
   import { readApiErrorMessage } from "$lib/utils/api_errors";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
   import DeviceIcon from "$lib/components/DeviceIcon.svelte";
@@ -1611,12 +1626,14 @@
   onMount(async () => {
     mounted = true;
     fetchModels();
-    fetch("/node_id")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((id) => {
-        if (id) localNodeId = id;
-      })
-      .catch(() => {});
+    refreshLocalNodeId();
+    // Notices of models that stopped on their own, kept until dismissed
+    for (const notice of readStoppedNotices()) showStoppedNotice(notice);
+    window.addEventListener("storage", (event) => {
+      if (event.key === STOPPED_MODELS_KEY || event.key === null) {
+        syncStoppedNotices();
+      }
+    });
 
     // Handle reset-onboarding query parameter (triggered from native Settings)
     const params = new URLSearchParams(window.location.search);
@@ -3447,6 +3464,8 @@
     {
       modelId: string;
       nodeIds: string[];
+      // Names of its devices, to recognise one that comes back after a restart
+      nodeNames: Record<string, string>;
       failed: boolean;
       failureReason: string | null;
     }
@@ -3456,9 +3475,16 @@
     const current: typeof previousInstanceSnapshot = {};
     for (const [id, inst] of Object.entries(instanceData)) {
       const status = getInstanceDownloadStatus(id, inst);
+      const nodeIds = [...unwrapInstanceNodes(inst)];
       current[id] = {
         modelId: getInstanceModelId(inst),
-        nodeIds: [...unwrapInstanceNodes(inst)],
+        nodeIds,
+        nodeNames: Object.fromEntries(
+          nodeIds.flatMap((nodeId) => {
+            const name = data?.nodes?.[nodeId]?.friendly_name;
+            return name ? [[nodeId, name]] : [];
+          }),
+        ),
         failed: status.isFailed,
         failureReason: status.errorMessage
           ? summarizeFailureReason(status.errorMessage)
@@ -3470,19 +3496,30 @@
     for (const [id, instance] of Object.entries(current)) {
       if (previousInstanceSnapshot[id]) continue;
       const shortName = getModelDisplayName(instance.modelId);
-      dismissByMessage(lostInstanceMessage(shortName, true));
-      dismissByMessage(lostInstanceMessage(shortName, false));
+      clearStoppedNotice(instance.modelId);
+      dismissByMessage(stoppedModelMessage(shortName, { kind: "stopped" }));
     }
     const connectedNodeIds = new Set(Object.keys(data?.nodes ?? {}));
+    const connectedNames = new Set(
+      Object.values(data?.nodes ?? {}).flatMap((node) =>
+        node.friendly_name ? [node.friendly_name] : [],
+      ),
+    );
     for (const [id, lost] of Object.entries(previousInstanceSnapshot)) {
       if (current[id] || userDeletedInstanceIds.delete(id)) continue;
       if (lost.modelId === "Unknown" || lost.modelId === "Unknown Model")
         continue;
       const shortName = getModelDisplayName(lost.modelId);
-      const deviceLeft =
-        connectedNodeIds.size > 0 &&
-        lost.nodeIds.some((nodeId) => !connectedNodeIds.has(nodeId));
-      if (!deviceLeft && lost.failed) {
+      // A device that left, or exo restarting on one (this one included),
+      // which also gives the device a new identity
+      const reason = whyModelStopped({
+        nodeIds: lost.nodeIds,
+        connectedNodeIds,
+        nameOf: (nodeId) => lost.nodeNames[nodeId],
+        connectedNames,
+        thisDeviceIds: readThisDeviceIds(),
+      });
+      if (reason.kind === "stopped" && lost.failed) {
         // The worker gave up after retrying; starting again would fail the same way
         addToast({
           type: "error",
@@ -3492,24 +3529,147 @@
         });
         continue;
       }
-      addToast({
-        type: "warning",
-        message: lostInstanceMessage(shortName, deviceLeft),
-        persistent: deviceLeft,
-        action: {
-          label: "Start again",
-          onClick: () => relaunchLostModel(lost.modelId),
-        },
-      });
+      const message = stoppedModelMessage(shortName, reason);
+      if (reason.kind === "stopped") {
+        addToast({
+          type: "warning",
+          message,
+          action: {
+            label: "Start again",
+            onClick: () => relaunchLostModel(lost.modelId),
+          },
+        });
+        continue;
+      }
+      // Nothing will start it again: keep the notice until it's dismissed,
+      // across reloads and in every tab
+      const notice = { modelId: lost.modelId, message, at: Date.now() };
+      writeStoppedNotices(withNotice(readStoppedNotices(), notice));
+      showStoppedNotice(notice);
     }
     previousInstanceSnapshot = current;
   });
 
-  function lostInstanceMessage(shortName: string, deviceLeft: boolean) {
-    return deviceLeft
-      ? `${shortName} stopped — a device left the cluster`
-      : `${shortName} stopped`;
+  // ── Notices of models that stopped on their own ──
+  // Kept in localStorage (stopped_models.ts) and shown as persistent toasts
+  // with "Start again" in every tab, until dismissed or the model runs again.
+  const stoppedNoticeToasts = new Map<
+    string,
+    { toastId: string; message: string }
+  >();
+
+  function readStoppedNotices(): StoppedModelNotice[] {
+    try {
+      return parseNotices(localStorage.getItem(STOPPED_MODELS_KEY));
+    } catch {
+      return [];
+    }
   }
+
+  function writeStoppedNotices(notices: StoppedModelNotice[]) {
+    try {
+      localStorage.setItem(STOPPED_MODELS_KEY, JSON.stringify(notices));
+    } catch {
+      // Storage unavailable: the notice lasts until the page reloads
+    }
+  }
+
+  function showStoppedNotice(notice: StoppedModelNotice) {
+    const shown = stoppedNoticeToasts.get(notice.modelId);
+    if (shown?.message === notice.message) return;
+    if (shown) {
+      stoppedNoticeToasts.delete(notice.modelId);
+      dismissToast(shown.toastId);
+    }
+    const toastId = addToast({
+      type: "warning",
+      message: notice.message,
+      persistent: true,
+      action: {
+        label: "Start again",
+        onClick: () => relaunchLostModel(notice.modelId),
+      },
+      // Dismissed here (or Start again): gone for good, in every tab
+      onDismiss: () => {
+        if (stoppedNoticeToasts.get(notice.modelId)?.toastId !== toastId)
+          return;
+        stoppedNoticeToasts.delete(notice.modelId);
+        writeStoppedNotices(
+          withoutNotice(readStoppedNotices(), notice.modelId),
+        );
+      },
+    });
+    stoppedNoticeToasts.set(notice.modelId, {
+      toastId,
+      message: notice.message,
+    });
+  }
+
+  // The model runs again: its notice no longer applies
+  function clearStoppedNotice(modelId: string) {
+    const shown = stoppedNoticeToasts.get(modelId);
+    if (shown) dismissToast(shown.toastId);
+    const notices = readStoppedNotices();
+    if (notices.some((notice) => notice.modelId === modelId)) {
+      writeStoppedNotices(withoutNotice(notices, modelId));
+    }
+  }
+
+  // Another tab added or dismissed a notice
+  function syncStoppedNotices() {
+    const notices = readStoppedNotices();
+    for (const notice of notices) showStoppedNotice(notice);
+    for (const [modelId, shown] of [...stoppedNoticeToasts]) {
+      if (notices.some((notice) => notice.modelId === modelId)) continue;
+      stoppedNoticeToasts.delete(modelId);
+      dismissToast(shown.toastId);
+    }
+  }
+
+  // The ids this device has had: exo picks a new one each time it starts
+  function readThisDeviceIds(): Set<string> {
+    const ids = new Set<string>(localNodeId ? [localNodeId] : []);
+    try {
+      const stored: unknown = JSON.parse(
+        localStorage.getItem(THIS_DEVICE_IDS_KEY) ?? "[]",
+      );
+      if (Array.isArray(stored)) {
+        for (const id of stored) if (typeof id === "string") ids.add(id);
+      }
+    } catch {
+      // Unreadable: only the current id
+    }
+    return ids;
+  }
+
+  let lastNodeIdRefresh = 0;
+  function refreshLocalNodeId() {
+    lastNodeIdRefresh = Date.now();
+    fetch("/node_id")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((id) => {
+        if (typeof id !== "string" || !id) return;
+        localNodeId = id;
+        try {
+          const known = [...readThisDeviceIds()].filter((x) => x !== id);
+          localStorage.setItem(
+            THIS_DEVICE_IDS_KEY,
+            JSON.stringify(withThisDeviceId(known, id)),
+          );
+        } catch {
+          // Storage unavailable
+        }
+      })
+      .catch(() => {});
+  }
+
+  // exo restarted on this device: it has a new id, and the old one leaves
+  // the cluster
+  $effect(() => {
+    if (!data || !localNodeId || data.nodes[localNodeId]) return;
+    if (Date.now() - lastNodeIdRefresh < 5_000) return;
+    refreshLocalNodeId();
+  });
 
   // Start a lost model again on the devices that are left. Only takes over
   // the chat view when it's the model being chatted with.

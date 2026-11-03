@@ -22,6 +22,7 @@ export interface Toast {
   duration: number;
   createdAt: number;
   action?: ToastAction;
+  onDismiss?: () => void;
 }
 
 interface ToastInput {
@@ -33,6 +34,8 @@ interface ToastInput {
   duration?: number;
   /** Optional button shown in the toast; clicking it also dismisses the toast. */
   action?: ToastAction;
+  /** Called once when the toast goes, however it is dismissed. */
+  onDismiss?: () => void;
 }
 
 const DEFAULT_DURATIONS: Record<ToastType, number> = {
@@ -62,6 +65,7 @@ export function addToast(input: ToastInput): string {
     duration,
     createdAt: Date.now(),
     action: input.action,
+    onDismiss: input.onDismiss,
   };
 
   toastList = [...toastList, toast];
@@ -80,7 +84,9 @@ export function dismissToast(id: string): void {
     clearTimeout(timer);
     timers.delete(id);
   }
+  const toast = toastList.find((t) => t.id === id);
   toastList = toastList.filter((t) => t.id !== id);
+  toast?.onDismiss?.();
 }
 
 /** Dismiss all toasts matching a message (useful for dedup). */
