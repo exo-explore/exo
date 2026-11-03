@@ -22,6 +22,7 @@ from exo.shared.election import (
     Election,
     ElectionMessage,
     ElectionResult,
+    ResumingHold,
     connection_change,
 )
 from exo.shared.types.commands import ForwarderCommand
@@ -160,11 +161,42 @@ async def test_a_suspect_node_becoming_gone_starts_no_round() -> None:
         assert await h.rounds_after((PEER, "Gone")) == []
 
 
-async def test_a_peer_lost_while_this_node_resumes_still_starts_a_round() -> None:
+async def test_a_peer_lost_while_this_node_resumes_starts_a_round_when_resuming_ends() -> (
+    None
+):
     async with election_on_membership() as h:
         await h.rounds_after((PEER, "Alive"))
         # This node was stopped (asleep, frozen): that alone starts nothing...
         assert await h.rounds_after((ME, "Resuming")) == []
-        # ... but its master (or any peer) being lost meanwhile is acted on at once
-        assert await h.rounds_after((PEER, "Suspect")) == [2]
+        # ... nor its master (or any peer) being lost meanwhile: its links close one by one
+        # while discovery holds off, so the loss says little about the peer
+        assert await h.rounds_after((PEER, "Suspect")) == []
+        # Still lost when Resuming ends: the round it would have started, now
+        assert await h.rounds_after((ME, "Alive")) == [2]
+
+
+async def test_a_peer_back_before_resuming_ends_starts_no_round() -> None:
+    """A woken node used to start a round when the stale link to its master closed during the
+    hold-off, find nobody, and make itself master until the real one came back."""
+    async with election_on_membership() as h:
+        await h.rounds_after((PEER, "Alive"))
+        assert await h.rounds_after((ME, "Resuming")) == []
+        assert await h.rounds_after((PEER, "Suspect")) == []
+        # Back before Resuming ends: its loss never counted
+        assert await h.rounds_after((PEER, "Alive")) == []
         assert await h.rounds_after((ME, "Alive")) == []
+
+
+def test_the_resuming_hold_only_puts_off_losses() -> None:
+    hold = ResumingHold(ME)
+    # This node starting is a round, as its own token appearing was
+    assert hold.starts_a_round(change(None, "Alive", node=ME))
+    assert hold.starts_a_round(change(None, "Alive"))
+    assert not hold.starts_a_round(change("Alive", "Resuming", node=ME))
+    # A new node joining while this one resumes still starts a round, as today
+    assert hold.starts_a_round(change(None, "Alive", node=NodeId("NEW")))
+    assert not hold.starts_a_round(change("Alive", "Suspect"))
+    assert not hold.starts_a_round(change("Suspect", "Gone"))
+    assert hold.starts_a_round(change("Resuming", "Alive", node=ME))
+    # After Resuming, losses count at once again
+    assert hold.starts_a_round(change("Alive", "Suspect", node=NodeId("NEW")))

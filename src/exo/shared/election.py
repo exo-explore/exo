@@ -1,6 +1,6 @@
 import math
 from collections import Counter
-from typing import Literal, Self
+from typing import Literal, Self, final
 
 import anyio
 from anyio import (
@@ -104,6 +104,46 @@ def connection_change(
     if change.left_alive:
         return "disconnected"
     return None
+
+
+@final
+class ResumingHold:
+    """Holds back a peer's loss, for elections, while this node is Resuming.
+
+    After this node was stopped (frozen or asleep) its links to the other nodes close one by one
+    while discovery holds off, so it sees peers it can't reach yet as lost: losing them says
+    little about them. A round started then may find nobody and make this node master. So while
+    it is Resuming a peer leaving Alive starts nothing: the loss is put off, and dropped if the
+    peer is back before Resuming ends. When Resuming ends, a peer still lost starts the round it
+    would have started (once, for all of them), as its grace starts only then.
+    """
+
+    def __init__(self, node_id: NodeId):
+        self._node_id = node_id
+        self._resuming = False
+        self._put_off: set[NodeId] = set()
+
+    def starts_a_round(self, change: MembershipChange) -> bool:
+        """Whether `change` starts an election round now"""
+        if change.node_id == self._node_id:
+            if change.current == "Resuming":
+                self._resuming = True
+                return False
+            if change.previous == "Resuming":
+                self._resuming = False
+                still_lost = bool(self._put_off)
+                self._put_off.clear()
+                return still_lost
+        kind = connection_change(change)
+        if self._resuming:
+            if kind == "disconnected":
+                self._put_off.add(change.node_id)
+                return False
+            if kind == "connected" and change.node_id in self._put_off:
+                # Back before Resuming ended: its loss never counted
+                self._put_off.discard(change.node_id)
+                return False
+        return kind is not None
 
 
 class ElectionResult(FrozenModel):
@@ -316,16 +356,17 @@ class Election:
                 self._candidates.append(message)
 
     async def _connection_receiver(self) -> None:
+        hold = ResumingHold(self.node_id)
         with self._membership_changes as changes:
             async for first in changes:
-                if connection_change(first) is None:
+                if not hold.starts_a_round(first):
                     continue
                 # Delay after connection message for time to symmetrically setup
                 await anyio.sleep(0.2)
                 rest = [
                     change
                     for change in changes.collect()
-                    if connection_change(change) is not None
+                    if hold.starts_a_round(change)
                 ]
 
                 logger.debug(
