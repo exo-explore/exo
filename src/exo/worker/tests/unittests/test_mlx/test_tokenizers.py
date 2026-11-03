@@ -13,9 +13,9 @@ import pytest
 
 from exo.download.download_utils import (
     download_file_with_retry,
-    fetch_file_list_with_cache,
     resolve_model_dir,
 )
+from exo.download.hub import Hub
 from exo.shared.models.model_cards import ModelCard, ModelId, card_cache
 from exo.worker.engines.mlx.utils_mlx import (
     get_eos_token_ids_for_model,
@@ -55,7 +55,10 @@ async def download_tokenizer_files(model_id: ModelId) -> Path:
     """Download only the tokenizer-related files for a model."""
     target_dir = await resolve_model_dir(model_id)
 
-    file_list = await fetch_file_list_with_cache(model_id, "main", recursive=True)
+    async with Hub.connect(
+        connect_timeout=30, idle_timeout=60, metadata_timeout=60
+    ) as hub:
+        file_list = await hub.list_files(model_id, "main")
 
     tokenizer_files = [f for f in file_list if is_tokenizer_file(f.path)]
 
