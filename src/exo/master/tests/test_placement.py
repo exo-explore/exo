@@ -6,6 +6,7 @@ from exo.master.placement import (
     get_transition_events,
     memory_once_loaded,
     place_instance,
+    removal_events,
 )
 from exo.master.tests.conftest import (
     create_node_memory,
@@ -432,7 +433,7 @@ def test_get_transition_events_no_change(instance: Instance):
     target_instances = {instance_id: instance}
 
     # act
-    events = get_transition_events(current_instances, target_instances, {})
+    events = get_transition_events(current_instances, target_instances)
 
     # assert
     assert len(events) == 0
@@ -445,26 +446,25 @@ def test_get_transition_events_create_instance(instance: Instance):
     target_instances: dict[InstanceId, Instance] = {instance_id: instance}
 
     # act
-    events = get_transition_events(current_instances, target_instances, {})
+    events = get_transition_events(current_instances, target_instances)
 
     # assert
     assert len(events) == 1
     assert isinstance(events[0], InstanceCreated)
 
 
-def test_get_transition_events_delete_instance(instance: Instance):
-    # arrange
+def test_removal_events_remove_the_instance_with_its_reason():
     instance_id = InstanceId()
-    current_instances: dict[InstanceId, Instance] = {instance_id: instance}
-    target_instances: dict[InstanceId, Instance] = {}
 
-    # act
-    events = get_transition_events(current_instances, target_instances, {})
+    events = removal_events(instance_id, "StartFailed", {})
 
-    # assert
-    assert len(events) == 1
-    assert isinstance(events[0], InstanceDeleted)
-    assert events[0].instance_id == instance_id
+    assert events == [
+        InstanceDeleted(
+            instance_id=instance_id,
+            reason="StartFailed",
+            event_id=events[0].event_id,
+        )
+    ]
 
 
 def test_placement_selects_leaf_nodes(
@@ -814,18 +814,16 @@ def _make_task(
     )
 
 
-def test_get_transition_events_delete_instance_cancels_running_tasks(
+def test_removal_events_cancels_running_tasks(
     instance: Instance,
 ):
     # arrange
     instance_id = InstanceId()
-    current_instances: dict[InstanceId, Instance] = {instance_id: instance}
-    target_instances: dict[InstanceId, Instance] = {}
     task = _make_task(instance_id, TaskStatus.Running)
     tasks = {task.task_id: task}
 
     # act
-    events = get_transition_events(current_instances, target_instances, tasks)
+    events = removal_events(instance_id, "UserStopped", tasks)
 
     # assert – cancellation event should come before the deletion event
     assert len(events) == 2
@@ -836,18 +834,16 @@ def test_get_transition_events_delete_instance_cancels_running_tasks(
     assert events[1].instance_id == instance_id
 
 
-def test_get_transition_events_delete_instance_cancels_pending_tasks(
+def test_removal_events_cancels_pending_tasks(
     instance: Instance,
 ):
     # arrange
     instance_id = InstanceId()
-    current_instances: dict[InstanceId, Instance] = {instance_id: instance}
-    target_instances: dict[InstanceId, Instance] = {}
     task = _make_task(instance_id, TaskStatus.Pending)
     tasks = {task.task_id: task}
 
     # act
-    events = get_transition_events(current_instances, target_instances, tasks)
+    events = removal_events(instance_id, "UserStopped", tasks)
 
     # assert
     assert len(events) == 2
@@ -857,13 +853,11 @@ def test_get_transition_events_delete_instance_cancels_pending_tasks(
     assert isinstance(events[1], InstanceDeleted)
 
 
-def test_get_transition_events_delete_instance_ignores_completed_tasks(
+def test_removal_events_ignores_completed_tasks(
     instance: Instance,
 ):
     # arrange
     instance_id = InstanceId()
-    current_instances: dict[InstanceId, Instance] = {instance_id: instance}
-    target_instances: dict[InstanceId, Instance] = {}
     tasks = {
         t.task_id: t
         for t in [
@@ -875,32 +869,26 @@ def test_get_transition_events_delete_instance_ignores_completed_tasks(
     }
 
     # act
-    events = get_transition_events(current_instances, target_instances, tasks)
+    events = removal_events(instance_id, "UserStopped", tasks)
 
     # assert – only the InstanceDeleted event, no cancellations
     assert len(events) == 1
     assert isinstance(events[0], InstanceDeleted)
 
 
-def test_get_transition_events_delete_instance_cancels_only_matching_tasks(
+def test_removal_events_cancels_only_matching_tasks(
     instance: Instance,
 ):
     # arrange
     instance_id_a = InstanceId()
     instance_id_b = InstanceId()
-    current_instances: dict[InstanceId, Instance] = {
-        instance_id_a: instance,
-        instance_id_b: instance,
-    }
     # only delete instance A, keep instance B
-    target_instances: dict[InstanceId, Instance] = {instance_id_b: instance}
-
     task_a = _make_task(instance_id_a, TaskStatus.Running)
     task_b = _make_task(instance_id_b, TaskStatus.Running)
     tasks = {task_a.task_id: task_a, task_b.task_id: task_b}
 
     # act
-    events = get_transition_events(current_instances, target_instances, tasks)
+    events = removal_events(instance_id_a, "UserStopped", tasks)
 
     # assert – only task_a should be cancelled
     cancel_events = [e for e in events if isinstance(e, TaskStatusUpdated)]

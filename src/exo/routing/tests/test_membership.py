@@ -397,7 +397,10 @@ async def test_a_node_the_coordinator_removed_stops_counting_in_the_quorum() -> 
         await events.send(IndexedEvent(idx=0, event=NodeTimedOut(node_id=PEER)))
         await events.send(
             IndexedEvent(
-                idx=1, event=InstanceDeleted(instance_id=InstanceId("an-instance"))
+                idx=1,
+                event=InstanceDeleted(
+                    instance_id=InstanceId("an-instance"), reason="NodeLost"
+                ),
             )
         )
         await events.send(
@@ -447,7 +450,10 @@ async def test_a_report_shows_that_exo_on_the_node_runs_and_that_the_cluster_lis
     )
     networking = await told_by_the_cluster(
         IndexedEvent(idx=0, event=report),
-        IndexedEvent(idx=1, event=InstanceDeleted(instance_id=InstanceId("one"))),
+        IndexedEvent(
+            idx=1,
+            event=InstanceDeleted(instance_id=InstanceId("one"), reason="NodeLost"),
+        ),
     )
     assert (networking.heard, networking.listed_nodes) == ([PEER], [PEER])
     assert networking.forgotten == []

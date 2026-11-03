@@ -1,14 +1,14 @@
-"""Once the worker gives up on an instance, it asks the master to delete it: once, not on every
-pass of its planning loop until the deletion arrives."""
+"""Once the worker gives up on an instance, it asks the master to remove it, saying its runner
+failed to start: once, not on every pass of its planning loop until the removal arrives."""
 
 import anyio
 
 from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import (
-    DeleteInstance,
     ForwarderCommand,
     ForwarderDownloadCommand,
+    InstanceBroken,
 )
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import Event, IndexedEvent, InstanceCreated
@@ -74,5 +74,6 @@ def _deletions(commands: Receiver[ForwarderCommand]) -> list[InstanceId]:
     return [
         command.command.instance_id
         for command in commands.collect()
-        if isinstance(command.command, DeleteInstance)
+        if isinstance(command.command, InstanceBroken)
+        and command.command.reason == "StartFailed"
     ]

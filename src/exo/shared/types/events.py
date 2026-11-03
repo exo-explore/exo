@@ -11,7 +11,11 @@ from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.state import State
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import DownloadProgress
-from exo.shared.types.worker.instances import Instance, InstanceId
+from exo.shared.types.worker.instances import (
+    Instance,
+    InstanceId,
+    InstanceRemovalReason,
+)
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo
 from exo.utils.pydantic_ext import ByTag, FrozenModel, TaggedModel
@@ -69,6 +73,7 @@ class InstanceCreated(BaseEvent):
 
 class InstanceDeleted(BaseEvent):
     instance_id: InstanceId
+    reason: InstanceRemovalReason
 
 
 class RunnerStatusUpdated(BaseEvent):

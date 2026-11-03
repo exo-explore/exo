@@ -69,7 +69,7 @@ def test_deleting_an_instance_forgets_its_runners():
     )
 
     new_state = apply_instance_deleted(
-        InstanceDeleted(instance_id=deleted.instance_id), state
+        InstanceDeleted(instance_id=deleted.instance_id, reason="NodeLost"), state
     )
 
     assert dict(new_state.runners) == {kept: RunnerReady()}

@@ -11,6 +11,8 @@ up from a snapshot of the cluster's state.
 import re
 from typing import Literal
 
+from exo.shared.types.worker.instances import InstanceRemovalReason
+
 # Why a request ended with an error. Stable: clients match them.
 GenerationErrorCode = Literal[
     # A device serving the model disconnected or left the cluster
@@ -97,6 +99,19 @@ _PREFIX_CODES: tuple[tuple[str, GenerationErrorCode], ...] = (
     (CONTEXT_LENGTH_EXCEEDED, "context_length_exceeded"),
     (INVALID_REQUEST, "invalid_request"),
 )
+
+
+# What a request in flight is told when its instance is removed, by the removal's reason
+_REMOVAL_MESSAGES: dict[InstanceRemovalReason, str] = {
+    "NodeLost": DEVICE_LEFT,
+    "UserStopped": MODEL_STOPPED,
+    "StartFailed": MODEL_FAILED,
+}
+
+
+def removal_message(reason: InstanceRemovalReason) -> str:
+    """What a request in flight is told when its instance is removed for this reason."""
+    return _REMOVAL_MESSAGES[reason]
 
 
 def generation_error_code(message: str) -> GenerationErrorCode | None:

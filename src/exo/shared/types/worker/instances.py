@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Literal
 
 from pydantic import model_validator
 
@@ -10,6 +11,16 @@ from exo.utils.pydantic_ext import FrozenModel, TaggedModel
 
 class InstanceId(Id):
     pass
+
+
+# Why a worker can't run an instance any more: its runner kept failing to start
+BrokenInstanceReason = Literal["StartFailed"]
+
+# Why an instance was removed. Every removal says which, so nothing has to guess: a request the
+# removal ends is told why, and only a user's stop means the user no longer wants the model.
+# NodeLost: one of its nodes left the cluster, or the master stopped hearing from it.
+# UserStopped: a user stopped it.
+InstanceRemovalReason = Literal["NodeLost", "UserStopped"] | BrokenInstanceReason
 
 
 class InstanceMeta(str, Enum):

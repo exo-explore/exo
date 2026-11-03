@@ -10,9 +10,9 @@ from exo.master.placement import (
     InstanceDoesNotFitError,
     add_instance_to_placements,
     cancel_unnecessary_downloads,
-    delete_instance,
     get_transition_events,
     place_instance,
+    removal_events,
 )
 from exo.master.placement_utils import find_ip_prioritised
 from exo.routing.event_router import (
@@ -43,6 +43,7 @@ from exo.shared.types.commands import (
     ForwarderDownloadCommand,
     ImageEdits,
     ImageGeneration,
+    InstanceBroken,
     PlaceInstance,
     RequestEventLog,
     SendInputChunk,
@@ -437,16 +438,21 @@ class Master:
                                 f"Not deleting instance {command.instance_id}: already gone"
                             )
                         case DeleteInstance():
-                            placement = delete_instance(command, self.state.instances)
-                            transition_events = get_transition_events(
-                                self.state.instances, placement, self.state.tasks
-                            )
+                            remaining = {
+                                instance_id: instance
+                                for instance_id, instance in self.state.instances.items()
+                                if instance_id != command.instance_id
+                            }
                             download_commands.extend(
                                 cancel_unnecessary_downloads(
-                                    placement, self.state.downloads
+                                    remaining, self.state.downloads
                                 )
                             )
-                            generated_events.extend(transition_events)
+                            generated_events.extend(
+                                removal_events(
+                                    command.instance_id, "UserStopped", self.state.tasks
+                                )
+                            )
                         case PlaceInstance():
                             placement = place_instance(
                                 command,
@@ -463,7 +469,7 @@ class Master:
                                 node_identities=self.state.node_identities,
                             )
                             transition_events = get_transition_events(
-                                self.state.instances, placement, self.state.tasks
+                                self.state.instances, placement
                             )
                             generated_events.extend(transition_events)
                         case CreateInstance() if not instance_is_reachable(
@@ -490,9 +496,29 @@ class Master:
                                 )
                                 placement = self.state.instances
                             transition_events = get_transition_events(
-                                self.state.instances, placement, self.state.tasks
+                                self.state.instances, placement
                             )
                             generated_events.extend(transition_events)
+                        case InstanceBroken() if (
+                            command.instance_id not in self.state.instances
+                        ):
+                            # Already gone: a late request from a worker changes nothing
+                            logger.info(
+                                f"Instance {command.instance_id} ({command.reason}) is "
+                                "already gone"
+                            )
+                        case InstanceBroken():
+                            logger.warning(
+                                f"Removing instance {command.instance_id} ({command.reason})"
+                                + (f": {command.message}" if command.message else "")
+                            )
+                            generated_events.extend(
+                                removal_events(
+                                    command.instance_id,
+                                    command.reason,
+                                    self.state.tasks,
+                                )
+                            )
                         case SendInputChunk(chunk=chunk):
                             generated_events.append(
                                 InputChunkReceived(
@@ -677,7 +703,7 @@ class Master:
                 node_id not in connected
                 for node_id in instance.shard_assignments.node_to_runner
             ):
-                self._index(InstanceDeleted(instance_id=instance_id))
+                self._index(InstanceDeleted(instance_id=instance_id, reason="NodeLost"))
 
     def _on_node_removed(self, node_id: NodeId) -> None:
         # Only for a removal a node sent: it announced it was leaving. The ones this master

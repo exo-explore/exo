@@ -22,9 +22,9 @@ from exo.shared.models.model_cards import ModelCard, ModelId, card_cache
 from exo.shared.types.chunks import ErrorChunk, InputImageChunk
 from exo.shared.types.commands import (
     AddCustomModelCard,
-    DeleteInstance,
     ForwarderCommand,
     ForwarderDownloadCommand,
+    InstanceBroken,
     StartDownload,
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
@@ -423,14 +423,19 @@ class Worker:
                         requested_at is None
                         or time.monotonic() - requested_at >= DELETION_REQUEST_RETRY
                     ):
+                        message = f"its runner here failed to start {EXO_MAX_INSTANCE_RETRIES} times"
                         logger.warning(
-                            f"Instance {iid} exceeded {EXO_MAX_INSTANCE_RETRIES} retries, requesting deletion"
+                            f"Instance {iid}: {message}; asking for it to be removed"
                         )
                         self._deletion_requested[iid] = time.monotonic()
                         await self.command_sender.send(
                             ForwarderCommand(
                                 origin=self._system_id,
-                                command=DeleteInstance(instance_id=iid),
+                                command=InstanceBroken(
+                                    instance_id=iid,
+                                    reason="StartFailed",
+                                    message=message,
+                                ),
                             )
                         )
                     continue
