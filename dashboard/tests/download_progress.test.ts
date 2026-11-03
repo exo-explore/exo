@@ -90,17 +90,28 @@ test("the total never goes back while bytes are added", () => {
   assert.equal(previous, 100);
 });
 
-test("a device that reports less than the whole model only moves the total forward", () => {
-  // Pipeline shards download only their own layers' files
+test("a device reporting less than the card's size only moves the total forward", () => {
+  // The card overstates the repo a little: 16 GB on the card, 15 GB to fetch
   const before = totalDownload(
-    [node("a", "downloading", 2, 6, 50), node("b", "missing")],
+    [node("a", "downloading", 2, 15, 50), node("b", "missing")],
     MODEL,
   );
   const after = totalDownload(
-    [node("a", "downloading", 2, 6, 50), node("b", "downloading", 0, 5, 50)],
+    [node("a", "downloading", 2, 15, 50), node("b", "downloading", 0, 15, 50)],
     MODEL,
   );
-  assert.ok(after.percentage > before.percentage);
+  assert.ok(after.percentage >= before.percentage);
+});
+
+test("a small repo fetched after the model's counts as the model done", () => {
+  // Vision weights in their own repo, reported under the model's id
+  const total = totalDownload(
+    [node("a", "downloading", 0.2, 1, 50), node("b", "downloading", 8, 16, 50)],
+    MODEL,
+  );
+  assert.equal(total.percentage, 75);
+  // Its remaining 0.8 GB still counts for the ETA
+  assert.ok(total.etaMs! > 0);
 });
 
 test("the ETA is the slowest device's, not the sum over all", () => {

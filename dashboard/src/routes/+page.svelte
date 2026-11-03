@@ -1949,9 +1949,11 @@
 
   // Shared helper: collect per-node download status for a model across a set of nodes.
   // Handles deduplication, entry parsing, and aggregation in one place.
-  // With nodeIds (the devices of an instance), every one of them counts in the
-  // total, finished or not started yet; a device that hasn't said how much it
-  // needs counts as estimatedNodeBytes (see totalDownload).
+  // With nodeIds (the devices of an instance or a placement), every one of
+  // them counts in the total, finished or not started yet; a device that
+  // hasn't said how much it needs counts as estimatedNodeBytes (see
+  // totalDownload). Without, only devices downloading it count: every device
+  // reports a pending entry for every model it knows, downloading or not.
   function collectDownloadStatus(
     modelId: string,
     nodeIds?: string[],
@@ -2031,17 +2033,18 @@
             percentage: 100,
             progress: null,
           });
-          amounts.set(nodeId, {
-            nodeId,
-            state: "completed",
-            downloadedBytes: 0,
-            totalBytes: getBytes(
-              downloadPayload.total ??
-                downloadPayload.total_bytes ??
-                downloadPayload.totalBytes,
-            ),
-            speed: 0,
-          });
+          if (nodeIdSet)
+            amounts.set(nodeId, {
+              nodeId,
+              state: "completed",
+              downloadedBytes: 0,
+              totalBytes: getBytes(
+                downloadPayload.total ??
+                  downloadPayload.total_bytes ??
+                  downloadPayload.totalBytes,
+              ),
+              speed: 0,
+            });
           continue;
         }
 
@@ -2066,13 +2069,14 @@
             percentage: pct,
             progress: null,
           });
-          amounts.set(nodeId, {
-            nodeId,
-            state: "pending",
-            downloadedBytes: pendingDownloaded,
-            totalBytes: pendingTotal,
-            speed: 0,
-          });
+          if (nodeIdSet)
+            amounts.set(nodeId, {
+              nodeId,
+              state: "pending",
+              downloadedBytes: pendingDownloaded,
+              totalBytes: pendingTotal,
+              speed: 0,
+            });
           continue;
         }
 
@@ -2163,6 +2167,8 @@
     };
   }
 
+  // A model's download. Without nodeIds, a running (or starting) instance of
+  // it decides which devices count: the chat view's progress is its download.
   function getModelDownloadStatus(
     modelId: string,
     nodeIds?: string[],
@@ -2171,6 +2177,25 @@
     progress: DownloadProgress | null;
     perNode: NodeDownloadStatus[];
   } {
+    if (!nodeIds) {
+      for (const [, inst] of Object.entries(instanceData)) {
+        if (getInstanceModelId(inst) !== modelId) continue;
+        const [, instance] = getTagged(inst);
+        const shardAssignments = (
+          instance as {
+            shardAssignments?: {
+              nodeToRunner?: Record<string, string>;
+              runnerToShard?: Record<string, unknown>;
+            };
+          } | null
+        )?.shardAssignments;
+        return collectDownloadStatus(
+          modelId,
+          Object.keys(shardAssignments?.nodeToRunner ?? {}),
+          getInstanceModelBytes(shardAssignments?.runnerToShard ?? {}),
+        );
+      }
+    }
     return collectDownloadStatus(modelId, nodeIds);
   }
 
