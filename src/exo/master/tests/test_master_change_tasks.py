@@ -57,16 +57,14 @@ async def _until(condition: Callable[[], bool]) -> None:
 async def test_a_request_from_before_a_master_change_can_still_end(ending: str):
     node_id = get_node_zid()
     session_id = SessionId(master_node_id=node_id, election_clock=1)
-    global_sender, _global_receiver = channel[GlobalForwarderEvent]()
+    global_sender, global_receiver = channel[GlobalForwarderEvent]()
     command_sender, command_receiver = channel[ForwarderCommand]()
     local_sender, local_receiver = channel[LocalForwarderEvent]()
     download_sender, _ = channel[ForwarderDownloadCommand]()
-    event_sender, event_receiver = channel[Event]()
     snapshot_sender, _snapshot_receiver = channel[StateSnapshot]()
     master = Master(
         node_id,
         session_id,
-        event_sender=event_sender,
         global_event_sender=global_sender,
         local_event_receiver=local_receiver,
         command_receiver=command_receiver,
@@ -75,18 +73,9 @@ async def test_a_request_from_before_a_master_change_can_still_end(ending: str):
     )
     sent: list[Event] = []
 
-    async def event_router() -> None:
-        origin = SystemId()
-        with event_receiver as events:
-            index = 0
-            async for event in events:
-                sent.append(event)
-                await local_sender.send(
-                    LocalForwarderEvent(
-                        origin=origin, origin_idx=index, session=session_id, event=event
-                    )
-                )
-                index += 1
+    def broadcast() -> list[Event]:
+        sent.extend(message.event for message in global_receiver.collect())
+        return sent
 
     async def send(command: Command) -> None:
         await command_sender.send(
@@ -114,7 +103,6 @@ async def test_a_request_from_before_a_master_change_can_still_end(ending: str):
     )
     async with anyio.create_task_group() as tg:
         tg.start_soon(master.run)
-        tg.start_soon(event_router)
         # The task the previous master created, as the new master's state has it
         for index, event in enumerate(
             [
@@ -136,7 +124,8 @@ async def test_a_request_from_before_a_master_change_can_still_end(ending: str):
             await send(TaskFinished(finished_command_id=command_id))
             await _until(lambda: task.task_id not in master.state.tasks)
             assert any(
-                isinstance(e, TaskDeleted) and e.task_id == task.task_id for e in sent
+                isinstance(e, TaskDeleted) and e.task_id == task.task_id
+                for e in broadcast()
             )
         else:
             await send(TaskCancelled(cancelled_command_id=command_id))
@@ -148,8 +137,7 @@ async def test_a_request_from_before_a_master_change_can_still_end(ending: str):
                 isinstance(e, TaskStatusUpdated)
                 and e.task_id == task.task_id
                 and e.task_status == TaskStatus.Cancelled
-                for e in sent
+                for e in broadcast()
             )
 
-        event_sender.close()
         await master.shutdown()

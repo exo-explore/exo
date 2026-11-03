@@ -36,6 +36,7 @@ from exo.shared.types.profiling import (
     NodeNetworkInfo,
     NodeRdmaCtlStatus,
 )
+from exo.shared.types.state import State
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
@@ -54,6 +55,7 @@ from exo.shared.types.worker.instances import (
 from exo.shared.types.worker.runners import (
     RunnerId,
     RunnerLoaded,
+    RunnerLoading,
     RunnerReady,
     RunnerRunning,
     RunnerShutdown,
@@ -76,14 +78,40 @@ INSTANCE_META_BACKENDS: dict[InstanceMeta, list[Backend]] = {
 }
 
 
-def add_instance_to_placements(
-    command: CreateInstance,
-    topology: Topology,
-    current_instances: Mapping[InstanceId, Instance],
-) -> Mapping[InstanceId, Instance]:
-    # TODO: validate against topology
+class InstanceDoesNotFitError(ValueError):
+    """A launch a node can't hold its shard of, besides the instances already there."""
 
-    return {**current_instances, command.instance.instance_id: command.instance}
+
+def add_instance_to_placements(
+    command: CreateInstance, state: State
+) -> Mapping[InstanceId, Instance]:
+    """The instances once the command's instance is added. An instance already there makes it
+    a repeat, which changes nothing.
+
+    Refused (InstanceDoesNotFitError), like a PlaceInstance, when a node can't hold its shard
+    besides the instances already there, some of them perhaps still loading: two launches
+    sent at the same time were otherwise both placed in memory that holds one. The API checks
+    a launch the same way before sending it, but against its own state, which may not show
+    the other launch yet.
+    """
+    # TODO: validate against topology
+    if command.instance.instance_id in state.instances:
+        return state.instances
+    if (shortfall := instance_beyond_memory(command.instance, state)) is not None:
+        raise InstanceDoesNotFitError(shortfall)
+    return {**state.instances, command.instance.instance_id: command.instance}
+
+
+def instance_beyond_memory(instance: Instance, state: State) -> str | None:
+    """Why a node can't hold its shard of the instance besides the instances in the state (some
+    of them perhaps still loading), or None if every node can."""
+    return shard_beyond_memory(
+        instance.shard_assignments,
+        usable_memory(
+            memory_once_loaded(state.node_memory, state.instances, state.runners)
+        ),
+        state.node_identities,
+    )
 
 
 def _get_node_download_fraction(
@@ -240,15 +268,23 @@ def memory_once_loaded(
 
     A node reports the memory its loaded models use. A runner that is still starting or loading
     (or failed, and will load again) hasn't taken its memory yet, so without this the next
-    placement would see that memory as free and could put a second model in it.
+    placement would see that memory as free and could put a second model in it. Of a runner
+    that is loading, only the layers it hasn't loaded yet are counted: the node's report has the
+    others. Counting the whole shard counted those layers twice, and refused a second model that
+    fitted while the first one was finishing its load.
     """
     pending: defaultdict[NodeId, int] = defaultdict(int)
     for instance in instances.values():
         assignments = instance.shard_assignments
         for node_id, runner_id in assignments.node_to_runner.items():
-            if isinstance(runners.get(runner_id), _NOT_PENDING):
+            status = runners.get(runner_id)
+            if isinstance(status, _NOT_PENDING):
                 continue
-            pending[node_id] += shard_bytes(assignments.runner_to_shard[runner_id])
+            shard = shard_bytes(assignments.runner_to_shard[runner_id])
+            if isinstance(status, RunnerLoading) and status.total_layers > 0:
+                unloaded = max(0, status.total_layers - status.layers_loaded)
+                shard = shard * unloaded // status.total_layers
+            pending[node_id] += shard
     return {
         node_id: usage.model_copy(
             update={

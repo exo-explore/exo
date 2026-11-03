@@ -23,7 +23,6 @@ from exo.shared.types.commands import (
 from exo.shared.types.common import SessionId, SystemId
 from exo.shared.types.events import (
     ChunkGenerated,
-    Event,
     GlobalForwarderEvent,
     LocalForwarderEvent,
     StateSnapshot,
@@ -59,14 +58,13 @@ async def test_a_request_for_a_model_with_no_instance_ends_with_an_error(
 ) -> None:
     node_id = get_node_zid()
     command_sender, commands = channel[ForwarderCommand]()
-    event_sender, events = channel[Event]()
+    global_event_sender, broadcast = channel[GlobalForwarderEvent]()
     master = Master(
         node_id,
         SessionId(master_node_id=node_id, election_clock=0),
         command_receiver=commands,
-        event_sender=event_sender,
         local_event_receiver=channel[LocalForwarderEvent]()[1],
-        global_event_sender=channel[GlobalForwarderEvent]()[0],
+        global_event_sender=global_event_sender,
         snapshot_sender=channel[StateSnapshot]()[0],
         download_command_sender=channel[ForwarderDownloadCommand]()[0],
     )
@@ -77,11 +75,12 @@ async def test_a_request_for_a_model_with_no_instance_ends_with_an_error(
             ForwarderCommand(origin=SystemId(), command=request_command)
         )
         with anyio.fail_after(5):
-            event = await events.receive()
+            event = (await broadcast.receive()).event
         tg.cancel_scope.cancel()
 
         assert isinstance(event, ChunkGenerated)
         assert event.command_id == request_command.command_id
         assert event.chunk == ErrorChunk(
-            model=MODEL, error_message=f"No instance found for model {MODEL}"
+            model=MODEL,
+            error_message="The model instance was shut down before this request could start.",
         )
