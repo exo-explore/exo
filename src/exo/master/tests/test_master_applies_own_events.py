@@ -18,6 +18,7 @@ import pytest
 
 import exo.master.main as master_main
 from exo.master.main import Master
+from exo.master.placement import memory_once_loaded
 from exo.routing.router import get_node_zid
 from exo.shared.apply import apply
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
@@ -62,7 +63,12 @@ from exo.shared.types.text_generation import (
 )
 from exo.shared.types.worker.downloads import DownloadOngoing, DownloadProgressData
 from exo.shared.types.worker.instances import InstanceId, InstanceMeta, MlxRingInstance
-from exo.shared.types.worker.runners import RunnerId, RunnerReady, ShardAssignments
+from exo.shared.types.worker.runners import (
+    RunnerId,
+    RunnerLoading,
+    RunnerReady,
+    ShardAssignments,
+)
 from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
 from exo.utils.channels import Receiver, Sender, channel
 
@@ -73,10 +79,10 @@ NODE_MEMORY = Memory.from_mb(1000)
 MODEL_SIZE = Memory.from_mb(600)
 
 
-def model_card() -> ModelCard:
+def model_card(model: ModelId = MODEL, size: Memory = MODEL_SIZE) -> ModelCard:
     return ModelCard(
-        model_id=MODEL,
-        storage_size=MODEL_SIZE,
+        model_id=model,
+        storage_size=size,
         n_layers=1,
         hidden_size=64,
         supports_tensor=False,
@@ -85,15 +91,16 @@ def model_card() -> ModelCard:
     )
 
 
-def ready_instance() -> MlxRingInstance:
+def ready_instance(card: ModelCard | None = None) -> MlxRingInstance:
+    card = card or model_card()
     runner = RunnerId()
     return MlxRingInstance(
         instance_id=InstanceId(),
         shard_assignments=ShardAssignments(
-            model_id=MODEL,
+            model_id=card.model_id,
             runner_to_shard={
                 runner: PipelineShardMetadata(
-                    model_card=model_card(),
+                    model_card=card,
                     device_rank=0,
                     world_size=1,
                     start_layer=0,
@@ -256,6 +263,53 @@ async def test_two_given_placements_sent_together_do_not_share_the_same_memory()
             if isinstance(event, InstanceCreated)
         ] == [first.instance_id]
         assert list(running.master.state.instances) == [first.instance_id]
+
+
+def first_model_finishing_its_load(free_mb: int) -> tuple[State, MlxRingInstance]:
+    """A 400 MB model whose runner has loaded 9 of its 10 layers, on a node that reports
+    `free_mb` free: the 360 MB it has loaded are already taken in that report."""
+    first = ready_instance(model_card(ModelId("first-model"), Memory.from_mb(400)))
+    (runner,) = first.shard_assignments.runner_to_shard
+    state = cluster(first)
+    return state.model_copy(
+        update={
+            "runners": {runner: RunnerLoading(layers_loaded=9, total_layers=10)},
+            "node_memory": {
+                NODE: state.node_memory[NODE].model_copy(
+                    update={"ram_available": Memory.from_mb(free_mb)}
+                )
+            },
+        }
+    ), first
+
+
+def test_a_loading_model_counts_only_the_layers_it_has_not_loaded() -> None:
+    state, _ = first_model_finishing_its_load(free_mb=640)
+
+    free = memory_once_loaded(state.node_memory, state.instances, state.runners)
+
+    assert free[NODE].ram_available == Memory.from_mb(600)
+
+
+@pytest.mark.parametrize(
+    ("size_mb", "placed"), [(400, True), (650, False)], ids=["fits", "does_not_fit"]
+)
+async def test_a_model_launched_as_another_finishes_loading(
+    size_mb: int, placed: bool
+) -> None:
+    """640 MB free, of which the first model's last layer will take 40 MB: a 400 MB launch fits
+    and is placed, and a 650 MB one is still refused. The loaded layers used to be counted
+    twice (in the node's report, and as the whole model still to load), which left 240 MB and
+    refused the 400 MB one."""
+    state, _ = first_model_finishing_its_load(free_mb=640)
+    second = ready_instance(
+        model_card(ModelId("second-model"), Memory.from_mb(size_mb))
+    )
+    async with running_master(state) as running:
+        await running.send(CreateInstance(instance=second))
+        await running.all_handled()
+
+        assert (second.instance_id in running.master.state.instances) is placed
 
 
 async def test_a_launch_sent_again_changes_nothing() -> None:

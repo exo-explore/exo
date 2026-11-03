@@ -55,6 +55,7 @@ from exo.shared.types.worker.instances import (
 from exo.shared.types.worker.runners import (
     RunnerId,
     RunnerLoaded,
+    RunnerLoading,
     RunnerReady,
     RunnerRunning,
     RunnerShutdown,
@@ -267,15 +268,23 @@ def memory_once_loaded(
 
     A node reports the memory its loaded models use. A runner that is still starting or loading
     (or failed, and will load again) hasn't taken its memory yet, so without this the next
-    placement would see that memory as free and could put a second model in it.
+    placement would see that memory as free and could put a second model in it. Of a runner
+    that is loading, only the layers it hasn't loaded yet are counted: the node's report has the
+    others. Counting the whole shard counted those layers twice, and refused a second model that
+    fitted while the first one was finishing its load.
     """
     pending: defaultdict[NodeId, int] = defaultdict(int)
     for instance in instances.values():
         assignments = instance.shard_assignments
         for node_id, runner_id in assignments.node_to_runner.items():
-            if isinstance(runners.get(runner_id), _NOT_PENDING):
+            status = runners.get(runner_id)
+            if isinstance(status, _NOT_PENDING):
                 continue
-            pending[node_id] += shard_bytes(assignments.runner_to_shard[runner_id])
+            shard = shard_bytes(assignments.runner_to_shard[runner_id])
+            if isinstance(status, RunnerLoading) and status.total_layers > 0:
+                unloaded = max(0, status.total_layers - status.layers_loaded)
+                shard = shard * unloaded // status.total_layers
+            pending[node_id] += shard
     return {
         node_id: usage.model_copy(
             update={

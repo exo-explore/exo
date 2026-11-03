@@ -359,6 +359,8 @@ class WithdrawnClusterCommand:
     undo: ClusterCommand
     # Created when a copy applies and the undo starts; set once the undo has ended
     undo_finished: anyio.Event | None = None
+    # When the request was answered 503 (time.monotonic())
+    withdrawn_at: float = field(default_factory=time.monotonic)
 
 
 class API:
@@ -2495,12 +2497,20 @@ class API:
             if not pending.applied and command_applied(pending.command, self.state):
                 pending.applied = True
                 pending.wake.set()
-        for withdrawn in self._withdrawn_cluster_commands.values():
-            if withdrawn.undo_finished is None and command_applied(
-                withdrawn.command, self.state
-            ):
+        # A called-off change is watched for a copy that still applies for
+        # CLUSTER_COMMAND_TIMEOUT after its request was answered: as long as a copy sent before
+        # the answer can take to reach a master that applies it, through a change of master. A
+        # copy applied later (at the heal of a longer split) isn't undone. Without a limit, a
+        # launch the master refused would be checked on every event for the life of the node.
+        now = time.monotonic()
+        for target, withdrawn in list(self._withdrawn_cluster_commands.items()):
+            if withdrawn.undo_finished is not None:
+                continue
+            if command_applied(withdrawn.command, self.state):
                 withdrawn.undo_finished = anyio.Event()
                 self._tg.start_soon(self._undo_withdrawn_command, withdrawn)
+            elif now - withdrawn.withdrawn_at > CLUSTER_COMMAND_TIMEOUT:
+                del self._withdrawn_cluster_commands[target]
 
     async def _undo_withdrawn_command(self, withdrawn: WithdrawnClusterCommand) -> None:
         command, undo = withdrawn.command, withdrawn.undo

@@ -11,6 +11,7 @@ The API doesn't guess a refusal from its own state: its view lags the master's, 
 free memory it sees while it waits may be gone by the time the master handles the launch.
 """
 
+import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
@@ -19,7 +20,7 @@ import pytest
 from fastapi import HTTPException
 
 import exo.api.main as api_main
-from exo.api.main import API
+from exo.api.main import API, WithdrawnClusterCommand
 from exo.api.recent_events import RecentEvents
 from exo.api.types import (
     CreateInstanceParams,
@@ -362,3 +363,26 @@ async def test_a_launch_the_master_accepted_is_kept_whatever_the_api_saw_meanwhi
         and command.instance_id == launched.instance.instance_id
     ]
     assert launched.instance.instance_id in master.state.instances
+
+
+def test_a_called_off_launch_is_watched_for_a_late_copy_only_as_long_as_the_wait() -> (
+    None
+):
+    """A launch answered 503 is undone should a copy still apply, until CLUSTER_COMMAND_TIMEOUT
+    after the answer. A launch the master refused never applies: without the limit it would
+    be checked on every event for the life of the node."""
+    api, _ = an_api(single_node_state())
+    (old, _), (recent, _) = loading_instance(), loading_instance()
+    for launch, answered_at in (
+        (old, time.monotonic() - api_main.CLUSTER_COMMAND_TIMEOUT - 1),
+        (recent, time.monotonic()),
+    ):
+        api._withdrawn_cluster_commands[launch.instance_id] = WithdrawnClusterCommand(
+            command=CreateInstance(instance=launch),
+            undo=DeleteInstance(instance_id=launch.instance_id),
+            withdrawn_at=answered_at,
+        )
+
+    api._note_applied_cluster_commands()
+
+    assert list(api._withdrawn_cluster_commands) == [recent.instance_id]
