@@ -319,8 +319,19 @@ data: [DONE]
 | `model_failed` | The model's process failed in some other way |
 | `interrupted` | The request ended for another reason, such as a change in the cluster |
 | `model_not_ready` | The model isn't ready to serve yet (with a `503`; see below) |
+| `context_length_exceeded` | The prompt and `max_tokens` don't fit in the model's context (see below) |
+| `invalid_request` | The request can't be run on this model, such as one its chat template can't render |
 
 Errors without a known cause have the HTTP status (`500`) as their `code`.
+
+**A request too long for the model:**
+A request whose prompt, plus `max_tokens` if given, doesn't fit in the model's context window is refused before any work is done on it, with OpenAI's error:
+
+```json
+{"error": {"message": "This model's maximum context length is 131072 tokens. However, your messages resulted in 160000 tokens. Please reduce the length of the messages.", "type": "invalid_request_error", "param": "messages", "code": "context_length_exceeded"}}
+```
+
+A whole response gets it with a `400`. A stream gets it as its error event (with a `200`, as its response has started by then: only the model's runner can count the prompt's tokens), and so do the Claude (`invalid_request_error`) and Responses streams. The limit is the most that the model's card (`context_length` in `/models`) or its `config.json` says the model takes.
 
 **A model that isn't ready yet:**
 A request for a model with no instance gets `404`. A request for a model whose instance can't serve yet (it is downloading, loading or warming up) waits for it for up to 30 s and goes ahead as soon as it is ready. If it still isn't, the request gets `503 Service Unavailable`, with a `Retry-After` header (seconds) and a message saying what the model is doing:

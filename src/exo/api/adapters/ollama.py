@@ -11,6 +11,7 @@ from exo.api.types.ollama_api import (
     OllamaGenerateRequest,
     OllamaGenerateResponse,
     OllamaMessage,
+    OllamaOptions,
     OllamaToolCall,
     OllamaToolFunction,
 )
@@ -164,7 +165,7 @@ def ollama_request_to_text_generation(
         if input_messages
         else [InputMessage(role="user", content=InputMessageContent(""))],
         instructions=InputMessageContent(instructions) if instructions else None,
-        max_output_tokens=options.num_predict if options else None,
+        max_output_tokens=_max_output_tokens(options),
         temperature=options.temperature if options else None,
         top_p=options.top_p if options else None,
         top_k=options.top_k if options else None,
@@ -353,7 +354,7 @@ def ollama_generate_request_to_text_generation(
         model=request.model,
         input=[InputMessage(role="user", content=InputMessageContent(request.prompt))],
         instructions=InputMessageContent(request.system) if request.system else None,
-        max_output_tokens=options.num_predict if options else None,
+        max_output_tokens=_max_output_tokens(options),
         temperature=options.temperature if options else None,
         top_p=options.top_p if options else None,
         top_k=options.top_k if options else None,
@@ -488,3 +489,10 @@ async def collect_ollama_generate_response(
         eval_count=eval_count,
     ).model_dump_json(exclude_none=True)
     return
+
+
+def _max_output_tokens(options: OllamaOptions | None) -> int | None:
+    """Ollama's num_predict: -1 (or any negative number) means no limit"""
+    if options is None or options.num_predict is None or options.num_predict < 0:
+        return None
+    return options.num_predict

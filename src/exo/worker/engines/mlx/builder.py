@@ -7,6 +7,7 @@ import mlx.core as mx
 import mlx.nn as nn
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
+from exo.download.download_utils import build_model_path
 from exo.shared.types.common import ModelId
 from exo.shared.types.events import Event
 from exo.shared.types.tasks import TaskId
@@ -16,6 +17,7 @@ from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.engines.base import Builder, Engine
 from exo.worker.engines.mlx.models.registry import architecture_for_model
 from exo.worker.runner.bootstrap import logger
+from exo.worker.runner.context_length import read_model_context_length
 from exo.worker.runner.llm_inference.batch_generator import (
     BatchGenerator,
     SequentialGenerator,
@@ -51,6 +53,8 @@ class MlxBuilder(Builder):
     tokenizer: TokenizerWrapper | None = None
     group: mx.distributed.Group | None = None
     vision_processor: VisionProcessor | None = None
+    # The longest context the loaded model takes; 0 if unknown
+    context_length: int = 0
 
     def __post_init__(self) -> None:
         use_generation_stream_by_default()
@@ -64,6 +68,11 @@ class MlxBuilder(Builder):
             self.tokenizer,
             self.vision_processor,
         ) = yield from load_mlx_items(bound_instance, self.group)
+        card = bound_instance.bound_shard.model_card
+        self.context_length = read_model_context_length(
+            build_model_path(card.model_id), card.context_length
+        )
+        logger.info(f"model takes up to {self.context_length} tokens of context")
 
     def close(self) -> None:
         with contextlib.suppress(NameError, AttributeError):
@@ -112,6 +121,7 @@ class MlxBuilder(Builder):
                 cancel_receiver=self.cancel_receiver,
                 event_sender=self.event_sender,
                 vision_processor=vision_processor,
+                context_length=self.context_length,
             )
         else:
             logger.info("using BatchGenerator")
@@ -126,4 +136,5 @@ class MlxBuilder(Builder):
                 cancel_receiver=self.cancel_receiver,
                 event_sender=self.event_sender,
                 vision_processor=vision_processor,
+                context_length=self.context_length,
             )

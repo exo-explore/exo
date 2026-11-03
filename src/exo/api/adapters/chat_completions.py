@@ -6,7 +6,7 @@ import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from exo.api.collected_response import GenerationFailedError
+from exo.api.collected_response import GenerationFailedError, request_error
 from exo.api.types import (
     ChatCompletionChoice,
     ChatCompletionMessage,
@@ -233,9 +233,11 @@ async def generate_chat_stream(
                 yield f": prefill_progress {chunk.model_dump_json()}\n\n"
 
             case ErrorChunk():
+                message = chunk.error_message or "Internal server error"
                 error_response = ErrorResponse(
-                    error=ErrorInfo(
-                        message=chunk.error_message or "Internal server error",
+                    error=request_error(message)
+                    or ErrorInfo(
+                        message=message,
                         type="InternalServerError",
                         code=generation_error_code(chunk.error_message) or 500,
                     )

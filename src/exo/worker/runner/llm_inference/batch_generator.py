@@ -6,9 +6,11 @@ from dataclasses import dataclass, field
 from typing import BinaryIO
 
 import mlx.core as mx
+from jinja2 import TemplateError
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.constants import EXO_MAX_CONCURRENT_REQUESTS
+from exo.shared.request_errors import user_facing_detail
 from exo.shared.types.chunks import ErrorChunk, GenerationChunk, PrefillProgressChunk
 from exo.shared.types.common import ModelId
 from exo.shared.types.events import ChunkGenerated, Event
@@ -45,6 +47,10 @@ from exo.worker.engines.mlx.utils_mlx import (
 )
 from exo.worker.engines.mlx.vision import VisionProcessor
 from exo.worker.runner.bootstrap import logger
+from exo.worker.runner.context_length import (
+    InvalidRequestError,
+    RequestRefusedError,
+)
 from exo.worker.runner.failures import describe_failure
 
 from .model_output_parsers import apply_all_parsers, map_responses_to_chunks
@@ -88,6 +94,19 @@ def _check_for_debug_prompts(task_params: TextGenerationTaskParams) -> None:
         time.sleep(100)
 
 
+def _render_prompt(
+    tokenizer: TokenizerWrapper, params: TextGenerationTaskParams, model: Model
+) -> str:
+    """The request's prompt, from the model's chat template. A template that can't render the
+    request (roles out of order, say) refuses it: the request is at fault, not the model."""
+    try:
+        return apply_chat_template(tokenizer, params, model_type_of(model))
+    except TemplateError as error:
+        raise InvalidRequestError(
+            f"the model's chat template failed: {user_facing_detail(str(error))}"
+        ) from error
+
+
 @dataclass(eq=False)
 class SequentialGenerator(Engine):
     model: Model
@@ -101,6 +120,8 @@ class SequentialGenerator(Engine):
     event_sender: MpSender[Event]
     vision_processor: VisionProcessor | None = None
     check_for_cancel_every: int = 50
+    # The longest context the model takes; 0 if unknown (see context_length)
+    context_length: int = 0
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
     _maybe_queue: list[TextGeneration] = field(default_factory=list, init=False)
@@ -167,22 +188,23 @@ class SequentialGenerator(Engine):
     ) -> Iterator[
         tuple[TaskId, GenerationChunk | FinishedResponse | CancelledResponse]
     ]:
+        output: list[
+            tuple[TaskId, GenerationChunk | CancelledResponse | FinishedResponse]
+        ] = []
         if self._active is None:
             self.agree_on_tasks()
 
             if self._queue:
-                self._start_next()
-            else:
-                return map(
-                    lambda task: (task, CancelledResponse()), self._cancelled_tasks
+                output.extend(self._start_next())
+            if self._active is None:
+                return itertools.chain(
+                    output,
+                    map(
+                        lambda task: (task, CancelledResponse()), self._cancelled_tasks
+                    ),
                 )
 
-        assert self._active is not None
-
         task, gen, queue, output_generator = self._active
-        output: list[
-            tuple[TaskId, GenerationChunk | CancelledResponse | FinishedResponse]
-        ] = []
         try:
             response = next(gen)
             queue.push(response)
@@ -194,7 +216,14 @@ class SequentialGenerator(Engine):
             output.append((task.task_id, FinishedResponse()))
             self._active = None
             if self._queue:
-                self._start_next()
+                output.extend(self._start_next())
+
+        except RequestRefusedError as refusal:
+            # Raised as the prompt is tokenized, the same way on every rank
+            output.extend(self._refuse(task, refusal))
+            self._active = None
+            if self._queue:
+                output.extend(self._start_next())
 
         except Exception as e:
             self._send_error(task, e)
@@ -211,13 +240,40 @@ class SequentialGenerator(Engine):
             ),
         )
 
-    def _start_next(self) -> None:
-        task = self._queue.popleft()
-        try:
-            gen = self._build_generator(task)
-        except Exception as e:
-            self._send_error(task, e)
-            raise
+    def _start_next(self) -> list[tuple[TaskId, FinishedResponse]]:
+        """Start the next request; what to report for those refused on the way"""
+        refused: list[tuple[TaskId, FinishedResponse]] = []
+        while self._queue:
+            task = self._queue.popleft()
+            try:
+                prompt = _render_prompt(self.tokenizer, task.task_params, self.model)
+                gen = self._build_generator(task, prompt)
+            except RequestRefusedError as refusal:
+                refused.extend(self._refuse(task, refusal))
+                continue
+            except Exception as e:
+                self._send_error(task, e)
+                raise
+            self._activate(task, gen, prompt)
+            break
+        return refused
+
+    def _refuse(
+        self, task: TextGeneration, refusal: RequestRefusedError
+    ) -> list[tuple[TaskId, FinishedResponse]]:
+        logger.info(f"Refusing request {task.command_id}: {refusal}")
+        if self.device_rank == 0:
+            self.event_sender.send(
+                ChunkGenerated(
+                    command_id=task.command_id,
+                    chunk=ErrorChunk(model=self.model_id, error_message=str(refusal)),
+                )
+            )
+        return [(task.task_id, FinishedResponse())]
+
+    def _activate(
+        self, task: TextGeneration, gen: Generator[GenerationResponse], prompt: str
+    ) -> None:
         queue = GeneratorQueue[GenerationResponse]()
 
         if task.task_params.bench:
@@ -227,9 +283,7 @@ class SequentialGenerator(Engine):
         else:
             output_generator = apply_all_parsers(
                 queue.gen(),
-                apply_chat_template(
-                    self.tokenizer, task.task_params, model_type_of(self.model)
-                ),
+                prompt,
                 self.tool_parser,
                 self.tokenizer,
                 type(self.model),
@@ -251,11 +305,10 @@ class SequentialGenerator(Engine):
                 )
             )
 
-    def _build_generator(self, task: TextGeneration) -> Generator[GenerationResponse]:
+    def _build_generator(
+        self, task: TextGeneration, prompt: str
+    ) -> Generator[GenerationResponse]:
         _check_for_debug_prompts(task.task_params)
-        prompt = apply_chat_template(
-            self.tokenizer, task.task_params, model_type_of(self.model)
-        )
 
         def on_prefill_progress(processed: int, total: int) -> None:
             if self.device_rank == 0:
@@ -301,6 +354,7 @@ class SequentialGenerator(Engine):
             on_generation_token=on_generation_token,
             group=self.group,
             vision_processor=self.vision_processor,
+            context_length=self.context_length,
         )
 
     def close(self) -> None:
@@ -336,6 +390,8 @@ class BatchGenerator(Engine):
     event_sender: MpSender[Event]
     check_for_cancel_every: int = 50
     vision_processor: VisionProcessor | None = None
+    # The longest context the model takes; 0 if unknown (see context_length)
+    context_length: int = 0
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
     _maybe_queue: list[TextGeneration] = field(default_factory=list, init=False)
@@ -359,6 +415,7 @@ class BatchGenerator(Engine):
             group=self.group,
             kv_prefix_cache=self.kv_prefix_cache,
             vision_processor=self.vision_processor,
+            context_length=self.context_length,
         )
 
     def warmup(self):
@@ -411,12 +468,18 @@ class BatchGenerator(Engine):
         if not self._queue:
             self.agree_on_tasks()
 
+        refused: list[tuple[TaskId, FinishedResponse]] = []
         # Submit any queued tasks to the engine
         while self._queue and len(self._active_tasks) < EXO_MAX_CONCURRENT_REQUESTS:
             task = self._queue.popleft()
             try:
-                uid = self._start_task(task)
+                prompt = _render_prompt(self.tokenizer, task.task_params, self.model)
+                uid = self._start_task(task, prompt)
             except PrefillCancelled:
+                continue
+            except RequestRefusedError as refusal:
+                # Raised as the prompt is tokenized, the same way on every rank
+                refused.append(self._refuse(task, refusal))
                 continue
             except Exception as e:
                 self._send_error(task, e)
@@ -430,9 +493,7 @@ class BatchGenerator(Engine):
             else:
                 output_generator = apply_all_parsers(
                     queue.gen(),
-                    apply_chat_template(
-                        self.tokenizer, task.task_params, model_type_of(self.model)
-                    ),
+                    prompt,
                     self.tool_parser,
                     self.tokenizer,
                     type(self.model),
@@ -442,13 +503,13 @@ class BatchGenerator(Engine):
             self._active_tasks[uid] = (task, queue, output_generator)
 
         if not self._gen.has_work:
-            return self._apply_cancellations()
+            return itertools.chain(refused, self._apply_cancellations())
 
         results = self._gen.step()
 
         output: list[
             tuple[TaskId, GenerationChunk | CancelledResponse | FinishedResponse]
-        ] = []
+        ] = [*refused]
         for uid, response in results:
             if uid not in self._active_tasks:
                 # should we error here?
@@ -526,11 +587,21 @@ class BatchGenerator(Engine):
                 )
             )
 
-    def _start_task(self, task: TextGeneration) -> int:
+    def _refuse(
+        self, task: TextGeneration, refusal: RequestRefusedError
+    ) -> tuple[TaskId, FinishedResponse]:
+        logger.info(f"Refusing request {task.command_id}: {refusal}")
+        if self.device_rank == 0:
+            self.event_sender.send(
+                ChunkGenerated(
+                    command_id=task.command_id,
+                    chunk=ErrorChunk(model=self.model_id, error_message=str(refusal)),
+                )
+            )
+        return task.task_id, FinishedResponse()
+
+    def _start_task(self, task: TextGeneration, prompt: str) -> int:
         _check_for_debug_prompts(task.task_params)
-        prompt = apply_chat_template(
-            self.tokenizer, task.task_params, model_type_of(self.model)
-        )
 
         def on_prefill_progress(processed: int, total: int) -> None:
             if self.device_rank == 0:
