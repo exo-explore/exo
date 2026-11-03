@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+import threading
 import webbrowser
 
 from exo.shared.constants import EXO_CONFIG_HOME
@@ -17,6 +18,14 @@ def _is_first_run() -> bool:
 def _mark_first_run_done() -> None:
     _FIRST_RUN_MARKER.parent.mkdir(parents=True, exist_ok=True)
     _FIRST_RUN_MARKER.touch()
+
+
+def _open_browser(url: str) -> None:
+    try:
+        webbrowser.open(url)
+        logger.info("First run detected — opening dashboard in browser")
+    except Exception:
+        logger.debug("Could not auto-open browser", exc_info=True)
 
 
 def print_startup_banner(port: int) -> None:
@@ -54,9 +63,12 @@ def print_startup_banner(port: int) -> None:
         # Skip browser open when running inside the native macOS app —
         # FirstLaunchPopout.swift handles the auto-open with a countdown.
         if not os.environ.get("EXO_RUNTIME_DIR"):
-            try:
-                webbrowser.open(dashboard_url)
-                logger.info("First run detected — opening dashboard in browser")
-            except Exception:
-                logger.debug("Could not auto-open browser", exc_info=True)
+            # webbrowser.open can block for minutes when no browser answers (e.g. started over ssh), and this
+            # runs on the node's event loop, so open it on its own thread.
+            threading.Thread(
+                target=_open_browser,
+                args=(dashboard_url,),
+                name="open-dashboard",
+                daemon=True,
+            ).start()
         _mark_first_run_done()
