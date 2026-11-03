@@ -86,7 +86,7 @@ struct KeychainTests {
 
         #expect(try item.password.read() == "hf_typed")
         #expect(storage.defaults.object(forKey: HuggingFaceToken.legacyDefaultsKey) == nil)
-        #expect(controller.launchSettings.environment(buildTag: "t")["HF_TOKEN"] == "hf_typed")
+        #expect(controller.launchSettings.environment(buildID: "t")["HF_TOKEN"] == "hf_typed")
         let reloaded = ExoProcessController(
             readinessProbe: { false }, defaults: storage.defaults, tokenKeychain: item.password)
         #expect(reloaded.hfToken == "hf_typed")

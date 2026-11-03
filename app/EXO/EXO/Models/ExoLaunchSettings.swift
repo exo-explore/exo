@@ -3,7 +3,9 @@ import Foundation
 /// The settings that become exo's environment. exo reads them only when it
 /// starts, so a change takes effect after exo restarts.
 struct ExoLaunchSettings: Equatable {
-    /// Empty means automatic: the app's version.
+    /// Empty means automatic: exo's own cluster name, the same for every
+    /// version. exo keeps devices of another build apart itself, and names
+    /// them, instead of them silently forming another cluster.
     var clusterName = ""
     var huggingFaceToken = ""
     var huggingFaceEndpoint = ""
@@ -15,20 +17,16 @@ struct ExoLaunchSettings: Equatable {
     var otherModelFolders: [ModelFolder] = []
     var customEnvironmentVariables: [CustomEnvironmentVariable] = []
 
-    /// The cluster name exo uses: the one set, or else `buildTag`, so that
-    /// only devices running the same version of EXO join by default.
-    func effectiveClusterName(buildTag: String) -> String {
-        let name = clusterName.trimmingCharacters(in: .whitespaces)
-        return name.isEmpty ? buildTag : name
-    }
-
     /// The variables these settings give exo, applied over the app's own
-    /// environment. The custom variables come last so they can override
-    /// the others. Invalid custom variable names are left out.
-    func environment(buildTag: String) -> [String: String] {
-        var environment: [String: String] = [
-            "EXO_ZENOH_NAMESPACE": effectiveClusterName(buildTag: buildTag)
-        ]
+    /// environment, with `buildID`: exo connects only to devices running the
+    /// same build. The custom variables come last so they can override the
+    /// others. Invalid custom variable names are left out.
+    func environment(buildID: String) -> [String: String] {
+        var environment: [String: String] = ["EXO_BUILD_ID": buildID]
+        let name = clusterName.trimmingCharacters(in: .whitespaces)
+        if !name.isEmpty {
+            environment["EXO_ZENOH_NAMESPACE"] = name
+        }
         if !huggingFaceToken.isEmpty {
             environment["HF_TOKEN"] = huggingFaceToken
         }
