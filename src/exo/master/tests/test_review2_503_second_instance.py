@@ -20,7 +20,6 @@ from exo.shared.types.commands import (
 )
 from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
-    Event,
     GlobalForwarderEvent,
     LocalForwarderEvent,
     StateSnapshot,
@@ -111,15 +110,14 @@ async def test_request_goes_to_the_downloading_instance_although_one_is_ready() 
     assert model_readiness(state, MODEL) is None
 
     node_id = get_node_zid()
-    event_sender, events = channel[Event]()
+    global_event_sender, broadcast = channel[GlobalForwarderEvent]()
     commands_sender, commands = channel[ForwarderCommand]()
     master = Master(
         node_id,
         SessionId(master_node_id=node_id, election_clock=0),
         command_receiver=commands,
-        event_sender=event_sender,
         local_event_receiver=channel[LocalForwarderEvent]()[1],
-        global_event_sender=channel[GlobalForwarderEvent]()[0],
+        global_event_sender=global_event_sender,
         snapshot_sender=channel[StateSnapshot]()[0],
         download_command_sender=channel[ForwarderDownloadCommand]()[0],
         initial_state=state,
@@ -136,7 +134,7 @@ async def test_request_goes_to_the_downloading_instance_although_one_is_ready() 
         )
         with anyio.fail_after(5):
             while created is None:
-                event = await events.receive()
+                event = (await broadcast.receive()).event
                 if isinstance(event, TaskCreated):
                     created = event
         tg.cancel_scope.cancel()

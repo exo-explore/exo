@@ -12,7 +12,6 @@ from exo.shared.types.commands import (
 )
 from exo.shared.types.common import CommandId, SessionId, SystemId
 from exo.shared.types.events import (
-    Event,
     GlobalForwarderEvent,
     LocalForwarderEvent,
     StateSnapshot,
@@ -61,12 +60,10 @@ async def test_a_new_master_carries_on_from_its_nodes_state() -> None:
     command_send, command_recv = channel[ForwarderCommand]()
     local_send, local_recv = channel[LocalForwarderEvent]()
     snapshot_send, snapshot_recv = channel[StateSnapshot]()
-    event_send, _ = channel[Event]()
     download_send, _ = channel[ForwarderDownloadCommand]()
     master = Master(
         node_id,
         session,
-        event_sender=event_send,
         global_event_sender=global_send,
         snapshot_sender=snapshot_send,
         local_event_receiver=local_recv,
@@ -78,8 +75,6 @@ async def test_a_new_master_carries_on_from_its_nodes_state() -> None:
     # The runners carry on; the requests ended with the old master
     assert runner_id in master.state.runners
     assert task_id not in master.state.tasks
-    assert master.command_task_mapping == {}
-
     async with anyio.create_task_group() as tg:
         tg.start_soon(master.run)
         # New events are numbered on from the state it carried over
@@ -114,7 +109,6 @@ def test_a_master_of_a_new_cluster_starts_empty() -> None:
     master = Master(
         node_id,
         SessionId(master_node_id=node_id, election_clock=0),
-        event_sender=channel[Event]()[0],
         global_event_sender=channel[GlobalForwarderEvent]()[0],
         snapshot_sender=channel[StateSnapshot]()[0],
         local_event_receiver=channel[LocalForwarderEvent]()[1],
@@ -124,4 +118,3 @@ def test_a_master_of_a_new_cluster_starts_empty() -> None:
 
     assert master.state.last_event_applied_idx == State().last_event_applied_idx
     assert not master.state.instances and not master.state.tasks
-    assert master.command_task_mapping == {}

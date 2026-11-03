@@ -1,10 +1,11 @@
-"""The master never sends a request to an instance it is deleting.
+"""The master never sends a request to an instance it has deleted.
 
-The master's state changes only when its own events come back indexed, a few milliseconds
-after it sends them. A request that reached it in that window, just after the instance was
-deleted (by a DeleteInstance, or because a node was lost), used to get a task on the deleted
-instance. Nothing ran that task and nothing ended its request: the stream got keepalives
-until the client gave up.
+The master's state used to change only when its own events came back indexed, a few
+milliseconds after it sent them. A request that reached it in that window, just after the
+instance was deleted (by a DeleteInstance, or because a node was lost), got a task on the
+deleted instance. Nothing ran that task and nothing ended its request: the stream got
+keepalives until the client gave up. The master now applies its own events as it decides on
+them, so the next command it handles sees the deletion.
 """
 
 from datetime import datetime, timezone
@@ -33,9 +34,11 @@ from exo.shared.types.events import (
     LocalForwarderEvent,
     StateSnapshot,
     TaskCreated,
+    TaskStatusUpdated,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.state import State
+from exo.shared.types.tasks import TaskStatus
 from exo.shared.types.text_generation import (
     InputMessage,
     InputMessageContent,
@@ -97,19 +100,21 @@ def chat_request() -> TextGeneration:
     )
 
 
-def master_with(*instances: MlxRingInstance) -> tuple[Master, Receiver[Event]]:
-    """A master whose events are never applied, as in the window after it sends them."""
+def master_with(
+    *instances: MlxRingInstance,
+) -> tuple[Master, Receiver[GlobalForwarderEvent]]:
+    """A master with the instances, ready, on a node it has just heard from, and what it
+    sends to every node."""
     node_id = get_node_zid()
-    event_sender, events = channel[Event]()
+    global_event_sender, broadcast = channel[GlobalForwarderEvent]()
     topology = Topology()
     topology.add_node(NODE)
     master = Master(
         node_id,
         SessionId(master_node_id=node_id, election_clock=0),
         command_receiver=channel[ForwarderCommand]()[1],
-        event_sender=event_sender,
         local_event_receiver=channel[LocalForwarderEvent]()[1],
-        global_event_sender=channel[GlobalForwarderEvent]()[0],
+        global_event_sender=global_event_sender,
         snapshot_sender=channel[StateSnapshot]()[0],
         download_command_sender=channel[ForwarderDownloadCommand]()[0],
         initial_state=State(
@@ -123,13 +128,17 @@ def master_with(*instances: MlxRingInstance) -> tuple[Master, Receiver[Event]]:
             },
         ),
     )
-    return master, events
+    return master, broadcast
 
 
 async def process(
-    master: Master, events: Receiver[Event], *sent: Command
+    master: Master,
+    broadcast: Receiver[GlobalForwarderEvent],
+    *sent: Command,
+    until: tuple[type[Event], ...] = (TaskCreated, ChunkGenerated),
 ) -> list[Event]:
-    """Have the master process the commands back to back, applying none of its events."""
+    """Have the master process the commands back to back, and return what it sent until an
+    event of the given types."""
     commands_sender, commands = channel[ForwarderCommand]()
     master.command_receiver = commands
     output: list[Event] = []
@@ -140,10 +149,8 @@ async def process(
                 ForwarderCommand(origin=SystemId(), command=command)
             )
         with anyio.fail_after(5):
-            while not any(
-                isinstance(event, (TaskCreated, ChunkGenerated)) for event in output
-            ):
-                output.append(await events.receive())
+            while not any(isinstance(event, until) for event in output):
+                output.append((await broadcast.receive()).event)
         tg.cancel_scope.cancel()
     return output
 
@@ -152,11 +159,11 @@ async def test_a_request_right_after_its_instance_was_deleted_ends_with_an_error
     None
 ):
     instance = instance_on(NODE)
-    master, events = master_with(instance)
+    master, broadcast = master_with(instance)
     request = chat_request()
 
     output = await process(
-        master, events, DeleteInstance(instance_id=instance.instance_id), request
+        master, broadcast, DeleteInstance(instance_id=instance.instance_id), request
     )
 
     assert [
@@ -173,27 +180,54 @@ async def test_a_request_right_after_its_instance_was_deleted_ends_with_an_error
 
 async def test_a_request_right_after_a_deletion_goes_to_another_instance() -> None:
     deleted, other = instance_on(NODE), instance_on(NODE)
-    master, events = master_with(deleted, other)
+    master, broadcast = master_with(deleted, other)
 
     output = await process(
-        master, events, DeleteInstance(instance_id=deleted.instance_id), chat_request()
+        master,
+        broadcast,
+        DeleteInstance(instance_id=deleted.instance_id),
+        chat_request(),
     )
 
     (created,) = [event for event in output if isinstance(event, TaskCreated)]
     assert created.task.instance_id == other.instance_id
 
 
+async def test_a_request_just_before_its_instance_was_deleted_is_cancelled_with_it() -> (
+    None
+):
+    """The other order: the deletion cancels the instance's requests, the one just sent too."""
+    instance = instance_on(NODE)
+    master, broadcast = master_with(instance)
+
+    output = await process(
+        master,
+        broadcast,
+        chat_request(),
+        DeleteInstance(instance_id=instance.instance_id),
+        until=(InstanceDeleted,),
+    )
+
+    (created,) = [event for event in output if isinstance(event, TaskCreated)]
+    assert created.task.instance_id == instance.instance_id
+    assert [
+        (event.task_id, event.task_status)
+        for event in output
+        if isinstance(event, TaskStatusUpdated)
+    ] == [(created.task_id, TaskStatus.Cancelled)]
+
+
 async def test_a_request_right_after_a_node_loss_ends_with_an_error() -> None:
     instance = instance_on(LOST_NODE)
-    master, events = master_with(instance)
+    master, broadcast = master_with(instance)
     # The instance lost its node: the master deletes it
-    await master._remove_silent_nodes_and_broken_instances()  # pyright: ignore[reportPrivateUsage]
-    deleted = await events.receive()
+    master._remove_silent_nodes_and_broken_instances()  # pyright: ignore[reportPrivateUsage]
+    deleted = (await broadcast.receive()).event
     assert isinstance(deleted, InstanceDeleted)
     assert deleted.instance_id == instance.instance_id
     request = chat_request()
 
-    output = await process(master, events, request)
+    output = await process(master, broadcast, request)
 
     assert not [event for event in output if isinstance(event, TaskCreated)]
     (ended,) = [event for event in output if isinstance(event, ChunkGenerated)]
@@ -204,14 +238,14 @@ async def test_a_request_right_after_a_node_loss_ends_with_an_error() -> None:
 async def test_a_request_for_a_model_that_is_not_ready_ends_with_why() -> None:
     """The API waits for a model to be ready, but a runner can fail just after it looked."""
     instance = instance_on(NODE)
-    master, events = master_with(instance)
+    master, broadcast = master_with(instance)
     (runner,) = instance.shard_assignments.runner_to_shard
     master.state = master.state.model_copy(
         update={"runners": {runner: RunnerLoading(layers_loaded=1, total_layers=2)}}
     )
     request = chat_request()
 
-    output = await process(master, events, request)
+    output = await process(master, broadcast, request)
 
     assert not [event for event in output if isinstance(event, TaskCreated)]
     (ended,) = [event for event in output if isinstance(event, ChunkGenerated)]

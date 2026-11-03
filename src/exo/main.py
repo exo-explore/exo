@@ -161,7 +161,6 @@ class Node:
         master = Master(
             node_id,
             session_id,
-            event_sender=event_router.sender(),
             global_event_sender=router.sender(topics.GLOBAL_EVENTS),
             snapshot_sender=router.sender(topics.STATE_SNAPSHOTS),
             local_event_receiver=router.receiver(topics.LOCAL_EVENTS),
@@ -310,7 +309,6 @@ class Node:
                     self.master = Master(
                         self.node_id,
                         result.session_id,
-                        event_sender=self.event_router.sender(),
                         global_event_sender=self.router.sender(topics.GLOBAL_EVENTS),
                         snapshot_sender=self.router.sender(topics.STATE_SNAPSHOTS),
                         local_event_receiver=self.router.receiver(topics.LOCAL_EVENTS),

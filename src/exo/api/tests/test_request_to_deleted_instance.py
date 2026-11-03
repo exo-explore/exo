@@ -4,7 +4,9 @@
 The master used to give such a request a task on the deleted instance when it handled the
 request a few milliseconds after the deletion, before its own state had caught up. The API
 ends an instance's requests when it applies the deletion, which came before that task, so
-the request's stream got nothing but keepalives until the client gave up.
+the request's stream got nothing but keepalives until the client gave up. The master now
+applies its own events at once; the API still ends a request whose task wasn't added, which
+a master of an older version can still send.
 """
 
 import json
@@ -28,7 +30,6 @@ from exo.shared.types.commands import (
 )
 from exo.shared.types.common import NodeId, SessionId, SystemId
 from exo.shared.types.events import (
-    Event,
     GlobalForwarderEvent,
     IndexedEvent,
     InstanceCreated,
@@ -194,8 +195,8 @@ async def test_a_request_whose_task_was_not_added_ends_with_an_error() -> None:
 
 async def test_a_chat_sent_just_after_deleting_its_instance_ends_promptly() -> None:
     """The whole path: the API sends DeleteInstance and then a chat request, the master
-    handles both before its own events come back to it, and the API applies what the master
-    indexed. The request must end with an error, not hang.
+    handles both back to back, and the API applies what the master indexed. The request must
+    end with an error, not hang.
 
     DELETE /instance answers only once the deletion has applied, so a chat from the same
     client comes too late for this race. A chat from another client, sent while the deletion
@@ -217,34 +218,18 @@ async def test_a_chat_sent_just_after_deleting_its_instance_ends_promptly() -> N
 
     node_id = get_node_zid()
     session = SessionId(master_node_id=node_id, election_clock=0)
-    master_events_sender, master_events = channel[Event]()
-    local_events_sender, local_events = channel[LocalForwarderEvent]()
+    _local_events_sender, local_events = channel[LocalForwarderEvent]()
     global_events_sender, global_events = channel[GlobalForwarderEvent]()
     master = Master(
         node_id,
         session,
         command_receiver=commands,
-        event_sender=master_events_sender,
         local_event_receiver=local_events,
         global_event_sender=global_events_sender,
         snapshot_sender=channel[StateSnapshot]()[0],
         download_command_sender=channel[ForwarderDownloadCommand]()[0],
         initial_state=initial,
     )
-
-    async def event_router() -> None:
-        """Brings the master's events back to it a little later, as the network does."""
-        origin = SystemId()
-        idx = 0
-        with master_events as events:
-            async for event in events:
-                await anyio.sleep(0.05)
-                await local_events_sender.send(
-                    LocalForwarderEvent(
-                        origin=origin, origin_idx=idx, session=session, event=event
-                    )
-                )
-                idx += 1
 
     async def to_api() -> None:
         with global_events as indexed:
@@ -258,7 +243,6 @@ async def test_a_chat_sent_just_after_deleting_its_instance_ends_promptly() -> N
         async with anyio.create_task_group() as tg:
             tg.start_soon(master._command_processor)
             tg.start_soon(master._event_processor)
-            tg.start_soon(event_router)
             tg.start_soon(to_api)
             tg.start_soon(api._apply_state)
 

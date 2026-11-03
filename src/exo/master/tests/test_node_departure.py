@@ -47,12 +47,10 @@ async def test_a_departed_node_and_its_instances_are_removed_without_waiting_for
     _command_send, commands = channel[ForwarderCommand]()
     local_send, local_events = channel[LocalForwarderEvent]()
     download_send, _downloads = channel[ForwarderDownloadCommand]()
-    event_send, master_events = channel[Event]()
     snapshot_send, _snapshots = channel[StateSnapshot]()
     master = Master(
         MASTER,
         session,
-        event_sender=event_send,
         global_event_sender=global_send,
         snapshot_sender=snapshot_send,
         local_event_receiver=local_events,
@@ -61,23 +59,9 @@ async def test_a_departed_node_and_its_instances_are_removed_without_waiting_for
         initial_state=state,
     )
 
-    async def event_router() -> None:
-        # The master's own events come back to it as local events, as through the network
-        origin = SystemId()
-        with master_events as events:
-            idx = 0
-            async for event in events:
-                await local_send.send(
-                    LocalForwarderEvent(
-                        origin=origin, origin_idx=idx, session=session, event=event
-                    )
-                )
-                idx += 1
-
     indexed: list[Event] = []
     async with anyio.create_task_group() as tg:
         tg.start_soon(master.run)
-        tg.start_soon(event_router)
         # The plan loop has run its first check
         await anyio.sleep(0.1)
 

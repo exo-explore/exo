@@ -59,7 +59,6 @@ async def running_master(
     command_send, command_recv = channel[ForwarderCommand]()
     local_send, local_recv = channel[LocalForwarderEvent]()
     download_send, _download_recv = channel[ForwarderDownloadCommand]()
-    event_send, _event_recv = channel[Event]()
     snapshot_send, snapshot_recv = channel[StateSnapshot]()
 
     with (
@@ -69,7 +68,6 @@ async def running_master(
         master = Master(
             node_id,
             session,
-            event_sender=event_send,
             global_event_sender=global_send,
             snapshot_sender=snapshot_send,
             local_event_receiver=local_recv,
