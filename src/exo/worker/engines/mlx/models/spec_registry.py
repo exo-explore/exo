@@ -18,6 +18,7 @@ from exo.worker.engines.mlx.models.kimi.spec import SPEC as KIMI
 from exo.worker.engines.mlx.models.laguna.spec import SPEC as LAGUNA
 from exo.worker.engines.mlx.models.llama.spec import SPEC as LLAMA
 from exo.worker.engines.mlx.models.minimax.spec import SPEC as MINIMAX
+from exo.worker.engines.mlx.models.muse_spark.spec import SPEC as MUSE_SPARK
 from exo.worker.engines.mlx.models.nemotron_h.spec import SPEC as NEMOTRON_H
 from exo.worker.engines.mlx.models.qwen3.spec import SPEC as QWEN3
 from exo.worker.engines.mlx.models.spec import FamilySpec, PlacementRules
@@ -43,6 +44,7 @@ FAMILY_SPECS: tuple[FamilySpec, ...] = (
     LAGUNA,
     INKLING,
     HY_V3,
+    MUSE_SPARK,
 )
 
 
