@@ -147,10 +147,8 @@ from exo.api.types.openai_responses import (
 )
 from exo.master.image_store import ImageStore
 from exo.master.placement import (
-    memory_once_loaded,
-    shard_beyond_memory,
+    instance_beyond_memory,
     shard_bytes,
-    usable_memory,
 )
 from exo.master.placement import place_instance as get_instance_placements
 from exo.routing.event_router import NodeEventReceiver
@@ -284,6 +282,15 @@ _NOT_APPLIED_MESSAGE = (
 _WITHDRAWN_MESSAGE = (
     "The cluster didn't confirm this change in time; the device coordinating it may have "
     "been lost. The change was called off, so trying again won't make it twice."
+)
+# ...for a launch. The master also refuses, in its own log only, a launch its devices don't
+# have the memory for: another launch sent at the same time can take the memory after this
+# node checked. Nothing tells this node, so it learns of it only as the launch not showing.
+_LAUNCH_WITHDRAWN_MESSAGE = (
+    "The cluster didn't confirm this launch in time: the model may not have fitted in its "
+    "devices' memory (another launch got there first), or the device coordinating the "
+    "cluster may have been lost. The launch was called off, so trying again won't start "
+    "it twice."
 )
 
 
@@ -589,16 +596,7 @@ class API:
         instance = payload.instance
         model_card = await ModelCard.load(instance.shard_assignments.model_id)
         # Each node has to hold its own shard: memory free elsewhere is no use to it
-        node_memory = usable_memory(
-            memory_once_loaded(
-                self.state.node_memory, self.state.instances, self.state.runners
-            )
-        )
-        if (
-            shortfall := shard_beyond_memory(
-                instance.shard_assignments, node_memory, self.state.node_identities
-            )
-        ) is not None:
+        if (shortfall := instance_beyond_memory(instance, self.state)) is not None:
             raise HTTPException(status_code=400, detail=shortfall)
 
         command = CreateInstance(
@@ -2449,7 +2447,12 @@ class API:
         self._withdrawn_cluster_commands[target] = WithdrawnClusterCommand(
             command=command, undo=undo
         )
-        raise HTTPException(status_code=503, detail=_WITHDRAWN_MESSAGE)
+        raise HTTPException(
+            status_code=503,
+            detail=_LAUNCH_WITHDRAWN_MESSAGE
+            if isinstance(command, CreateInstance)
+            else _WITHDRAWN_MESSAGE,
+        )
 
     async def _send_until_applied(self, command: ClusterCommand) -> bool:
         """Send a command that changes the cluster until this node's state shows it applied,

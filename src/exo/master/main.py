@@ -8,6 +8,7 @@ import anyio
 from loguru import logger
 
 from exo.master.placement import (
+    InstanceDoesNotFitError,
     add_instance_to_placements,
     cancel_unnecessary_downloads,
     delete_instance,
@@ -424,11 +425,17 @@ class Master:
                             )
                             generated_events.extend(transition_events)
                         case CreateInstance():
-                            placement = add_instance_to_placements(
-                                command,
-                                self.state.topology,
-                                self.state.instances,
-                            )
+                            try:
+                                placement = add_instance_to_placements(
+                                    command, self.state
+                                )
+                            except InstanceDoesNotFitError as error:
+                                # Its request learns of it only as the launch not showing
+                                logger.warning(
+                                    f"Not launching instance "
+                                    f"{command.instance.instance_id}: {error}"
+                                )
+                                placement = self.state.instances
                             transition_events = get_transition_events(
                                 self.state.instances, placement, self.state.tasks
                             )
@@ -497,9 +504,9 @@ class Master:
                             )
                     # Applied before the next command is looked at, with nothing awaited since
                     # the state they were decided on was read: every decision sees the ones
-                    # before it
-                    for event in generated_events:
-                        self._index(event)
+                    # before it. All of a command's events apply, or none (see _index), and
+                    # its download commands are sent only once they have.
+                    self._index(*generated_events)
                     for download_command in download_commands:
                         await self.download_command_sender.send(
                             ForwarderDownloadCommand(
@@ -641,28 +648,38 @@ class Master:
                     if isinstance(event, NodeTimedOut):
                         self._on_node_removed(event.node_id)
 
-    def _index(self, event: Event) -> None:
-        """Give an event the next index, apply it to the state, keep it for replay and send it
-        to every node (this one included).
+    def _index(self, *events: Event) -> None:
+        """Give events the next indices, apply them to the state, keep them for replay and send
+        them to every node (this one included).
 
         Every event goes through here: the ones nodes send, and the master's own as soon as it
-        decides on them. Nothing is awaited, so nothing else runs between choosing the index
-        and applying the event: whatever the master decides next sees it, and events go out in
-        the order of their indices.
+        decides on them. Nothing is awaited, so nothing else runs between choosing the indices
+        and applying the events: whatever the master decides next sees them, and events go out
+        in the order of their indices.
+
+        The events of one call take effect together or not at all, so a command is never half
+        applied: they are applied to the state in turn (apply never changes the state it is
+        given), and only if all of them apply is the result kept and are they sent. If one
+        fails, the error is raised and the state is as it was.
         """
-        event = event.model_copy(
-            update={"_master_time_stamp": datetime.now(tz=timezone.utc)}
-        )
-        if isinstance(event, NodeGatheredInfo):
+        state = self.state
+        indexed_events: list[IndexedEvent] = []
+        for event in events:
             event = event.model_copy(
-                update={"when": str(datetime.now(tz=timezone.utc))}
+                update={"_master_time_stamp": datetime.now(tz=timezone.utc)}
             )
+            if isinstance(event, NodeGatheredInfo):
+                event = event.model_copy(
+                    update={"when": str(datetime.now(tz=timezone.utc))}
+                )
+            indexed = IndexedEvent(event=event, idx=state.last_event_applied_idx + 1)
+            state = apply(state, indexed)
+            indexed_events.append(indexed)
 
-        indexed = IndexedEvent(event=event, idx=self.state.last_event_applied_idx + 1)
-        self.state = apply(self.state, indexed)
-
-        self._remember(event)
-        self._send_indexed_event(indexed)
+        self.state = state
+        for indexed in indexed_events:
+            self._remember(indexed.event)
+            self._send_indexed_event(indexed)
 
     def _remember(self, event: Event) -> None:
         self._recent_events.append(event)

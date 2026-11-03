@@ -36,6 +36,7 @@ from exo.shared.types.profiling import (
     NodeNetworkInfo,
     NodeRdmaCtlStatus,
 )
+from exo.shared.types.state import State
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
@@ -76,14 +77,40 @@ INSTANCE_META_BACKENDS: dict[InstanceMeta, list[Backend]] = {
 }
 
 
-def add_instance_to_placements(
-    command: CreateInstance,
-    topology: Topology,
-    current_instances: Mapping[InstanceId, Instance],
-) -> Mapping[InstanceId, Instance]:
-    # TODO: validate against topology
+class InstanceDoesNotFitError(ValueError):
+    """A launch a node can't hold its shard of, besides the instances already there."""
 
-    return {**current_instances, command.instance.instance_id: command.instance}
+
+def add_instance_to_placements(
+    command: CreateInstance, state: State
+) -> Mapping[InstanceId, Instance]:
+    """The instances once the command's instance is added. An instance already there makes it
+    a repeat, which changes nothing.
+
+    Refused (InstanceDoesNotFitError), like a PlaceInstance, when a node can't hold its shard
+    besides the instances already there, some of them perhaps still loading: two launches
+    sent at the same time were otherwise both placed in memory that holds one. The API checks
+    a launch the same way before sending it, but against its own state, which may not show
+    the other launch yet.
+    """
+    # TODO: validate against topology
+    if command.instance.instance_id in state.instances:
+        return state.instances
+    if (shortfall := instance_beyond_memory(command.instance, state)) is not None:
+        raise InstanceDoesNotFitError(shortfall)
+    return {**state.instances, command.instance.instance_id: command.instance}
+
+
+def instance_beyond_memory(instance: Instance, state: State) -> str | None:
+    """Why a node can't hold its shard of the instance besides the instances in the state (some
+    of them perhaps still loading), or None if every node can."""
+    return shard_beyond_memory(
+        instance.shard_assignments,
+        usable_memory(
+            memory_once_loaded(state.node_memory, state.instances, state.runners)
+        ),
+        state.node_identities,
+    )
 
 
 def _get_node_download_fraction(

@@ -174,7 +174,10 @@ about 45 s is answered with `503`:
   (`POST /v1/instance-links`) is then called off: if it still reaches the cluster
   later, the node that answered removes it again (unless it has restarted since),
   so trying again doesn't leave two running. Trying the same instance again takes
-  over from the failed request;
+  over from the failed request. A launch also ends this way when the devices
+  turned out not to have the memory for it: two launches sent at the same time
+  can both pass this node's check, and the device coordinating the cluster then
+  refuses the second;
 - any other change may still apply later; trying it again is safe.
 
 ## 3. Models

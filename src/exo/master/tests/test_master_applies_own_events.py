@@ -7,32 +7,40 @@ to back, as the API does when a user acts quickly, and the later command must se
 earlier one did.
 """
 
+import random
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import anyio
+import pytest
 
+import exo.master.main as master_main
 from exo.master.main import Master
 from exo.routing.router import get_node_zid
+from exo.shared.apply import apply
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (
     Command,
+    CreateInstance,
     DeleteInstance,
     DeleteInstanceLink,
     ForwarderCommand,
     ForwarderDownloadCommand,
     PlaceInstance,
     RequestEventLog,
+    TaskCancelled,
+    TaskFinished,
     TextGeneration,
 )
 from exo.shared.types.common import NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     Event,
     GlobalForwarderEvent,
+    IndexedEvent,
     InstanceCreated,
     InstanceDeleted,
     InstanceLinkDeleted,
@@ -46,11 +54,13 @@ from exo.shared.types.instance_link import InstanceLinkId
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import MemoryUsage
 from exo.shared.types.state import State
+from exo.shared.types.tasks import TaskStatus
 from exo.shared.types.text_generation import (
     InputMessage,
     InputMessageContent,
     TextGenerationTaskParams,
 )
+from exo.shared.types.worker.downloads import DownloadOngoing, DownloadProgressData
 from exo.shared.types.worker.instances import InstanceId, InstanceMeta, MlxRingInstance
 from exo.shared.types.worker.runners import RunnerId, RunnerReady, ShardAssignments
 from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
@@ -149,6 +159,7 @@ class RunningMaster:
     local_events: Sender[LocalForwarderEvent]
     broadcast: Receiver[GlobalForwarderEvent]
     snapshots: Receiver[StateSnapshot]
+    download_commands: Receiver[ForwarderDownloadCommand]
     sent: list[GlobalForwarderEvent]
 
     async def send(self, *commands: Command, origin: SystemId | None = None) -> None:
@@ -189,6 +200,7 @@ async def running_master(state: State) -> AsyncIterator[RunningMaster]:
     local_event_sender, local_events = channel[LocalForwarderEvent]()
     global_event_sender, broadcast = channel[GlobalForwarderEvent]()
     snapshot_sender, snapshots = channel[StateSnapshot]()
+    download_command_sender, download_commands = channel[ForwarderDownloadCommand]()
     master = Master(
         node_id,
         session,
@@ -196,7 +208,7 @@ async def running_master(state: State) -> AsyncIterator[RunningMaster]:
         local_event_receiver=local_events,
         global_event_sender=global_event_sender,
         snapshot_sender=snapshot_sender,
-        download_command_sender=channel[ForwarderDownloadCommand]()[0],
+        download_command_sender=download_command_sender,
         initial_state=state,
     )
     async with anyio.create_task_group() as tg:
@@ -208,6 +220,7 @@ async def running_master(state: State) -> AsyncIterator[RunningMaster]:
             local_event_sender,
             broadcast,
             snapshots,
+            download_commands,
             [],
         )
         tg.cancel_scope.cancel()
@@ -222,6 +235,183 @@ async def test_two_launches_in_a_row_do_not_share_the_same_memory() -> None:
 
         assert len([event for event in sent if isinstance(event, InstanceCreated)]) == 1
         assert len(running.master.state.instances) == 1
+
+
+async def test_two_given_placements_sent_together_do_not_share_the_same_memory() -> (
+    None
+):
+    """The same for CreateInstance, which launches a placement the API made (from the
+    dashboard's preview, or for POST /place_instance): the API checks it against its own state,
+    which doesn't show the other launch yet, so the master checks it again."""
+    first, second = ready_instance(), ready_instance()
+    async with running_master(cluster()) as running:
+        await running.send(
+            CreateInstance(instance=first), CreateInstance(instance=second)
+        )
+        sent = await running.all_handled()
+
+        assert [
+            event.instance.instance_id
+            for event in sent
+            if isinstance(event, InstanceCreated)
+        ] == [first.instance_id]
+        assert list(running.master.state.instances) == [first.instance_id]
+
+
+async def test_a_launch_sent_again_changes_nothing() -> None:
+    """The API sends a launch again until it shows: a copy of one already applied is not
+    refused for the memory the instance itself takes."""
+    instance = ready_instance()
+    async with running_master(cluster()) as running:
+        await running.send(
+            CreateInstance(instance=instance), CreateInstance(instance=instance)
+        )
+        sent = await running.all_handled()
+
+        assert len([event for event in sent if isinstance(event, InstanceCreated)]) == 1
+        assert list(running.master.state.instances) == [instance.instance_id]
+
+
+async def test_a_command_that_fails_to_apply_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A command takes effect whole or not at all. Here the deletion of an instance cancels
+    its request, then fails to delete it: neither happens, nothing is sent, and its download
+    cancellation isn't sent either. The master goes on with the next command."""
+
+    def failing_on_deletion(state: State, event: IndexedEvent) -> State:
+        if isinstance(event.event, InstanceDeleted):
+            raise RuntimeError("a bug in apply")
+        return apply(state, event)
+
+    instance = ready_instance()
+    (runner,) = instance.shard_assignments.runner_to_shard
+    downloading = cluster(instance).model_copy(
+        update={
+            "downloads": {
+                NODE: [
+                    DownloadOngoing(
+                        node_id=NODE,
+                        shard_metadata=instance.shard_assignments.runner_to_shard[
+                            runner
+                        ],
+                        download_progress=DownloadProgressData(
+                            total=MODEL_SIZE,
+                            downloaded=Memory(),
+                            downloaded_this_session=Memory(),
+                            completed_files=0,
+                            total_files=1,
+                            speed=0.0,
+                            eta_ms=0,
+                            files={},
+                        ),
+                    )
+                ]
+            }
+        }
+    )
+    async with running_master(downloading) as running:
+        await running.send(chat_request())
+        await running.sent_until(
+            lambda sent: any(isinstance(m.event, TaskCreated) for m in sent)
+        )
+        before = running.master.state
+        monkeypatch.setattr(master_main, "apply", failing_on_deletion)
+
+        await running.send(DeleteInstance(instance_id=instance.instance_id))
+        sent = await running.all_handled()
+
+        assert [type(event) for event in sent] == [TaskCreated, InstanceLinkDeleted]
+        assert running.master.state.instances == before.instances
+        assert running.master.state.tasks == before.tasks
+        assert [task.task_status for task in running.master.state.tasks.values()] == [
+            TaskStatus.Pending
+        ]
+        assert (
+            running.master.state.last_event_applied_idx
+            == before.last_event_applied_idx + 1
+        )
+        assert running.download_commands.collect() == []
+
+
+@pytest.mark.parametrize("seed", range(4))
+async def test_a_node_applying_what_the_master_sends_ends_with_its_state(
+    seed: int,
+) -> None:
+    """A random mix of commands (chats, launches, stops, finishes, cancels, requests for missed
+    events) and of events from two nodes, some out of order. A node that applies everything
+    the master sends, in index order and each index once, ends with the master's state, and
+    the indices run on with no gap; a replayed index carries the very same event."""
+    rng = random.Random(seed)
+    instance = ready_instance()
+    initial = cluster(instance)
+    async with running_master(initial) as running:
+        origins = [SystemId(), SystemId()]
+        next_origin_idx = [0, 0]
+        held: list[LocalForwarderEvent] = []
+        chats: list[TextGeneration] = []
+        for _ in range(300):
+            roll = rng.random()
+            if roll < 0.35:
+                origin = rng.randrange(2)
+                event = LocalForwarderEvent(
+                    origin_idx=next_origin_idx[origin],
+                    origin=origins[origin],
+                    session=running.session,
+                    event=TestEvent(),
+                )
+                next_origin_idx[origin] += 1
+                if rng.random() < 0.3:
+                    held.append(event)
+                else:
+                    await running.local_events.send(event)
+                    if held and rng.random() < 0.5:
+                        await running.local_events.send(held.pop(0))
+            elif roll < 0.55:
+                chats.append(chat_request())
+                await running.send(chats[-1])
+            elif roll < 0.65 and chats:
+                chat = rng.choice(chats)
+                await running.send(
+                    rng.choice(
+                        [
+                            TaskFinished(finished_command_id=chat.command_id),
+                            TaskCancelled(cancelled_command_id=chat.command_id),
+                        ]
+                    )
+                )
+            elif roll < 0.72:
+                await running.send(
+                    rng.choice(
+                        [place_model(), CreateInstance(instance=ready_instance())]
+                    )
+                )
+            elif roll < 0.78:
+                if instances := list(running.master.state.instances):
+                    await running.send(
+                        DeleteInstance(instance_id=rng.choice(instances))
+                    )
+            elif roll < 0.85:
+                await running.send(RequestEventLog(since_idx=rng.randrange(0, 50)))
+            else:
+                await anyio.sleep(0)
+        for event in held:
+            await running.local_events.send(event)
+        await running.all_handled()
+        await anyio.sleep(0.1)
+        running.sent.extend(running.broadcast.collect())
+
+        received: dict[int, Event] = {}
+        for message in running.sent:
+            if message.origin_idx in received:
+                assert received[message.origin_idx] == message.event
+            else:
+                received[message.origin_idx] = message.event
+        assert sorted(received) == list(range(len(received)))
+        follower = initial
+        for idx in sorted(received):
+            follower = apply(follower, IndexedEvent(idx=idx, event=received[idx]))
+        assert follower.model_dump() == running.master.state.model_dump()
 
 
 async def test_an_instance_deleted_twice_in_a_row_is_deleted_once() -> None:
