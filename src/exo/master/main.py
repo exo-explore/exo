@@ -1,5 +1,6 @@
 import time
 from collections import deque
+from collections.abc import Set as AbstractSet
 from datetime import datetime, timedelta, timezone
 from itertools import islice
 
@@ -21,6 +22,7 @@ from exo.routing.event_router import (
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_TRACING_ENABLED
 from exo.shared.models.model_cards import ModelId
+from exo.shared.request_errors import INSTANCE_GONE_BEFORE_START
 from exo.shared.types.chunks import ErrorChunk, ImageChunk
 from exo.shared.types.commands import (
     AddCustomModelCard,
@@ -195,8 +197,8 @@ class NoInstanceForModelError(Exception):
     """A request for a model with no running instance, such as one deleted after the API checked
     for it. The request is ended with this error: dropping it would leave it open forever."""
 
-    def __init__(self, model: str):
-        super().__init__(f"No instance found for model {model}")
+    def __init__(self, model: str, message: str | None = None):
+        super().__init__(message or f"No instance found for model {model}")
         self.model = ModelId(model)
 
 
@@ -237,7 +239,8 @@ class Master:
         self._replayable_events = REPLAYABLE_EVENTS
         self._replayable_image_bytes = REPLAYABLE_IMAGE_BYTES
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
-        # When a removal was last sent, for nodes and instances not yet removed from the state
+        # When a removal was last sent, for nodes and instances not yet removed from the state.
+        # No new request is sent to an instance being deleted.
         self._removing_nodes: dict[NodeId, float] = {}
         self._deleting_instances: dict[InstanceId, float] = {}
         # Since when the master has been able to hear nodes, and when it last checked on them
@@ -300,7 +303,6 @@ class Master:
 
                     generated_events: list[Event] = []
                     command = forwarder_command.command
-                    instance_task_counts: dict[InstanceId, int] = {}
                     match command:
                         case TestCommand():
                             pass
@@ -312,37 +314,9 @@ class Master:
                             for link in self.state.instance_links.values():
                                 prefill_only.difference_update(link.decode_instances)
 
-                            for instance in self.state.instances.values():
-                                # NON-prefill-only instances matching the model ID
-                                if (
-                                    instance.shard_assignments.model_id
-                                    == command.task_params.model
-                                    and instance.instance_id not in prefill_only
-                                ):
-                                    # count in-flight tasks of that instance
-                                    in_flight = {TaskStatus.Pending, TaskStatus.Running}
-                                    task_count = sum(
-                                        1
-                                        for task in self.state.tasks.values()
-                                        if task.instance_id == instance.instance_id
-                                        and task.task_status in in_flight
-                                    )
-                                    instance_task_counts[instance.instance_id] = (
-                                        task_count
-                                    )
-
-                            # there are no NON-prefill-only instances matching this model ID
-                            if not instance_task_counts:
-                                raise NoInstanceForModelError(command.task_params.model)
-
-                            available_instance_ids = sorted(
-                                instance_task_counts.keys(),
-                                key=lambda instance_id: instance_task_counts[
-                                    instance_id
-                                ],
+                            decode_instance_id = self._least_busy_instance(
+                                command.task_params.model, excluded=prefill_only
                             )
-
-                            decode_instance_id = available_instance_ids[0]
                             task_id = TaskId()
                             params = command.task_params.model_copy(
                                 update={
@@ -365,34 +339,10 @@ class Master:
                             )
                             self.command_task_mapping[command.command_id] = task_id
                         case ImageGeneration():
-                            for instance in self.state.instances.values():
-                                if (
-                                    instance.shard_assignments.model_id
-                                    == command.task_params.model
-                                ):
-                                    in_flight = {TaskStatus.Pending, TaskStatus.Running}
-                                    task_count = sum(
-                                        1
-                                        for task in self.state.tasks.values()
-                                        if task.instance_id == instance.instance_id
-                                        and task.task_status in in_flight
-                                    )
-                                    instance_task_counts[instance.instance_id] = (
-                                        task_count
-                                    )
-
-                            if not instance_task_counts:
-                                raise NoInstanceForModelError(command.task_params.model)
-
-                            available_instance_ids = sorted(
-                                instance_task_counts.keys(),
-                                key=lambda instance_id: instance_task_counts[
-                                    instance_id
-                                ],
-                            )
-
                             task_id = TaskId()
-                            selected_instance_id = available_instance_ids[0]
+                            selected_instance_id = self._least_busy_instance(
+                                command.task_params.model
+                            )
                             generated_events.append(
                                 TaskCreated(
                                     task_id=task_id,
@@ -419,34 +369,10 @@ class Master:
                                     )
                                     self._expected_ranks[task_id] = ranks
                         case ImageEdits():
-                            for instance in self.state.instances.values():
-                                if (
-                                    instance.shard_assignments.model_id
-                                    == command.task_params.model
-                                ):
-                                    in_flight = {TaskStatus.Pending, TaskStatus.Running}
-                                    task_count = sum(
-                                        1
-                                        for task in self.state.tasks.values()
-                                        if task.instance_id == instance.instance_id
-                                        and task.task_status in in_flight
-                                    )
-                                    instance_task_counts[instance.instance_id] = (
-                                        task_count
-                                    )
-
-                            if not instance_task_counts:
-                                raise NoInstanceForModelError(command.task_params.model)
-
-                            available_instance_ids = sorted(
-                                instance_task_counts.keys(),
-                                key=lambda instance_id: instance_task_counts[
-                                    instance_id
-                                ],
-                            )
-
                             task_id = TaskId()
-                            selected_instance_id = available_instance_ids[0]
+                            selected_instance_id = self._least_busy_instance(
+                                command.task_params.model
+                            )
                             generated_events.append(
                                 TaskCreated(
                                     task_id=task_id,
@@ -579,6 +505,11 @@ class Master:
                                 snapshot=command.snapshot,
                             )
                     for event in generated_events:
+                        if isinstance(event, InstanceDeleted):
+                            # Not in self.state until the event comes back indexed
+                            self._deleting_instances[event.instance_id] = (
+                                time.monotonic()
+                            )
                         await self.event_sender.send(event)
                 except NoInstanceForModelError as error:
                     command_id = forwarder_command.command.command_id
@@ -593,6 +524,39 @@ class Master:
                     )
                 except Exception as e:
                     logger.opt(exception=e).warning("Error in command processor")
+
+    def _least_busy_instance(
+        self, model: str, excluded: AbstractSet[InstanceId] = frozenset()
+    ) -> InstanceId:
+        """The instance of the model with the fewest requests in flight.
+
+        Instances being deleted are left out. This master's state changes only when its own
+        events come back indexed, so for a few milliseconds after it deletes an instance (a
+        DeleteInstance, or a node lost) the state still has it. A request sent to it then
+        would never run, and nothing would end it: the API ends an instance's requests as it
+        applies the deletion, which comes before the request's task.
+        """
+        in_flight = {TaskStatus.Pending, TaskStatus.Running}
+        of_model = [
+            instance_id
+            for instance_id, instance in self.state.instances.items()
+            if instance.shard_assignments.model_id == model
+            and instance_id not in excluded
+        ]
+        task_counts: dict[InstanceId, int] = {
+            instance_id: sum(
+                1
+                for task in self.state.tasks.values()
+                if task.instance_id == instance_id and task.task_status in in_flight
+            )
+            for instance_id in of_model
+            if instance_id not in self._deleting_instances
+        }
+        if not task_counts:
+            raise NoInstanceForModelError(
+                model, INSTANCE_GONE_BEFORE_START if of_model else None
+            )
+        return min(task_counts, key=lambda instance_id: task_counts[instance_id])
 
     def _task_for_command(self, command_id: CommandId) -> TaskId | None:
         """The task this cluster created for a request. The mapping holds only what this master

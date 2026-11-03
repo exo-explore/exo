@@ -176,6 +176,15 @@ def apply_node_download_progress(event: NodeDownloadProgress, state: State) -> S
 
 
 def apply_task_created(event: TaskCreated, state: State) -> State:
+    if _is_generation(event.task) and event.task.instance_id not in state.instances:
+        # A request sent to an instance deleted just before: nothing would ever run it, and
+        # the deletion has already ended the instance's requests. The API ends this one when
+        # it sees its task wasn't added.
+        logger.warning(
+            f"Not adding task {event.task_id}: its instance "
+            f"{event.task.instance_id} no longer exists"
+        )
+        return state
     new_tasks: Mapping[TaskId, Task] = {**state.tasks, event.task_id: event.task}
     return state.model_copy(update={"tasks": new_tasks})
 

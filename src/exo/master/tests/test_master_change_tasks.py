@@ -20,10 +20,11 @@ from exo.shared.types.commands import (
     TaskCancelled,
     TaskFinished,
 )
-from exo.shared.types.common import SessionId, SystemId
+from exo.shared.types.common import NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     Event,
     GlobalForwarderEvent,
+    InstanceCreated,
     LocalForwarderEvent,
     StateSnapshot,
     TaskCreated,
@@ -38,7 +39,12 @@ from exo.shared.types.text_generation import (
     TextGenerationTaskParams,
 )
 from exo.shared.types.worker.instances import InstanceId
+from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import channel
+from exo.worker.tests.unittests.conftest import (
+    get_mlx_ring_instance,
+    get_pipeline_shard_metadata,
+)
 
 
 async def _until(condition: Callable[[], bool]) -> None:
@@ -88,8 +94,17 @@ async def test_a_request_from_before_a_master_change_can_still_end(ending: str):
         )
 
     command_id = CommandId()
-    task = TextGenerationTask(
+    runner_id = RunnerId()
+    instance = get_mlx_ring_instance(
         instance_id=InstanceId(),
+        model_id=ModelId("test/model"),
+        node_to_runner={NodeId("node"): runner_id},
+        runner_to_shard={
+            runner_id: get_pipeline_shard_metadata(ModelId("test/model"), device_rank=0)
+        },
+    )
+    task = TextGenerationTask(
+        instance_id=instance.instance_id,
         command_id=command_id,
         task_status=TaskStatus.Running,
         task_params=TextGenerationTaskParams(
@@ -101,14 +116,20 @@ async def test_a_request_from_before_a_master_change_can_still_end(ending: str):
         tg.start_soon(master.run)
         tg.start_soon(event_router)
         # The task the previous master created, as the new master's state has it
-        await local_sender.send(
-            LocalForwarderEvent(
-                origin=SystemId("previous master's log"),
-                origin_idx=0,
-                session=session_id,
-                event=TaskCreated(task_id=task.task_id, task=task),
+        for index, event in enumerate(
+            [
+                InstanceCreated(instance=instance),
+                TaskCreated(task_id=task.task_id, task=task),
+            ]
+        ):
+            await local_sender.send(
+                LocalForwarderEvent(
+                    origin=SystemId("previous master's log"),
+                    origin_idx=index,
+                    session=session_id,
+                    event=event,
+                )
             )
-        )
         await _until(lambda: task.task_id in master.state.tasks)
 
         if ending == "finished":
