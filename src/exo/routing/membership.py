@@ -35,8 +35,7 @@ up but exo on it stopped reporting."""
 
 Quorum = Literal["Majority", "Half", "Minority"]
 """How many of the nodes it knows this node reaches: more than half, exactly half (two nodes with
-one away, or any even split), or less than half. The same values as deployments' SplitSide: a
-caller of split_side(reachable, last_known) can read Membership.quorum() instead."""
+one away, or any even split), or less than half."""
 
 # The membership's timers that exo acts on, from the one table that owns them
 # (rust/networking/src/membership.rs, where each is derived)

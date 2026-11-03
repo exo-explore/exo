@@ -366,7 +366,7 @@ def test_exo_reads_the_membership_timers_from_their_one_table() -> None:
     assert timedelta(minutes=5) == SPLIT_HOLD
 
 
-async def test_the_quorum_read_has_split_sides_values() -> None:
+async def test_membership_gives_the_quorum_read_now() -> None:
     own = exo_rs.Member("ME", exo_rs.MemberState.Alive, None, SINCE)
     snapshot = snapshot_of([own], Quorum.Half, 1, 2)
     async with running_membership(snapshot) as (membership, _):

@@ -112,7 +112,7 @@ pub const REJOIN: Duration = Duration::from_secs(6);
 /// is Gone: `GRACE` rides out a freeze of up to `LEASE + FREEZE_RIDDEN_OUT` (22 s) in all.
 const FREEZE_RIDDEN_OUT: Duration = Duration::from_secs(12);
 
-/// How long a peer is Suspect before it is Gone (G in the design). It is Suspect once its link
+/// How long a peer is Suspect before it is Gone. It is Suspect once its link
 /// was silent for `LEASE` (and the probe ran out); a peer frozen just past that resumes, holds
 /// off for `HOLD_OFF` and reconnects within `REJOIN`, so it is back `HOLD_OFF + REJOIN` = 18 s
 /// after it was Suspect (measured: 18.3 s for a freeze 5.6 s past the lease). The rest is
@@ -129,7 +129,7 @@ pub const GRACE: Duration =
 pub const STEADY_AFTER: Duration = GRACE;
 
 /// How long a peer whose transport is up may go without a report from exo on it before it is
-/// Suspect(Wedged) (T_WEDGE in the design). Nodes report about once a second, and a busy
+/// Suspect(Wedged). Nodes report about once a second, and a busy
 /// node's reports were up to 6.3 s apart: about 5 times that, so a slow exo isn't taken for a
 /// stuck one. A wedged node is then Gone 60 s after its last report (this, then `GRACE`),
 /// later than a lost one: a slow exo is harder to tell from a stuck one than a lost transport
@@ -140,11 +140,11 @@ pub const WEDGE_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long the side of a split without a majority (an even split, or the smaller side) holds
 /// before it takes over the work of the nodes it lost: placing their models again elsewhere,
 /// and counting only the nodes it reaches (see `FORGET_AFTER`). The other side may still be
-/// serving them. The longest outages that healed by themselves in chaos runs were network cuts
+/// serving them. The longest outages that healed by themselves in fault tests were network cuts
 /// of 90 s and a Mac that rejoined 72 s after waking: about 3 times that, so a blip never moves
 /// a model, and still short enough that the work of a node that really died moves within
-/// minutes. One constant for both: deployments' `EVEN_SPLIT_REPLACE_DELAY` and the design's
-/// `MINORITY_HOLD_LIMIT`.
+/// minutes. One constant for how long an even split, or a node cut off from most of the
+/// cluster, waits before acting on the nodes it can't reach.
 pub const SPLIT_HOLD: Duration = Duration::from_secs(5 * 60);
 
 /// How long a peer is Gone before it no longer counts in the quorum read (it stays in the view, as
