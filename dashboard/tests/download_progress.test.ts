@@ -143,3 +143,13 @@ test("all finished", () => {
   assert.equal(total.percentage, 100);
   assert.equal(total.etaMs, 0);
 });
+
+test("a device's own ETA wins over its speed, and unknown stays unknown", () => {
+  const moving = node("a", "downloading", 8, 16, 1);
+  // Reported speed says over two hours; the bytes timed lately say 80 s
+  assert.equal(
+    totalDownload([{ ...moving, etaMs: 80_000 }], MODEL).etaMs,
+    80_000,
+  );
+  assert.equal(totalDownload([{ ...moving, etaMs: null }], MODEL).etaMs, null);
+});
