@@ -26,6 +26,10 @@ def _any_model_id(_normalized_model_id: str) -> bool:
     return True
 
 
+def _any_prompt(_prompt: str) -> bool:
+    return True
+
+
 @final
 @dataclass(frozen=True)
 class OutputParser:
@@ -41,6 +45,10 @@ class OutputParser:
     after_thinking_parser: bool
     # The (normalized, lowercased) model ids it applies to; others get the generic parsers.
     applies_to_model_id: Callable[[str], bool] = _any_model_id
+    # The rendered prompts it applies to; others get the generic parsers. For formats the
+    # model writes only when its prompt sets them up, and that read as plain text otherwise
+    # (e.g. Llama 3's tool calls, bare JSON, after `Environment: ipython`).
+    applies_to_prompt: Callable[[str], bool] = _any_prompt
     # Whether exo coerces the parsed tool-call arguments to the request's tool schemas,
     # for formats that write every value as text.
     coerces_to_tool_schemas: bool = False
