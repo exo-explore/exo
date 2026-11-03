@@ -79,7 +79,8 @@ INSTANCE_META_BACKENDS: dict[InstanceMeta, list[Backend]] = {
 
 
 class InstanceDoesNotFitError(ValueError):
-    """A launch a node can't hold its shard of, besides the instances already there."""
+    """A launch a node can't hold its shard of, besides the instances already there, or with a
+    node outside the cluster."""
 
 
 def add_instance_to_placements(
@@ -88,15 +89,23 @@ def add_instance_to_placements(
     """The instances once the command's instance is added. An instance already there makes it
     a repeat, which changes nothing.
 
-    Refused (InstanceDoesNotFitError), like a PlaceInstance, when a node can't hold its shard
-    besides the instances already there, some of them perhaps still loading: two launches
-    sent at the same time were otherwise both placed in memory that holds one. The API checks
-    a launch the same way before sending it, but against its own state, which may not show
-    the other launch yet.
+    Refused (InstanceDoesNotFitError) when a node isn't in the cluster, and, like a
+    PlaceInstance, when a node can't hold its shard besides the instances already there, some
+    of them perhaps still loading: two launches sent at the same time were otherwise both
+    placed in memory that holds one. The API checks a launch the same way before sending it,
+    but against its own state, which may not show the other launch yet.
     """
-    # TODO: validate against topology
     if command.instance.instance_id in state.instances:
         return state.instances
+    if outside := [
+        node_id
+        for node_id in command.instance.shard_assignments.node_to_runner
+        if not state.topology.contains_node(node_id)
+    ]:
+        # The master's next check would delete it at once, as an instance that lost a node.
+        # Refused instead: the API sends a launch again until it shows, by when a node that is
+        # coming back (a split healing, say) is in the cluster again.
+        raise InstanceDoesNotFitError(f"node(s) {outside} aren't in the cluster")
     if (shortfall := instance_beyond_memory(command.instance, state)) is not None:
         raise InstanceDoesNotFitError(shortfall)
     return {**state.instances, command.instance.instance_id: command.instance}

@@ -219,7 +219,7 @@ from exo.shared.types.commands import (
     TaskFinished,
     TextGeneration,
 )
-from exo.shared.types.common import CommandId, Id, NodeId, SystemId
+from exo.shared.types.common import CommandId, Id, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     ChunkGenerated,
     InstanceDeleted,
@@ -350,6 +350,18 @@ class PendingClusterCommand:
     wake: anyio.Event = field(default_factory=anyio.Event)
 
 
+@dataclass(frozen=True)
+class AppliedClusterCommand:
+    """A change this node saw applied, kept in case the master that applied it is replaced by
+    one that never saw it: a master on the other side of a split that heals, or one lost
+    before its last events reached the next master."""
+
+    command: ClusterCommand
+    applied_at: float
+    # The master that applied it: None for the master this node started with
+    session: SessionId | None
+
+
 @dataclass
 class WithdrawnClusterCommand:
     """A launch or new link whose request was answered 503. A copy can still apply later
@@ -365,6 +377,9 @@ class WithdrawnClusterCommand:
 
 
 class API:
+    # The master whose state this node last caught up from: None for the one it started with
+    _master_session: SessionId | None = None
+
     def __init__(
         self,
         node_id: NodeId,
@@ -2189,13 +2204,21 @@ class API:
                     self._save_merged_trace(event)
 
     def _apply_snapshot(self, snapshot: StateSnapshot) -> None:
+        lost_changes = self._changes_lost_with_old_master(snapshot)
         self.state = snapshot.state
+        self._master_session = snapshot.session
         self._note_applied_cluster_commands()
         # A snapshot comes from a master that is up and answering: usually a new one, which
         # never saw the commands sent to the old one. Send them again now rather than at the
         # next resend.
         for pending in self._pending_cluster_commands.values():
             pending.wake.set()
+        for command in lost_changes:
+            logger.warning(
+                f"{type(command).__name__} {command.command_id} applied under the previous "
+                "master is missing from the new master's state; sending it again"
+            )
+            self._tg.start_soon(self._send_lost_change_again, command)
         # Output for in-flight requests may have been in the events we skipped
         in_flight = [
             *self._text_generation_queues.values(),
@@ -2320,6 +2343,14 @@ class API:
     @functools.cached_property
     def _pending_cluster_commands(self) -> dict[CommandId, PendingClusterCommand]:
         """Commands that change the cluster, sent but not yet seen applied."""
+        return {}
+
+    @functools.cached_property
+    def _applied_cluster_commands(
+        self,
+    ) -> dict[InstanceId | InstanceLinkId | ModelId, AppliedClusterCommand]:
+        """The changes this node's requests made recently, by what they change: the latest
+        request about each instance, link or card. See _changes_lost_with_old_master."""
         return {}
 
     @functools.cached_property
@@ -2476,6 +2507,7 @@ class API:
         repeat) isn't sent at all.
         """
         if command_already_applied(command, self.state):
+            self._keep_applied(command)
             return True
         command_id = command.command_id
         pending = PendingClusterCommand(command=command)
@@ -2506,12 +2538,21 @@ class API:
             if not pending.applied and command_applied(pending.command, self.state):
                 pending.applied = True
                 pending.wake.set()
+                self._keep_applied(pending.command)
+        now = time.monotonic()
+        # A kept change the state no longer shows was changed again since (by another
+        # request, or by the master): it is no longer this node's to restore
+        for target, applied in list(self._applied_cluster_commands.items()):
+            if (
+                now - applied.applied_at > CLUSTER_COMMAND_TIMEOUT
+                or not command_applied(applied.command, self.state)
+            ):
+                del self._applied_cluster_commands[target]
         # A called-off change is watched for a copy that still applies for
         # CLUSTER_COMMAND_TIMEOUT after its request was answered: as long as a copy sent before
         # the answer can take to reach a master that applies it, through a change of master. A
         # copy applied later (at the heal of a longer split) isn't undone. Without a limit, a
         # launch the master refused would be checked on every event for the life of the node.
-        now = time.monotonic()
         for target, withdrawn in list(self._withdrawn_cluster_commands.items()):
             if withdrawn.undo_finished is not None:
                 continue
@@ -2520,6 +2561,48 @@ class API:
                 self._tg.start_soon(self._undo_withdrawn_command, withdrawn)
             elif now - withdrawn.withdrawn_at > CLUSTER_COMMAND_TIMEOUT:
                 del self._withdrawn_cluster_commands[target]
+
+    def _keep_applied(self, command: ClusterCommand) -> None:
+        self._applied_cluster_commands[changed_by(command)] = AppliedClusterCommand(
+            command=command,
+            applied_at=time.monotonic(),
+            session=self._master_session,
+        )
+
+    def _changes_lost_with_old_master(
+        self, snapshot: StateSnapshot
+    ) -> list[ClusterCommand]:
+        """The changes this node's requests made, still in its state, that a new master's
+        snapshot lacks: the master that applied them was replaced by one that never saw
+        them (the other side of a split that healed, or a master lost before its last events
+        reached the next one), so they are sent again, under a new command id. The request
+        was already answered.
+
+        A change is kept for CLUSTER_COMMAND_TIMEOUT after it applied, the longest a lost
+        master takes to be replaced. A change this node saw undone since isn't restored, and
+        neither is one missing from a snapshot of the same master (this node fell behind,
+        and the master changed it in the events skipped)."""
+        lost: list[ClusterCommand] = []
+        now = time.monotonic()
+        for target, applied in list(self._applied_cluster_commands.items()):
+            if now - applied.applied_at > CLUSTER_COMMAND_TIMEOUT:
+                del self._applied_cluster_commands[target]
+            elif not command_applied(applied.command, snapshot.state):
+                del self._applied_cluster_commands[target]
+                if applied.session != snapshot.session:
+                    lost.append(applied.command)
+        return lost
+
+    async def _send_lost_change_again(self, command: ClusterCommand) -> None:
+        # Under a new id: the new master may have seen the old one (as the link came back,
+        # say) and not applied it, and it ignores a command id it has processed. The instance,
+        # link or card the change names keeps it from being applied twice.
+        command = command.model_copy(update={"command_id": CommandId()})
+        if not await self._send_until_applied(command):
+            logger.error(
+                f"{type(command).__name__} {command.command_id}, lost with the previous "
+                f"master, was not applied again within {CLUSTER_COMMAND_TIMEOUT:.0f}s"
+            )
 
     async def _undo_withdrawn_command(self, withdrawn: WithdrawnClusterCommand) -> None:
         command, undo = withdrawn.command, withdrawn.undo

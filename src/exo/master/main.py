@@ -273,17 +273,20 @@ class Master:
         logger.info("Stopping Master")
         self._tg.cancel_tasks()
 
-    def _first_time(self, command_id: CommandId) -> bool:
-        """Whether this command hasn't been processed yet. The API sends a chat request again
-        if it doesn't see it accepted, so the same command can arrive more than once. A new
-        master doesn't know what the old one processed, but a request it accepted is a task."""
-        if command_id in self._processed_commands or self._has_task_for(command_id):
-            return False
+    def _already_processed(self, command_id: CommandId) -> bool:
+        """Whether this command was processed already. The API sends a request again until it
+        sees it take effect, so the same command can arrive more than once, even after what it
+        did was undone (a launch stopped since): a copy is ignored. A new master doesn't know
+        what the old one processed, but a request it accepted is a task."""
+        return command_id in self._processed_commands or self._has_task_for(command_id)
+
+    def _remember_processed(self, command_id: CommandId) -> None:
+        """Only a command that changed something is remembered: one that changed nothing (a
+        launch onto a node outside the cluster, say) may take effect when a copy comes."""
         self._processed_commands.add(command_id)
         self._processed_order.append(command_id)
         if len(self._processed_order) > PROCESSED_COMMANDS_KEPT:
             self._processed_commands.discard(self._processed_order.popleft())
-        return True
 
     def _has_task_for(self, command_id: CommandId) -> bool:
         return any(
@@ -295,7 +298,7 @@ class Master:
     async def _command_processor(self) -> None:
         with self.command_receiver as commands:
             async for forwarder_command in commands:
-                if not self._first_time(forwarder_command.command.command_id):
+                if self._already_processed(forwarder_command.command.command_id):
                     logger.debug(
                         f"Ignoring command {forwarder_command.command.command_id}: already processed"
                     )
@@ -396,6 +399,13 @@ class Master:
                                         for shard in selected_instance.shard_assignments.runner_to_shard.values()
                                     )
                                     self._expected_ranks[task_id] = ranks
+                        case DeleteInstance() if (
+                            command.instance_id not in self.state.instances
+                        ):
+                            # A copy sent before its node saw the instance go
+                            logger.debug(
+                                f"Not deleting instance {command.instance_id}: already gone"
+                            )
                         case DeleteInstance():
                             placement = delete_instance(command, self.state.instances)
                             transition_events = get_transition_events(
@@ -502,6 +512,8 @@ class Master:
                                 forwarder_command.origin,
                                 snapshot=command.snapshot,
                             )
+                    if generated_events:
+                        self._remember_processed(command.command_id)
                     # Applied before the next command is looked at, with nothing awaited since
                     # the state they were decided on was read: every decision sees the ones
                     # before it. All of a command's events apply, or none (see _index), and
@@ -515,6 +527,7 @@ class Master:
                         )
                 except NoInstanceForModelError as error:
                     command_id = forwarder_command.command.command_id
+                    self._remember_processed(command_id)
                     logger.warning(f"Ending request {command_id}: {error}")
                     self._index(
                         ChunkGenerated(
