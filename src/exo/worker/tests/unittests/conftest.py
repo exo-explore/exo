@@ -25,6 +25,7 @@ class FakeRunnerSupervisor:
     cancelled: set[TaskId] = field(default_factory=set)
     pending: dict[TaskId, object] = field(default_factory=dict)
     awaiting_acknowledgement: bool = False
+    stopping: bool = False
 
 
 class OtherTask(BaseTask):

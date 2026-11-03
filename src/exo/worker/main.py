@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 
 import anyio
-from anyio import fail_after, to_thread
+from anyio import to_thread
 from loguru import logger
 
 from exo.api.types import ImageEditsTaskParams
@@ -162,7 +162,7 @@ class Worker:
             self.event_sender.close()
             self.command_sender.close()
             self.download_command_sender.close()
-            for runner in self.runners.values():
+            for runner in list(self.runners.values()):
                 runner.shutdown()
             self._stopped.set()
 
@@ -458,18 +458,9 @@ class Worker:
                             )
                         )
                 case Shutdown(runner_id=runner_id):
-                    runner = self.runners.pop(runner_id)
-                    try:
-                        with fail_after(RUNNER_SHUTDOWN_GRACE):
-                            await runner.start_task(task)
-                            # Give it a moment to start shutting down by itself
-                            await runner.wait_for_acknowledgement(task.task_id)
-                    except TimeoutError:
-                        logger.warning(
-                            f"Runner {runner_id} didn't take up its shutdown, stopping it"
-                        )
-                    finally:
-                        runner.shutdown()
+                    # It stays in self.runners until its process has exited: only then is
+                    # it replaced (see _supervise)
+                    await self.runners[runner_id].stop(task, RUNNER_SHUTDOWN_GRACE)
                     # The runner is stopped, which is what the task is for, and only the worker
                     # can say so: a runner that has died never gets the task, and one that takes
                     # it up is no longer listened to once it has acknowledged it, so its own
@@ -602,8 +593,21 @@ class Worker:
             event_sender=self.event_sender.clone(),
         )
         self.runners[task.bound_instance.bound_runner_id] = runner
-        self._tg.start_soon(runner.run)
+        self._tg.start_soon(self._supervise, runner)
         return runner
+
+    async def _supervise(self, runner: RunnerSupervisor) -> None:
+        """Run the supervisor, and forget the runner once it has finished, which is once the
+        runner's process has exited. Until then the runner keeps its place in self.runners,
+        so nothing replaces it: a replacement started any earlier would meet the old process
+        still holding the instance's ports, or pair with the instance's other runners in its
+        place."""
+        try:
+            await runner.run()
+        finally:
+            runner_id = runner.bound_instance.bound_runner_id
+            if self.runners.get(runner_id) is runner:
+                del self.runners[runner_id]
 
     async def _poll_connection_updates(self):
         while True:

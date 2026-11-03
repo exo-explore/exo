@@ -35,6 +35,7 @@ from exo.shared.types.worker.runners import (
     RunnerLoading,
     RunnerReady,
     RunnerRunning,
+    RunnerShuttingDown,
     RunnerStatus,
     RunnerWarmingUp,
 )
@@ -54,23 +55,30 @@ def plan(
     download_backoff: KeyedBackoff[ModelId],
     failed_download_backoff: KeyedBackoff[InstanceId] | None = None,
 ) -> Task | None:
+    # A runner that is going (stopped, failed or exited) is left alone until its process has
+    # exited and the worker forgets it; only then can it be replaced.
+    live = {
+        runner_id: runner
+        for runner_id, runner in runners.items()
+        if not runner.stopping
+    }
     # A runner that has yet to pick up the last task sent to it still has the status from
     # before that task: starting the next phase from it would send the task again. Such a
     # runner sits out those steps until it does (or until it's found stuck and stopped), and
     # the other runners on this node carry on.
     settled = {
         runner_id: runner
-        for runner_id, runner in runners.items()
+        for runner_id, runner in live.items()
         if not runner.awaiting_acknowledgement
     }
     # Python short circuiting OR logic should evaluate these sequentially.
     return (
-        _cancel_tasks(runners, tasks)
-        or _kill_runner(runners, all_runners, instances)
+        _cancel_tasks(live, tasks)
+        or _kill_runner(live, all_runners, instances)
         or _create_runner(node_id, runners, all_runners, instances, instance_backoff)
         or _model_needs_download(
             node_id,
-            runners,
+            live,
             global_download_status,
             download_backoff,
             failed_download_backoff or KeyedBackoff(),
@@ -78,8 +86,23 @@ def plan(
         or _init_distributed_backend(settled, all_runners)
         or _load_model(settled, all_runners, global_download_status)
         or _ready_to_warmup(settled, all_runners)
-        or _pending_tasks(runners, tasks, all_runners)
+        or _pending_tasks(live, tasks, all_runners)
     )
+
+
+# A runner that has joined, or is joining, its instance's other runners: it is tied to the
+# processes it connects with, and it is no use once any of them is gone
+_JOINED = (
+    RunnerConnecting,
+    RunnerConnected,
+    RunnerLoading,
+    RunnerLoaded,
+    RunnerWarmingUp,
+    RunnerReady,
+    RunnerRunning,
+)
+# A runner on its way out: it isn't coming back, and is replaced by a new one
+_GOING = (RunnerFailed, RunnerShuttingDown)
 
 
 def _kill_runner(
@@ -87,27 +110,20 @@ def _kill_runner(
     all_runners: Mapping[RunnerId, RunnerStatus],
     instances: Mapping[InstanceId, Instance],
 ) -> Shutdown | None:
+    """Stop a runner whose instance is gone, or that has joined runners of its instance
+    of which one is going (a runner that failed stops itself). An idle runner is tied to
+    no other: it waits for the others' replacements."""
     for runner in runners.values():
         runner_id = runner.bound_instance.bound_runner_id
-        if (instance_id := runner.bound_instance.instance.instance_id) not in instances:
+        instance_id = runner.bound_instance.instance.instance_id
+        if instance_id not in instances:
             return Shutdown(instance_id=instance_id, runner_id=runner_id)
-        if isinstance(runner.status, RunnerFailed):
-            return Shutdown(
-                instance_id=runner.bound_instance.instance.instance_id,
-                runner_id=runner_id,
-            )
-
-        for (
-            global_runner_id
-        ) in runner.bound_instance.instance.shard_assignments.node_to_runner.values():
-            if runner_id == global_runner_id:
-                continue
-
-            if isinstance(all_runners.get(global_runner_id, None), RunnerFailed):
-                return Shutdown(
-                    instance_id=instance_id,
-                    runner_id=runner_id,
-                )
+        if isinstance(runner.status, _JOINED) and any(
+            isinstance(all_runners.get(peer), _GOING)
+            for peer in runner.bound_instance.instance.shard_assignments.node_to_runner.values()
+            if peer != runner_id
+        ):
+            return Shutdown(instance_id=instance_id, runner_id=runner_id)
 
 
 def _create_runner(
@@ -125,14 +141,14 @@ def _create_runner(
         if runner_id in runners:
             continue
 
-        # don't create runners if any other nodes have runners that have failed - wait for them to fix themselves first.
-        instance_has_failed_runner = any(
-            isinstance(all_runners.get(remote_runner_id), RunnerFailed)
-            for remote_runner_id in instance.shard_assignments.node_to_runner.values()
-            if remote_runner_id != runner_id
-        )
-        we_have_failed_before = isinstance(all_runners.get(runner_id), RunnerFailed)
-        if instance_has_failed_runner and not we_have_failed_before:
+        # A runner of the instance that has joined others is tied to this runner's last
+        # process, which is gone: wait until it is going too, so that the new runner can
+        # never pair with it.
+        if any(
+            isinstance(all_runners.get(peer), _JOINED)
+            for peer in instance.shard_assignments.node_to_runner.values()
+            if peer != runner_id
+        ):
             continue
 
         if not instance_backoff.should_proceed(instance.instance_id):

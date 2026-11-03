@@ -8,6 +8,7 @@ import anyio
 import pytest
 from anyio.abc import TaskStatus
 
+import exo.worker.main as worker_mod
 import exo.worker.plan as plan_mod
 from exo.shared.types.commands import ForwarderCommand, ForwarderDownloadCommand
 from exo.shared.types.events import Event, IndexedEvent
@@ -158,7 +159,10 @@ def _worker() -> Worker:
 
 
 @pytest.mark.anyio
-async def test_a_runner_that_never_acknowledges_does_not_hold_up_its_node() -> None:
+async def test_a_runner_that_never_acknowledges_does_not_hold_up_its_node(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(worker_mod, "RUNNER_SHUTDOWN_GRACE", 1.0)
     stuck, sent_to_stuck = await _silent_supervisor(INSTANCE_1_ID, RUNNER_1_ID)
     serving, sent_to_serving = await _silent_supervisor(INSTANCE_2_ID, RUNNER_3_ID)
     serving.status = RunnerReady()
@@ -177,8 +181,8 @@ async def test_a_runner_that_never_acknowledges_does_not_hold_up_its_node() -> N
     worker.runners = {RUNNER_1_ID: stuck, RUNNER_3_ID: serving}
 
     async with anyio.create_task_group() as tg:
-        tg.start_soon(stuck.run)
-        tg.start_soon(serving.run)
+        tg.start_soon(worker._supervise, stuck)  # pyright: ignore[reportPrivateUsage]
+        tg.start_soon(worker._supervise, serving)  # pyright: ignore[reportPrivateUsage]
         tg.start_soon(worker.plan_step)
 
         # The other model on the node still gets its request...
@@ -194,9 +198,13 @@ async def test_a_runner_that_never_acknowledges_does_not_hold_up_its_node() -> N
             update={"instances": {INSTANCE_2_ID: SERVING}}
         )
         with anyio.fail_after(2):
-            while RUNNER_1_ID in worker.runners:
+            while not stuck.stopping:
                 await anyio.sleep(0.05)
         assert [type(t) for t in await _sent(sent_to_stuck)] == [Shutdown]
+        # ...and the worker forgets it once it has stopped
+        with anyio.fail_after(3):
+            while RUNNER_1_ID in worker.runners:
+                await anyio.sleep(0.05)
 
         tg.cancel_scope.cancel()
 

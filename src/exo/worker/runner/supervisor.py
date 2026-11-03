@@ -31,6 +31,7 @@ from exo.shared.types.tasks import (
     ImageEdits,
     ImageGeneration,
     LoadModel,
+    Shutdown,
     StartWarmup,
     Task,
     TaskId,
@@ -286,6 +287,11 @@ class RunnerSupervisor:
     )
     # The step the runner is in on its way to serving, if it's in one
     _step: _Step | None = field(default=None, init=False)
+    # Set once the runner is on its way out (stopped by the worker, failed, or exited). It takes
+    # no more tasks, and what it still says about its status is no longer passed on: the cluster
+    # keeps seeing it as ShuttingDown (or Failed) until its replacement reports. The worker
+    # replaces it only once this supervisor has finished, when its process has exited.
+    stopping: bool = field(default=False, init=False)
 
     @classmethod
     async def create(
@@ -352,6 +358,8 @@ class RunnerSupervisor:
                 self._ev_recv.close()
             with contextlib.suppress(ClosedResourceError):
                 self._task_sender.close()
+            with anyio.CancelScope(shield=True):
+                await self._end_unfinished_steps()
             with contextlib.suppress(ClosedResourceError):
                 self._event_sender.close()
             with contextlib.suppress(ClosedResourceError):
@@ -367,6 +375,58 @@ class RunnerSupervisor:
 
     def shutdown(self):
         self._tg.cancel_tasks()
+
+    async def stop(self, task: Shutdown, grace: float) -> None:
+        """Stop the runner: it has `grace` seconds to take up `task` and shut itself down, then
+        its process is stopped (terminated, and killed if need be) in the background. The
+        runner is ShuttingDown to the cluster from now on, so that no runner of its instance
+        pairs with it again."""
+        self.stopping = True
+        await self._report_leaving()
+        try:
+            with anyio.fail_after(grace):
+                await self.start_task(task)
+                # Give it a moment to start shutting down by itself
+                await self.wait_for_acknowledgement(task.task_id)
+        except TimeoutError:
+            logger.warning(
+                f"Runner {self.bound_instance.bound_runner_id} didn't take up its shutdown, stopping it"
+            )
+        finally:
+            self.shutdown()
+
+    async def _report_leaving(self) -> None:
+        """Tell the cluster this runner is going, unless it knows already (the runner failed).
+        A runner keeps its id across restarts, so its last status would otherwise stay in the
+        state as if it were still there: a replacement could take a peer's status for a live
+        runner's, and pair with a process that is about to be stopped."""
+        if isinstance(self.status, (RunnerFailed, RunnerShuttingDown)):
+            return
+        self.status = RunnerShuttingDown()
+        with contextlib.suppress(ClosedResourceError, BrokenResourceError):
+            await self._event_sender.send(
+                RunnerStatusUpdated(
+                    runner_id=self.bound_instance.bound_runner_id,
+                    runner_status=self.status,
+                )
+            )
+
+    async def _end_unfinished_steps(self) -> None:
+        """Fail the runner's steps (connect, load, warm up) it didn't finish: with the runner
+        gone nobody else ever would, and they would stay Running in the state. (The worker
+        finishes the Shutdown task, and a request's task belongs to its request.)"""
+        for task in list(self.in_progress.values()):
+            if isinstance(
+                task, (Shutdown, TextGeneration, ImageGeneration, ImageEdits)
+            ):
+                continue
+            self.in_progress.pop(task.task_id, None)
+            with contextlib.suppress(ClosedResourceError, BrokenResourceError):
+                await self._event_sender.send(
+                    TaskStatusUpdated(
+                        task_id=task.task_id, task_status=TaskStatus.Failed
+                    )
+                )
 
     async def start_task(self, task: Task):
         """Send the task to the runner, without waiting for the runner to acknowledge it.
@@ -483,6 +543,9 @@ class RunnerSupervisor:
                         await self._check_runner(event)
                         break
                     if isinstance(event, RunnerStatusUpdated):
+                        if self.stopping:
+                            # It is going (see `stopping`), whatever it says
+                            continue
                         self.status = event.runner_status
                         if self._step is not None and isinstance(
                             self.status, self._step.finished_at
@@ -504,8 +567,9 @@ class RunnerSupervisor:
                         isinstance(event, TaskStatusUpdated)
                         and event.task_status == TaskStatus.Complete
                     ):
-                        # If a task has just been completed, we should be working on it.
-                        assert isinstance(
+                        # If a task has just been completed, we should be working on it
+                        # (a runner that is going no longer tells us what it works on).
+                        assert self.stopping or isinstance(
                             self.status,
                             (
                                 RunnerRunning,
@@ -584,6 +648,8 @@ class RunnerSupervisor:
     ) -> None:
         if not self._cancel_watch_runner.cancel_called:
             self._cancel_watch_runner.cancel()
+        # Whatever is found, the runner's process is over by the end of this
+        self.stopping = True
         logger.info("Checking runner's status")
         if self.runner_process.is_alive():
             logger.info("Runner was found to be alive, stopping process")
@@ -594,6 +660,8 @@ class RunnerSupervisor:
 
         # If exit code is 0 then the transient errors were recoverable, meaning we don't need runner diagnostics
         if rc == 0:
+            with anyio.CancelScope(shield=True):
+                await self._report_leaving()
             return
 
         if isinstance(rc, int) and rc < 0:
@@ -657,6 +725,10 @@ class RunnerSupervisor:
                         )
                     )
 
+        if isinstance(self.status, RunnerShuttingDown):
+            # It was told to stop (see stop): having to be terminated is no failure of its own
+            self.shutdown()
+            return
         try:
             self.status = RunnerFailed(
                 error_message=f"Terminated ({cause})", diagnostics=diagnostics

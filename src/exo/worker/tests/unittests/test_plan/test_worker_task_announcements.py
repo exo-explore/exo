@@ -45,6 +45,7 @@ class RecordingRunner:
     pending: dict[TaskId, object] = field(default_factory=dict)
     started: list[Task] = field(default_factory=list)
     awaiting_acknowledgement: bool = False
+    stopping: bool = False
 
     async def start_task(self, task: Task) -> None:
         self.started.append(task)
