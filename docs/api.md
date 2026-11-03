@@ -158,8 +158,16 @@ Places an instance for a model using the server's placement logic.
 JSON describing the instance to be placed.
 
 **Response:**
-Command acknowledgement. The instance may not be ready immediately; wait for it
-to appear through `/instance/await` before sending inference requests.
+Command acknowledgement, sent once the instance is in the cluster's state. The
+model may still be downloading or loading; wait for it through `/instance/await`
+before sending inference requests.
+
+Requests that change the cluster (`POST /instance`, `POST /place_instance`,
+`DELETE /instance/{instance_id}`, the instance-link endpoints, `POST /models/add`
+and `DELETE /models/custom/{model_id}`) are answered once the change shows in the
+cluster's state. If the device coordinating the cluster is lost meanwhile, the
+change is sent again to the device that takes over. A change not seen within
+about 45 s is answered with `503`; check the cluster's state before trying again.
 
 ## 3. Models
 

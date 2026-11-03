@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from exo.api.main import API
+from exo.api.tests.applying_master import sent_while_applying
 from exo.api.types import CreateInstanceParams, PlaceInstanceParams
 from exo.master.tests.conftest import create_node_network, create_socket_connection
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask, card_cache
@@ -148,6 +149,10 @@ async def test_an_instance_every_node_can_hold_is_created() -> None:
         MODEL.model_id, Sharding.Pipeline, InstanceMeta.MlxRing, 2
     )
 
-    await api.create_instance(CreateInstanceParams(instance=pipeline))
+    _, sent = await sent_while_applying(
+        api,
+        commands,
+        lambda: api.create_instance(CreateInstanceParams(instance=pipeline)),
+    )
 
-    assert [type(c.command) for c in commands.collect()] == [CreateInstance]
+    assert [type(command) for command in sent] == [CreateInstance]
