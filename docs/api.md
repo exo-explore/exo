@@ -318,8 +318,20 @@ data: [DONE]
 | `model_stalled` | The model stopped making progress and is being restarted |
 | `model_failed` | The model's process failed in some other way |
 | `interrupted` | The request ended for another reason, such as a change in the cluster |
+| `model_not_ready` | The model isn't ready to serve yet (with a `503`; see below) |
 
 Errors without a known cause have the HTTP status (`500`) as their `code`.
+
+**A model that isn't ready yet:**
+A request for a model with no instance gets `404`. A request for a model whose instance can't serve yet (it is downloading, loading or warming up) waits for it for up to 30 s and goes ahead as soon as it is ready. If it still isn't, the request gets `503 Service Unavailable`, with a `Retry-After` header (seconds) and a message saying what the model is doing:
+
+```json
+{"error": {"message": "The model is not ready yet: downloading (42%, about 3 min left). Try again in 60 s.", "type": "Service Unavailable", "code": "model_not_ready"}}
+```
+
+A model that failed to start, or whose download failed, gets its `503` at once. The wait is set with the `EXO_MODEL_READY_WAIT_SECONDS` environment variable: `0` answers at once, and a larger value lets clients that would rather wait for a whole download do so (the OpenAI SDKs wait up to 600 s for a response by default).
+
+This applies to every inference endpoint (OpenAI, Claude, Responses, Ollama and image generation).
 
 ### Claude Messages API
 

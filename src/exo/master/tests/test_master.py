@@ -24,6 +24,7 @@ from exo.shared.types.events import (
     InstanceCreated,
     LocalForwarderEvent,
     NodeGatheredInfo,
+    RunnerStatusUpdated,
     StateSnapshot,
     TaskCreated,
 )
@@ -43,6 +44,7 @@ from exo.shared.types.worker.instances import (
     MlxRingInstance,
     ShardAssignments,
 )
+from exo.shared.types.worker.runners import RunnerReady
 from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
 from exo.utils.channels import channel
 from exo.utils.info_gatherer.info_gatherer import NodeBackends
@@ -174,6 +176,21 @@ async def test_master():
         logger.info("wait for an instance")
         while len(master.state.instances.keys()) == 0:
             await anyio.sleep(0.001)
+        # The worker loads it: the master only sends requests to a ready instance
+        (instance,) = master.state.instances.values()
+        (runner_id,) = instance.shard_assignments.runner_to_shard
+        await local_event_sender.send(
+            LocalForwarderEvent(
+                origin_idx=2,
+                origin=SystemId("Worker"),
+                session=session_id,
+                event=RunnerStatusUpdated(
+                    runner_id=runner_id, runner_status=RunnerReady()
+                ),
+            )
+        )
+        while runner_id not in master.state.runners:
+            await anyio.sleep(0.001)
         logger.info("inject a TextGeneration Command")
         await command_sender.send(
             ForwarderCommand(
@@ -194,15 +211,19 @@ async def test_master():
                 ),
             )
         )
-        while len(_get_events()) < 4:
+        while len(_get_events()) < 5:
             await anyio.sleep(0.01)
 
-        events = _get_events()
+        events = [
+            event
+            for event in _get_events()
+            if not isinstance(event.event, RunnerStatusUpdated)
+        ]
         assert len(events) == 4
         assert events[0].idx == 0
         assert events[1].idx == 1
         assert events[2].idx == 2
-        assert events[3].idx == 3
+        assert events[3].idx == 4
         assert isinstance(events[0].event, NodeGatheredInfo)
         assert isinstance(events[1].event, NodeGatheredInfo)
         assert isinstance(events[2].event, InstanceCreated)

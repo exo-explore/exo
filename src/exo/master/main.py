@@ -21,6 +21,7 @@ from exo.routing.event_router import (
 )
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_TRACING_ENABLED
+from exo.shared.model_readiness import instance_is_ready, instance_readiness
 from exo.shared.models.model_cards import ModelId
 from exo.shared.request_errors import INSTANCE_GONE_BEFORE_START
 from exo.shared.types.chunks import ErrorChunk, ImageChunk
@@ -194,8 +195,10 @@ PROCESSED_COMMANDS_KEPT = 100_000
 
 
 class NoInstanceForModelError(Exception):
-    """A request for a model with no running instance, such as one deleted after the API checked
-    for it. The request is ended with this error: dropping it would leave it open forever."""
+    """A request for a model with no instance that can serve it: none at all (one deleted after
+    the API checked for it), or none ready. The request is ended with this error: dropping it
+    would leave it open forever, and sending it to an instance that isn't ready would leave it
+    waiting for as long as the instance takes, perhaps forever."""
 
     def __init__(self, model: str, message: str | None = None):
         super().__init__(message or f"No instance found for model {model}")
@@ -528,34 +531,62 @@ class Master:
     def _least_busy_instance(
         self, model: str, excluded: AbstractSet[InstanceId] = frozenset()
     ) -> InstanceId:
-        """The instance of the model with the fewest requests in flight.
+        """The ready instance of the model with the fewest requests in flight.
 
         Instances being deleted are left out. This master's state changes only when its own
         events come back indexed, so for a few milliseconds after it deletes an instance (a
         DeleteInstance, or a node lost) the state still has it. A request sent to it then
         would never run, and nothing would end it: the API ends an instance's requests as it
         applies the deletion, which comes before the request's task.
+
+        So are instances that aren't ready (downloading, loading, failed): the API waits for
+        a model to be ready before sending a request, but with several instances of a model,
+        one may be ready and another not.
         """
         in_flight = {TaskStatus.Pending, TaskStatus.Running}
         of_model = [
-            instance_id
+            instance
             for instance_id, instance in self.state.instances.items()
             if instance.shard_assignments.model_id == model
             and instance_id not in excluded
+            and instance_id not in self._deleting_instances
         ]
+        if not of_model:
+            raise NoInstanceForModelError(
+                model,
+                INSTANCE_GONE_BEFORE_START
+                if any(
+                    instance.shard_assignments.model_id == model
+                    for instance in self.state.instances.values()
+                )
+                else None,
+            )
+        ready = [
+            instance.instance_id
+            for instance in of_model
+            if instance_is_ready(instance, self.state.runners)
+        ]
+        if not ready:
+            not_ready = [
+                status
+                for instance in of_model
+                if (status := instance_readiness(self.state, instance)) is not None
+            ]
+            raise NoInstanceForModelError(
+                model,
+                min(
+                    not_ready,
+                    key=lambda status: (status.failed, status.retry_after_seconds),
+                ).message,
+            )
         task_counts: dict[InstanceId, int] = {
             instance_id: sum(
                 1
                 for task in self.state.tasks.values()
                 if task.instance_id == instance_id and task.task_status in in_flight
             )
-            for instance_id in of_model
-            if instance_id not in self._deleting_instances
+            for instance_id in ready
         }
-        if not task_counts:
-            raise NoInstanceForModelError(
-                model, INSTANCE_GONE_BEFORE_START if of_model else None
-            )
         return min(task_counts, key=lambda instance_id: task_counts[instance_id])
 
     def _task_for_command(self, command_id: CommandId) -> TaskId | None:
