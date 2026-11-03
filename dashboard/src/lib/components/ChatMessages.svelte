@@ -635,6 +635,33 @@
                     {/if}
                   {/if}
                 </div>
+                {#if message.error}
+                  <!-- Why the reply stopped early; what was streamed stays above -->
+                  <div
+                    class="flex items-start gap-2 text-xs font-mono text-red-400/90 leading-relaxed {message.content ||
+                    message.thinking
+                      ? 'mt-3 pt-3 border-t border-red-500/20'
+                      : ''}"
+                    role="alert"
+                    data-testid="message-error"
+                  >
+                    <svg
+                      class="w-3.5 h-3.5 mt-0.5 flex-shrink-0"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      aria-hidden="true"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+                      />
+                    </svg>
+                    <span>{message.error}</span>
+                  </div>
+                {/if}
               </div>
             {/if}
           </div>
