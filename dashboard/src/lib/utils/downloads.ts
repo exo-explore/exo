@@ -150,3 +150,62 @@ export function getModelDownloadStatus(
   }
   return best;
 }
+
+/** What a device has of a model: all of it, or how many bytes so far. */
+export interface DeviceModelBytes {
+  completed: boolean;
+  downloadedBytes: number;
+}
+
+function inBytes(value: unknown): number {
+  if (typeof value === "number") return value;
+  if (value && typeof value === "object") {
+    const bytes = (value as { inBytes?: unknown }).inBytes;
+    if (typeof bytes === "number") return bytes;
+  }
+  return 0;
+}
+
+/**
+ * Every model's bytes on every device, in one pass over the downloads, for
+ * questions asked about many models at once (e.g. which fit on disk).
+ */
+export function indexModelDownloads(
+  downloadsData: Record<string, unknown[]>,
+): Map<string, Map<string, DeviceModelBytes>> {
+  const index = new Map<string, Map<string, DeviceModelBytes>>();
+  for (const [nodeId, nodeDownloads] of Object.entries(downloadsData)) {
+    if (!Array.isArray(nodeDownloads)) continue;
+    for (const [tag, payload, modelId] of iterNodeDownloads(nodeDownloads)) {
+      let bytes: DeviceModelBytes | null = null;
+      if (tag === "DownloadCompleted") {
+        bytes = { completed: true, downloadedBytes: inBytes(payload.total) };
+      } else if (tag === "DownloadOngoing") {
+        const progress = (payload.downloadProgress ??
+          payload.download_progress) as { downloaded?: unknown } | undefined;
+        bytes = {
+          completed: false,
+          downloadedBytes: inBytes(progress?.downloaded),
+        };
+      } else if (tag === "DownloadPending") {
+        bytes = {
+          completed: false,
+          downloadedBytes: inBytes(payload.downloaded),
+        };
+      }
+      if (!bytes) continue;
+      let devices = index.get(modelId);
+      if (!devices) index.set(modelId, (devices = new Map()));
+      // A device can list a model twice (e.g. two shard layouts): keep the most
+      const known = devices.get(nodeId);
+      if (
+        !known ||
+        (bytes.completed && !known.completed) ||
+        (!known.completed && bytes.downloadedBytes > known.downloadedBytes)
+      ) {
+        devices.set(nodeId, bytes);
+      }
+    }
+  }
+  return index;
+}

@@ -501,6 +501,15 @@
       </svg>
     </button>
   </div>
+  <!-- Why it doesn't fit, when it isn't memory: said, not only on hover -->
+  {#if !group.hasMultipleVariants && group.smallestVariant && getModelFitStatus(group.smallestVariant.id) === "no_disk_space"}
+    {@const note = getModelFitNote?.(group.smallestVariant.id)}
+    {#if note}
+      <p class="px-3 pl-5 pb-2 -mt-1 text-[11px] font-mono text-orange-400/80">
+        {note}
+      </p>
+    {/if}
+  {/if}
 
   <!-- Expanded variants -->
   {#if isExpanded && group.hasMultipleVariants}
@@ -676,6 +685,16 @@
             </svg>
           </button>
         </div>
+        {#if fitStatus === "no_disk_space"}
+          {@const note = getModelFitNote?.(variant.id)}
+          {#if note}
+            <p
+              class="px-3 pl-10 pb-2 -mt-1 text-[11px] font-mono text-orange-400/80"
+            >
+              {note}
+            </p>
+          {/if}
+        {/if}
       {/each}
     </div>
   {/if}

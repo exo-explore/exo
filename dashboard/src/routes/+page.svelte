@@ -95,7 +95,6 @@
   import { tweened } from "svelte/motion";
   import { cubicInOut, cubicOut } from "svelte/easing";
   import { onMount } from "svelte";
-  import { getNodesWithModelDownloaded } from "$lib/utils/downloads";
   import {
     DEVICE_SILENCE_MS,
     checkInstanceHealth,
@@ -112,6 +111,10 @@
     estimateRemainingMs,
     isStalled,
   } from "$lib/utils/download_activity";
+  import {
+    getNodesWithModelDownloaded,
+    indexModelDownloads,
+  } from "$lib/utils/downloads";
   import {
     checkDiskFit,
     describeDiskFit,
@@ -1548,6 +1551,17 @@
     );
   });
 
+  // What each device has of each model, indexed once per /state poll, and
+  // the disk fits worked out from it: a model's fit is asked for several
+  // times per poll (picker, recommendations, sorting)
+  const modelDownloadIndex = $derived(indexModelDownloads(downloadsData));
+  const diskFitMemo = $derived.by(() => {
+    void data;
+    void nodeDiskData;
+    void modelDownloadIndex;
+    return new Map<string, DiskFit>();
+  });
+
   // Whether a model can be downloaded on the devices it would run on: each
   // device downloads it into its models directory (see disk_fit.ts)
   function getModelDiskFit(model: {
@@ -1556,23 +1570,27 @@
     storage_size_megabytes?: number;
   }): DiskFit {
     if (!data) return { fits: true };
-    const downloadedOn = new Set(
-      getNodesWithModelDownloaded(downloadsData, model.id),
-    );
-    return checkDiskFit(
+    const memoized = diskFitMemo.get(model.id);
+    if (memoized) return memoized;
+    const onDevices = modelDownloadIndex.get(model.id);
+    const fit = checkDiskFit(
       getModelSizeGB(model) * 1024 * 1024 * 1024,
       Object.entries(data.nodes).map(([nodeId, node]) => {
         const total =
           node.macmon_info?.memory?.ram_total ?? node.system_info?.memory ?? 0;
         const used = node.macmon_info?.memory?.ram_usage ?? 0;
+        const has = onDevices?.get(nodeId);
         return {
           name: node.friendly_name || nodeId.slice(0, 8),
           freeDiskBytes: nodeDiskData[nodeId]?.available?.inBytes ?? null,
           freeMemoryBytes: total - used,
-          hasModel: downloadedOn.has(nodeId),
+          hasModel: has?.completed ?? false,
+          downloadedBytes: has?.downloadedBytes ?? 0,
         };
       }),
     );
+    diskFitMemo.set(model.id, fit);
+    return fit;
   }
 
   // Why a model doesn't fit, when memory isn't the reason

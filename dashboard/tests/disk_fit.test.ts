@@ -12,11 +12,13 @@ const device = (
   freeDiskGB: number | null,
   freeMemoryGB: number,
   hasModel = false,
+  downloadedGB = 0,
 ): DeviceSpace => ({
   name,
   freeDiskBytes: freeDiskGB === null ? null : freeDiskGB * GB,
   freeMemoryBytes: freeMemoryGB * GB,
   hasModel,
+  downloadedBytes: downloadedGB * GB,
 });
 
 test("one Mac with 108 GB free disk: a 155 GB model doesn't fit", () => {
@@ -66,5 +68,19 @@ test("devices that haven't reported their disk aren't held against a model", () 
   assert.equal(
     checkDiskFit(155 * GB, [device("studio-a", null, 200)]).fits,
     true,
+  );
+});
+
+test("a model partly downloaded needs only the rest", () => {
+  // Hy3, 155 GB: 80 GB in, so 75 GB more; 108 GB free
+  assert.equal(
+    checkDiskFit(155 * GB, [device("studio-a", 108, 200, false, 80)]).fits,
+    true,
+  );
+  // 30 GB in, 125 GB more: doesn't fit, and says how much more
+  const fit = checkDiskFit(155 * GB, [device("studio-a", 108, 200, false, 30)]);
+  assert.equal(
+    describeDiskFit(fit),
+    "Not enough disk space: needs 125 GB more, 108 GB free on studio-a",
   );
 });

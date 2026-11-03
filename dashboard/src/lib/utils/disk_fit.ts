@@ -2,12 +2,13 @@
  * Whether a model can be downloaded where it would run.
  *
  * Fitting in memory isn't enough: each device the model runs on downloads
- * it first, into its models directory, and in practice each one downloads
- * all of it. So the model fits on disk when the devices that have room for
- * it on disk (or have it already) have enough free memory between them to
- * run it. /state reports each device's free space in its models directory
- * (nodeDisk); a device that hasn't reported it yet isn't held against the
- * model.
+ * it first, into its models directory, and each one downloads all of it
+ * (download_utils.resolve_allow_patterns). So the model fits on disk when the
+ * devices that have room for what they still need of it have enough free
+ * memory between them to run it. A device that has part of it already needs
+ * only the rest, as the backend's own check does. /state reports each
+ * device's free space in its models directory (nodeDisk); a device that
+ * hasn't reported it yet isn't held against the model.
  */
 
 export interface DeviceSpace {
@@ -18,6 +19,8 @@ export interface DeviceSpace {
   freeMemoryBytes: number;
   /** The model is downloaded there already */
   hasModel: boolean;
+  /** How much of it is there already (a paused or running download) */
+  downloadedBytes: number;
 }
 
 export type DiskFit =
@@ -28,6 +31,8 @@ export type DiskFit =
       device: string;
       neededBytes: number;
       freeBytes: number;
+      /** It has part of the model already: neededBytes is the rest */
+      partly: boolean;
     };
 
 export function checkDiskFit(
@@ -35,10 +40,12 @@ export function checkDiskFit(
   devices: DeviceSpace[],
 ): DiskFit {
   if (modelBytes <= 0 || devices.length === 0) return { fits: true };
+  const needs = (device: DeviceSpace) =>
+    device.hasModel
+      ? 0
+      : Math.max(0, modelBytes - Math.max(device.downloadedBytes, 0));
   const hasRoom = (device: DeviceSpace) =>
-    device.hasModel ||
-    device.freeDiskBytes === null ||
-    device.freeDiskBytes >= modelBytes;
+    device.freeDiskBytes === null || device.freeDiskBytes >= needs(device);
   const memoryWithRoom = devices
     .filter(hasRoom)
     .reduce((sum, device) => sum + Math.max(device.freeMemoryBytes, 0), 0);
@@ -51,8 +58,9 @@ export function checkDiskFit(
   return {
     fits: false,
     device: short.name,
-    neededBytes: modelBytes,
+    neededBytes: needs(short),
     freeBytes: short.freeDiskBytes,
+    partly: short.downloadedBytes > 0,
   };
 }
 
@@ -64,5 +72,6 @@ function gb(bytes: number): string {
 /** e.g. "Not enough disk space: needs 155 GB, 108 GB free on studio-a" */
 export function describeDiskFit(fit: DiskFit): string | null {
   if (fit.fits) return null;
-  return `Not enough disk space: needs ${gb(fit.neededBytes)}, ${gb(fit.freeBytes)} free on ${fit.device}`;
+  const more = fit.partly ? " more" : "";
+  return `Not enough disk space: needs ${gb(fit.neededBytes)}${more}, ${gb(fit.freeBytes)} free on ${fit.device}`;
 }
