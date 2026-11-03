@@ -159,9 +159,11 @@ def _not_enough_memory(
     reported = [cycle for cycle in cycles if all(node in node_memory for node in cycle)]
     if not reported:
         return "Waiting for the nodes to report their memory"
-    most_free = max(
-        sum((node_memory[node].ram_available for node in cycle), start=Memory())
-        for cycle in reported
+    free = {
+        node_id: usage.ram_available.in_bytes for node_id, usage in node_memory.items()
+    }
+    most_free = Memory.from_bytes(
+        max(sum(free[node] for node in cycle) for cycle in reported)
     )
     return (
         f"Not enough memory: {request.model_card.model_id} needs "
