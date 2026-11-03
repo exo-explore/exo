@@ -429,6 +429,14 @@ class ResponseUsage(BaseModel, frozen=True):
     total_tokens: int
 
 
+class ResponseError(BaseModel, frozen=True):
+    """Why a response failed. code is exo's error code (see exo.shared.request_errors), or
+    "server_error"."""
+
+    code: str
+    message: str
+
+
 class ResponsesResponse(BaseModel, frozen=True):
     """Response body for OpenAI Responses API."""
 
@@ -440,6 +448,7 @@ class ResponsesResponse(BaseModel, frozen=True):
     output: list[ResponseItem]
     output_text: str
     usage: ResponseUsage | None = None
+    error: ResponseError | None = None
 
 
 # Streaming event types
@@ -606,6 +615,14 @@ class ResponseCompletedEvent(BaseModel, frozen=True):
     response: ResponsesResponse
 
 
+class ResponseFailedEvent(BaseModel, frozen=True):
+    """Event sent instead of response.completed when the generation fails."""
+
+    type: Literal["response.failed"] = "response.failed"
+    sequence_number: int
+    response: ResponsesResponse
+
+
 ResponsesStreamEvent = (
     ResponseCreatedEvent
     | ResponseInProgressEvent
@@ -622,4 +639,5 @@ ResponsesStreamEvent = (
     | ResponseReasoningSummaryTextDoneEvent
     | ResponseReasoningSummaryPartDoneEvent
     | ResponseCompletedEvent
+    | ResponseFailedEvent
 )

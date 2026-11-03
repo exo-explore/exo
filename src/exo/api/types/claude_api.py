@@ -231,6 +231,22 @@ class ClaudeMessageStopEvent(BaseModel, frozen=True):
     type: Literal["message_stop"] = "message_stop"
 
 
+class ClaudeErrorDetail(BaseModel, frozen=True):
+    """The error in an error event. code is exo's, for a failed generation: see
+    exo.shared.request_errors."""
+
+    type: str
+    message: str
+    code: str | None = None
+
+
+class ClaudeErrorEvent(BaseModel, frozen=True):
+    """Event sent instead of the rest of the stream when the generation fails."""
+
+    type: Literal["error"] = "error"
+    error: ClaudeErrorDetail
+
+
 ClaudeStreamEvent = (
     ClaudeMessageStartEvent
     | ClaudeContentBlockStartEvent
@@ -238,4 +254,5 @@ ClaudeStreamEvent = (
     | ClaudeContentBlockStopEvent
     | ClaudeMessageDeltaEvent
     | ClaudeMessageStopEvent
+    | ClaudeErrorEvent
 )

@@ -164,7 +164,12 @@ from exo.shared.models.model_cards import (
     ModelId,
     ModelTask,
 )
-from exo.shared.request_errors import INSTANCE_GONE_BEFORE_START
+from exo.shared.request_errors import (
+    DEVICE_LEFT,
+    INSTANCE_GONE_BEFORE_START,
+    INTERRUPTED,
+    MODEL_STOPPED,
+)
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.chunks import (
     ErrorChunk,
@@ -230,9 +235,6 @@ from exo.utils.task_group import TaskGroup
 # Where that log used to be written; removed when the API starts
 _OLD_API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
 ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
-_GENERATION_INTERRUPTED_MESSAGE = (
-    "The model instance serving this request stopped before it finished"
-)
 
 
 # How long to wait for the cluster to accept a chat request before sending it again. A busy
@@ -847,7 +849,9 @@ class API:
                     if command_id not in self._cancelled_command_ids:
                         yield ErrorChunk(
                             model=text_generation.task_params.model,
-                            error_message=_GENERATION_INTERRUPTED_MESSAGE,
+                            error_message=self._stream_end_reasons.get(
+                                command_id, INTERRUPTED
+                            ),
                         )
 
         except anyio.get_cancelled_exc_class():
@@ -860,6 +864,7 @@ class API:
             if command_id in self._text_generation_queues:
                 del self._text_generation_queues[command_id]
             self._cancelled_command_ids.discard(command_id)
+            self._stream_end_reasons.pop(command_id, None)
 
     async def _collect_text_generation_with_stats(
         self, text_generation: TextGeneration
@@ -1253,7 +1258,9 @@ class API:
                 else:
                     # The stream was closed before every image was generated
                     if command_id not in self._cancelled_command_ids:
-                        yield _image_stream_error_event(_GENERATION_INTERRUPTED_MESSAGE)
+                        yield _image_stream_error_event(
+                            self._stream_end_reasons.get(command_id, INTERRUPTED)
+                        )
                         yield "data: [DONE]\n\n"
 
         except anyio.get_cancelled_exc_class():
@@ -1266,6 +1273,7 @@ class API:
             if command_id in self._image_generation_queues:
                 del self._image_generation_queues[command_id]
             self._cancelled_command_ids.discard(command_id)
+            self._stream_end_reasons.pop(command_id, None)
 
     async def _collect_image_chunks(
         self,
@@ -1325,7 +1333,7 @@ class API:
                             status_code=500,
                             detail="Command cancelled."
                             if command_id in self._cancelled_command_ids
-                            else _GENERATION_INTERRUPTED_MESSAGE,
+                            else self._stream_end_reasons.get(command_id, INTERRUPTED),
                         )
 
             images: list[ImageData] = []
@@ -1359,6 +1367,7 @@ class API:
             if command_id in self._image_generation_queues:
                 del self._image_generation_queues[command_id]
             self._cancelled_command_ids.discard(command_id)
+            self._stream_end_reasons.pop(command_id, None)
 
     async def _collect_image_generation(
         self,
@@ -2045,6 +2054,7 @@ class API:
                     self._apply_snapshot(i_event)
                     continue
                 self._recent_events.append(i_event.event)
+                previous_state = self.state
                 self.state = apply(self.state, i_event)
                 event = i_event.event
 
@@ -2081,7 +2091,12 @@ class API:
                         except (BrokenResourceError, ClosedResourceError):
                             self._text_generation_queues.pop(event.command_id, None)
                 if isinstance(event, InstanceDeleted):
-                    self._close_streams_for_instance(event.instance_id)
+                    self._close_streams_for_instance(
+                        event.instance_id,
+                        self._why_deleted(
+                            previous_state.instances.get(event.instance_id)
+                        ),
+                    )
                 if isinstance(event, TracesMerged):
                     self._save_merged_trace(event)
 
@@ -2126,7 +2141,24 @@ class API:
             if image_queue is not None:
                 await image_queue.send(error)
 
-    def _close_streams_for_instance(self, instance_id: InstanceId) -> None:
+    def _why_deleted(self, instance: Instance | None) -> str:
+        """Why an instance was deleted, as its requests are told. The master deletes an
+        instance as soon as one of its nodes is gone, after removing the node from the
+        topology if it timed out, so a node missing from the topology now means it left."""
+        if instance is None:
+            return INTERRUPTED
+        if any(
+            not self.state.topology.contains_node(node_id)
+            for node_id in instance.shard_assignments.node_to_runner
+        ):
+            return DEVICE_LEFT
+        return MODEL_STOPPED
+
+    def _close_streams_for_instance(
+        self,
+        instance_id: InstanceId,
+        reason: str = INTERRUPTED,
+    ) -> None:
         """Close any active generation streams for commands running on the given instance."""
         for task in self.state.tasks.values():
             if task.instance_id != instance_id:
@@ -2136,8 +2168,10 @@ class API:
             ):
                 continue
             if sender := self._text_generation_queues.pop(task.command_id, None):
+                self._stream_end_reasons[task.command_id] = reason
                 sender.close()
             if sender := self._image_generation_queues.pop(task.command_id, None):
+                self._stream_end_reasons[task.command_id] = reason
                 sender.close()
 
     def _save_merged_trace(self, event: TracesMerged) -> None:
@@ -2172,6 +2206,12 @@ class API:
             removed = self._image_store.cleanup_expired()
             if removed > 0:
                 logger.debug(f"Cleaned up {removed} expired images")
+
+    @functools.cached_property
+    def _stream_end_reasons(self) -> dict[CommandId, str]:
+        """Why the API closed a request's stream before its generation finished, when it
+        knows: the message the request ends with."""
+        return {}
 
     @functools.cached_property
     def _awaiting_acceptance(self) -> dict[CommandId, anyio.Event]:

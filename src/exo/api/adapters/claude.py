@@ -6,12 +6,15 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from exo.api.adapters.chat_completions import fetch_image_url
+from exo.api.collected_response import GenerationFailedError
 from exo.api.types import FinishReason, Usage
 from exo.api.types.claude_api import (
     ClaudeContentBlock,
     ClaudeContentBlockDeltaEvent,
     ClaudeContentBlockStartEvent,
     ClaudeContentBlockStopEvent,
+    ClaudeErrorDetail,
+    ClaudeErrorEvent,
     ClaudeImageBlock,
     ClaudeInputJsonDelta,
     ClaudeMessageDelta,
@@ -32,6 +35,7 @@ from exo.api.types.claude_api import (
     ClaudeUsage,
 )
 from exo.shared.logging import logger
+from exo.shared.request_errors import generation_error_code
 from exo.shared.types.chunks import (
     ErrorChunk,
     PrefillProgressChunk,
@@ -274,14 +278,14 @@ async def collect_claude_response(
     tool_use_blocks: list[ClaudeToolUseBlock] = []
     stop_reason: ClaudeStopReason | None = None
     last_usage: Usage | None = None
-    error_message: str | None = None
+    error: ErrorChunk | None = None
 
     async for chunk in chunk_stream:
         if isinstance(chunk, PrefillProgressChunk):
             continue
 
         if isinstance(chunk, ErrorChunk):
-            error_message = chunk.error_message or "Internal server error"
+            error = chunk
             break
 
         last_usage = chunk.usage or last_usage
@@ -306,8 +310,8 @@ async def collect_claude_response(
         if chunk.finish_reason is not None:
             stop_reason = finish_reason_to_claude_stop_reason(chunk.finish_reason)
 
-    if error_message is not None:
-        raise ValueError(error_message)
+    if error is not None:
+        raise GenerationFailedError(error.error_message or "Internal server error")
 
     combined_text = "".join(text_parts)
     combined_thinking = "".join(thinking_parts)
@@ -376,8 +380,16 @@ async def generate_claude_stream(
             continue
 
         if isinstance(chunk, ErrorChunk):
-            # Close text block and bail
-            break
+            # The stream ends with the error, as a Claude Messages stream does: no message_stop
+            error_event = ClaudeErrorEvent(
+                error=ClaudeErrorDetail(
+                    type="api_error",
+                    message=chunk.error_message,
+                    code=generation_error_code(chunk.error_message),
+                )
+            )
+            yield f"event: error\ndata: {error_event.model_dump_json()}\n\n"
+            return
 
         last_usage = chunk.usage or last_usage
 

@@ -6,6 +6,7 @@ import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from exo.api.collected_response import GenerationFailedError
 from exo.api.types import (
     ChatCompletionChoice,
     ChatCompletionMessage,
@@ -23,6 +24,7 @@ from exo.api.types import (
     Usage,
 )
 from exo.download.download_utils import create_http_session
+from exo.shared.request_errors import generation_error_code
 from exo.shared.types.chunks import (
     ErrorChunk,
     PrefillProgressChunk,
@@ -235,7 +237,7 @@ async def generate_chat_stream(
                     error=ErrorInfo(
                         message=chunk.error_message or "Internal server error",
                         type="InternalServerError",
-                        code=500,
+                        code=generation_error_code(chunk.error_message) or 500,
                     )
                 )
                 yield f"data: {error_response.model_dump_json(exclude_none=True)}\n\n"
@@ -307,7 +309,7 @@ async def collect_chat_response(
     logprobs_content: list[LogprobsContentItem] = []
     model: str | None = None
     finish_reason: FinishReason | None = None
-    error_message: str | None = None
+    error: ErrorChunk | None = None
     last_usage: Usage | None = None
 
     async for chunk in chunk_stream:
@@ -316,7 +318,7 @@ async def collect_chat_response(
                 continue
 
             case ErrorChunk():
-                error_message = chunk.error_message or "Internal server error"
+                error = chunk
                 break
 
             case TokenChunk():
@@ -352,8 +354,8 @@ async def collect_chat_response(
                 )
                 finish_reason = chunk.finish_reason
 
-    if error_message is not None:
-        raise ValueError(error_message)
+    if error is not None:
+        raise GenerationFailedError(error.error_message or "Internal server error")
 
     combined_text = "".join(text_parts)
     combined_thinking = "".join(thinking_parts) if thinking_parts else None

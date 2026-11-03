@@ -1,8 +1,104 @@
-"""What a request is told when it ends with an error, where several parts of exo end requests
-the same way."""
+"""What a request is told when it ends with an error, and the stable code that says why.
 
+A failed request ends with one short sentence for the user; the details (a runner's traceback,
+say) stay in the node's log. API clients get a stable code with it, which they can act on
+without parsing the sentence. The code isn't sent between nodes: it is looked up from the
+sentence where the API answers the request. An ErrorChunk with a field older builds don't
+know would be rejected by them, and a node that rejects an event stalls until it next catches
+up from a snapshot of the cluster's state.
+"""
+
+import re
+from typing import Literal
+
+# Why a request ended with an error. Stable: clients match them.
+GenerationErrorCode = Literal[
+    # A device serving the model disconnected or left the cluster
+    "device_left",
+    # The model was stopped (its instance deleted) while the request was in flight
+    "model_stopped",
+    # A device serving the model ran out of GPU memory
+    "out_of_memory",
+    # The GPU of a device serving the model timed out
+    "gpu_timeout",
+    # The model stopped making progress and is being restarted
+    "model_stalled",
+    # The model's process failed in some other way
+    "model_failed",
+    # The request's stream ended for another reason (such as a change of master)
+    "interrupted",
+]
+
+DEVICE_DISCONNECTED = (
+    "A device serving this model disconnected before the reply finished."
+)
+DEVICE_LEFT = "A device serving this model left the cluster before the reply finished."
+MODEL_STOPPED = "The model was stopped before the reply finished."
 # A request sent to an instance that was deleted (the model was stopped, or a node was lost)
 # just before the request could start
 INSTANCE_GONE_BEFORE_START = (
     "The model instance was shut down before this request could start."
 )
+OUT_OF_MEMORY = (
+    "A device serving this model ran out of GPU memory before the reply finished."
+)
+GPU_TIMEOUT = (
+    "The GPU of a device serving this model timed out before the reply finished."
+)
+MODEL_STALLED = (
+    "The model stopped responding before the reply finished and is being restarted."
+)
+MODEL_FAILED = "The model stopped unexpectedly before the reply finished."
+# Followed by what the model's own error says
+MODEL_FAILED_BECAUSE = "The model stopped before the reply finished: "
+INTERRUPTED = "The model instance serving this request stopped before it finished"
+# Followed by the model's name: the master had no instance of the model for a request that the
+# API had sent because it saw one, so it had just been deleted
+NO_INSTANCE_FOR_MODEL = "No instance found for model "
+
+_CODES: dict[str, GenerationErrorCode] = {
+    DEVICE_DISCONNECTED: "device_left",
+    DEVICE_LEFT: "device_left",
+    MODEL_STOPPED: "model_stopped",
+    INSTANCE_GONE_BEFORE_START: "model_stopped",
+    OUT_OF_MEMORY: "out_of_memory",
+    GPU_TIMEOUT: "gpu_timeout",
+    MODEL_STALLED: "model_stalled",
+    MODEL_FAILED: "model_failed",
+    INTERRUPTED: "interrupted",
+}
+_PREFIX_CODES: tuple[tuple[str, GenerationErrorCode], ...] = (
+    (MODEL_FAILED_BECAUSE, "model_failed"),
+    (NO_INSTANCE_FOR_MODEL, "model_stopped"),
+)
+
+
+def generation_error_code(message: str) -> GenerationErrorCode | None:
+    """The code of a request's error message, None for a message exo doesn't know"""
+    if (code := _CODES.get(message)) is not None:
+        return code
+    return next(
+        (code for prefix, code in _PREFIX_CODES if message.startswith(prefix)), None
+    )
+
+
+# A file path: its folders (which can name the user) are left out of what the user is told
+_PATH = re.compile(r"(?<![\w:/.~])~?(?:/[^\s/'\"`:,;()]+)+/?")
+# The longest error detail passed on to the user
+_MAX_DETAIL = 160
+
+
+def user_facing_detail(error: str) -> str:
+    """An error's first line, fit to tell a user: at most 160 characters, and with only the
+    file name of any path in it."""
+    line = next((line.strip() for line in error.splitlines() if line.strip()), "")
+    line = _PATH.sub(_file_name, line)
+    if len(line) > _MAX_DETAIL:
+        line = line[: _MAX_DETAIL - 1].rstrip() + "…"
+    return line
+
+
+def _file_name(path: re.Match[str]) -> str:
+    parts = [part for part in path.group(0).split("/") if part]
+    # A single part ("/v1", say) names no folder; a longer path is cut to its file name
+    return path.group(0) if len(parts) <= 1 else parts[-1]

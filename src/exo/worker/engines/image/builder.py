@@ -47,6 +47,7 @@ from exo.worker.engines.image.generate import (
 from exo.worker.engines.mlx.utils_mlx import (
     initialize_mlx,
 )
+from exo.worker.runner.failures import describe_failure
 
 
 def _is_primary_output_node(shard_metadata: ShardMetadata) -> bool:
@@ -211,7 +212,7 @@ class ImageEngine(Engine):
                     ErrorChunk(
                         model=self.shard_metadata.model_card.model_id,
                         finish_reason="error",
-                        error_message=str(e),
+                        error_message=describe_failure(e),
                     ),
                 )
             raise

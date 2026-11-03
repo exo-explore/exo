@@ -300,6 +300,27 @@ data: [DONE]
 **Cancellation:**
 You can cancel an active generation by closing the HTTP connection. The server detects the disconnection and stops processing.
 
+**Errors during generation:**
+A generation that fails after it started ends with an error event in a stream, or a `500` response otherwise. The message is one short sentence for the user (the details are in the node's log), and `code` says why. The Claude Messages and Responses endpoints report it their own way: a stream ends with an `error` event (Claude, with the code in `error.code`) or a `response.failed` event (Responses, with the code in `response.error.code`).
+
+```
+data: {"error":{"message":"A device serving this model disconnected before the reply finished.","type":"InternalServerError","code":"device_left"}}
+
+data: [DONE]
+```
+
+| `code` | Meaning |
+|---|---|
+| `device_left` | A device serving the model disconnected or left the cluster |
+| `model_stopped` | The model was stopped while the request was in flight |
+| `out_of_memory` | A device serving the model ran out of GPU memory |
+| `gpu_timeout` | The GPU of a device serving the model timed out |
+| `model_stalled` | The model stopped making progress and is being restarted |
+| `model_failed` | The model's process failed in some other way |
+| `interrupted` | The request ended for another reason, such as a change in the cluster |
+
+Errors without a known cause have the HTTP status (`500`) as their `code`.
+
 ### Claude Messages API
 
 **POST** `/v1/messages`

@@ -32,6 +32,7 @@ class TokenChunk(BaseChunk):
 
 
 class ErrorChunk(BaseChunk):
+    # One short sentence for the user (see exo.shared.request_errors); details go to the logs
     error_message: str
     finish_reason: Literal["error"] = "error"
 

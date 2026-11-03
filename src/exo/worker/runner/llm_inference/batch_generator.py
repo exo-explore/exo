@@ -45,6 +45,7 @@ from exo.worker.engines.mlx.utils_mlx import (
 )
 from exo.worker.engines.mlx.vision import VisionProcessor
 from exo.worker.runner.bootstrap import logger
+from exo.worker.runner.failures import describe_failure
 
 from .model_output_parsers import apply_all_parsers, map_responses_to_chunks
 from .tool_parsers import ToolParser
@@ -245,7 +246,7 @@ class SequentialGenerator(Engine):
                     chunk=ErrorChunk(
                         model=self.model_id,
                         finish_reason="error",
-                        error_message=str(e),
+                        error_message=describe_failure(e),
                     ),
                 )
             )
@@ -520,7 +521,7 @@ class BatchGenerator(Engine):
                     chunk=ErrorChunk(
                         model=self.model_id,
                         finish_reason="error",
-                        error_message=str(e),
+                        error_message=describe_failure(e),
                     ),
                 )
             )

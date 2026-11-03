@@ -5,6 +5,15 @@ from starlette.responses import StreamingResponse
 from starlette.types import Send
 
 from exo.api.types import ErrorInfo, ErrorResponse
+from exo.shared.request_errors import GenerationErrorCode, generation_error_code
+
+
+class GenerationFailedError(ValueError):
+    """A generation that ended with an error, and the stable code saying why"""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.code: GenerationErrorCode | None = generation_error_code(message)
 
 
 class CollectedResponse(StreamingResponse):
@@ -21,11 +30,12 @@ class CollectedResponse(StreamingResponse):
             body = "".join([chunk async for chunk in self._collect()])
         except ValueError as error:
             self.status_code = HTTPStatus.INTERNAL_SERVER_ERROR
+            code = error.code if isinstance(error, GenerationFailedError) else None
             body = ErrorResponse(
                 error=ErrorInfo(
                     message=str(error),
                     type=HTTPStatus.INTERNAL_SERVER_ERROR.phrase,
-                    code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                    code=code or HTTPStatus.INTERNAL_SERVER_ERROR,
                 )
             ).model_dump_json()
         content = body.encode(self.charset)
