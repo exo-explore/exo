@@ -191,8 +191,12 @@
     }));
   });
 
-  // Dismissed RDMA warnings stay dismissed across reloads (in this browser)
-  const RDMA_NOT_ENABLED_DISMISSED_KEY = "exo-rdma-not-enabled-dismissed";
+  // Dismissed RDMA warnings stay dismissed across reloads (in this browser).
+  // A new key for "RDMA not enabled": the old one was set by dismissing the
+  // warning that showed for any Thunderbolt hardware, and must not hide the
+  // one for devices actually cabled with Thunderbolt 5.
+  const RDMA_NOT_ENABLED_DISMISSED_KEY =
+    "exo-rdma-not-enabled-thunderbolt-link-dismissed";
   const RDMA_INCOMPATIBLE_PORT_DISMISSED_KEY =
     "exo-rdma-incompatible-port-dismissed";
 
