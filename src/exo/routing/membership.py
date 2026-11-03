@@ -7,8 +7,9 @@ This module keeps the latest state it reported for the rest of the node to read 
 isn't part of the replicated state: two nodes may disagree for a moment.
 
 It also tells the networking layer what only exo knows, from the cluster's events as this node
-applies them: that the coordinator removed a node (NodeTimedOut, which is also how a quitting
-node's departure arrives), so that the quorum read stops counting it.
+applies them: that exo on a node reported (which shows it isn't wedged), that the cluster's
+state lists a node, and that the coordinator removed a node (NodeTimedOut, which is also how a
+quitting node's departure arrives), so that the quorum read stops counting it.
 """
 
 from collections.abc import Sequence
@@ -21,7 +22,14 @@ from loguru import logger
 
 from exo.routing.event_router import NodeEventReceiver
 from exo.shared.types.common import NodeId
-from exo.shared.types.events import IndexedEvent, NodeTimedOut
+from exo.shared.types.events import (
+    IndexedEvent,
+    NodeGatheredInfo,
+    NodeTimedOut,
+    StateSnapshot,
+)
+from exo.shared.types.state import State
+from exo.shared.types.worker.instances import Instance
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.pydantic_ext import FrozenModel
 
@@ -94,6 +102,8 @@ class MembershipChange(FrozenModel):
     previous: MemberState | None
     current: MemberState
     reason: LossReason | None
+    # Why it wasn't Alive before, if it wasn't
+    previous_reason: LossReason | None = None
 
     @property
     def became_alive(self) -> bool:
@@ -147,11 +157,43 @@ class Reachability(Protocol):
         ...
 
 
+class MembershipReader(Reachability, Protocol):
+    """Reachability, and the whole view with the quorum read: what the coordinator decides
+    removals on, and what GET /membership shows"""
+
+    def view(self) -> MembershipView:
+        """Every node this node knows of, and the quorum read, now"""
+        ...
+
+
+def instance_is_reachable(reachability: Reachability, instance: Instance) -> bool:
+    """Whether this node reaches every node the instance runs on"""
+    return all(
+        reachability.is_reachable(node)
+        for node in instance.shard_assignments.node_to_runner
+    )
+
+
+def listed_nodes(state: State) -> set[NodeId]:
+    """The nodes the cluster's state lists: those that reported, and those in its topology"""
+    return set(state.last_seen) | set(state.topology.list_nodes())
+
+
 class NetworkingMembership(Protocol):
     """The networking layer's membership, as exo reads it and tells it what only exo knows (the
     router, over exo_rs.NetworkingHandle)"""
 
     def members(self) -> exo_rs.MembershipSnapshot: ...
+
+    def heard_from(self, node: NodeId) -> None:
+        """exo on the node reported: the one sign that a node whose transport is up isn't
+        wedged"""
+        ...
+
+    def listed(self, node: NodeId) -> None:
+        """The cluster's state lists the node: one never seen here is Suspect from now, and Gone
+        after the grace unless it shows up"""
+        ...
 
     def forget(self, node: NodeId) -> None:
         """The coordinator removed the node: it stops counting in the quorum (unless this node
@@ -160,7 +202,7 @@ class NetworkingMembership(Protocol):
 
 
 @final
-class Membership(Reachability):
+class Membership(MembershipReader):
     """The latest state of each node, as this node's networking reported it"""
 
     def __init__(
@@ -222,16 +264,25 @@ class Membership(Reachability):
         return self.view().quorum
 
     async def _follow_cluster(self) -> None:
-        """Tells the networking layer which nodes the coordinator removed, as this node applies
-        the cluster's events. Every node does, so every node's quorum read leaves them out: a
-        node that restarts comes back under a new id, and its old one must stop counting."""
+        """Tells the networking layer what the cluster's events say about nodes, as this node
+        applies them: which nodes the coordinator removed (every node does this, so every
+        node's quorum read leaves them out: a node that restarts comes back under a new id, and
+        its old one must stop counting), which nodes report (reports reach the coordinator
+        from each node, and the other nodes through the coordinator), and which nodes the
+        cluster's state lists."""
         with self._cluster_events as events:
             async for item in events:
                 match item:
+                    case IndexedEvent(event=NodeGatheredInfo(node_id=node_id)):
+                        self._networking.listed(node_id)
+                        self._networking.heard_from(node_id)
                     case IndexedEvent(event=NodeTimedOut(node_id=node_id)):
                         self._networking.forget(node_id)
-                    case _:
+                    case IndexedEvent():
                         pass
+                    case StateSnapshot(state=state):
+                        for node_id in listed_nodes(state):
+                            self._networking.listed(node_id)
 
     async def _update(self, member: Member) -> None:
         previous = self._latest.get(member.node_id)
@@ -241,6 +292,7 @@ class Membership(Reachability):
             previous=previous.state if previous is not None else None,
             current=member.state,
             reason=member.reason,
+            previous_reason=previous.reason if previous is not None else None,
         )
         logger.debug(f"Membership: {change}")
         if change.left_alive:

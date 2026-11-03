@@ -215,6 +215,14 @@ class Router:
         """This node's view of the cluster's membership now, from the networking layer"""
         return self._net.members()
 
+    def heard_from(self, node: NodeId) -> None:
+        """Tells the networking layer's membership that exo on `node` reported"""
+        self._net.heard_from(node)
+
+    def listed(self, node: NodeId) -> None:
+        """Tells the networking layer's membership that the cluster's state lists `node`"""
+        self._net.listed(node)
+
     def forget(self, node: NodeId) -> None:
         """The coordinator removed `node`: the networking layer's quorum read stops counting it"""
         self._net.forget(node)

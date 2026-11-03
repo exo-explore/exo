@@ -20,10 +20,18 @@ class FakeNetworking(NetworkingMembership):
         self, snapshot: Callable[[], MembershipSnapshot] = no_snapshot
     ) -> None:
         self._snapshot = snapshot
+        self.heard: list[NodeId] = []
+        self.listed_nodes: list[NodeId] = []
         self.forgotten: list[NodeId] = []
 
     def members(self) -> MembershipSnapshot:
         return self._snapshot()
+
+    def heard_from(self, node: NodeId) -> None:
+        self.heard.append(node)
+
+    def listed(self, node: NodeId) -> None:
+        self.listed_nodes.append(node)
 
     def forget(self, node: NodeId) -> None:
         self.forgotten.append(node)

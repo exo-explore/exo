@@ -85,6 +85,35 @@ def test_this_nodes_own_states_are_mapped_too(
     assert connection_change(change(previous, current, node=ME)) == expected
 
 
+@pytest.mark.parametrize(
+    ("previous", "previous_reason", "current", "reason"),
+    [
+        # Its transport is up and exo on it stopped reporting: no connection changed
+        ("Alive", None, "Suspect", "Wedged"),
+        ("Suspect", "Wedged", "Gone", "Wedged"),
+        # ... and it reported again
+        ("Suspect", "Wedged", "Alive", None),
+        ("Gone", "Wedged", "Alive", None),
+    ],
+)
+def test_a_node_wedged_or_back_from_it_starts_no_round(
+    previous: MemberState,
+    previous_reason: LossReason | None,
+    current: MemberState,
+    reason: LossReason | None,
+) -> None:
+    """Elections never saw a wedged node (its token stays), and keep their own silence
+    timeout for a wedged master: membership doesn't change that"""
+    wedged = MembershipChange(
+        node_id=PEER,
+        previous=previous,
+        current=current,
+        reason=reason,
+        previous_reason=previous_reason,
+    )
+    assert connection_change(wedged) is None
+
+
 @pytest.fixture(autouse=True)
 def fast_timings(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("exo.shared.election.DEFAULT_ELECTION_TIMEOUT", 0.1)
