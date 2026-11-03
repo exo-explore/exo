@@ -113,6 +113,9 @@ class DownloadCoordinator:
     _locks: Locks = field(init=False, default_factory=Locks)
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
     _stopped: anyio.Event = field(init=False, default_factory=anyio.Event)
+    # Cleared once the node announces it is leaving: a status applied after its departure
+    # would list it in the cluster's downloads again
+    _reporting: bool = field(init=False, default=True)
 
     async def run(self) -> None:
         logger.info(
@@ -132,6 +135,10 @@ class DownloadCoordinator:
     async def shutdown(self) -> None:
         self._tg.cancel_tasks()
         await self._stopped.wait()
+
+    def stop_reporting(self) -> None:
+        """Stop sending download statuses: this node is leaving the cluster."""
+        self._reporting = False
 
     async def reannounce(self) -> None:
         """Send every status again, e.g. to a new master whose state may lack them."""
@@ -391,6 +398,8 @@ class DownloadCoordinator:
         await self._send(status)
 
     async def _send(self, status: DownloadProgress) -> None:
+        if not self._reporting:
+            return
         try:
             await self.event_sender.send(NodeDownloadProgress(download_progress=status))
         except (BrokenResourceError, ClosedResourceError):

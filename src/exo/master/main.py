@@ -249,6 +249,9 @@ class Master:
         # Since when the master has been able to hear nodes, and when it last checked on them
         self._listening_since = time.monotonic()
         self._last_check: float | None = None
+        # Set when a node is removed, so its instances are deleted at once rather than at the
+        # next check (created by the plan loop, which waits on it)
+        self._node_removed: anyio.Event | None = None
         self._processed_commands: set[CommandId] = set()
         self._processed_order: deque[CommandId] = deque()
         self._expected_ranks: dict[TaskId, set[int]] = {}
@@ -610,8 +613,10 @@ class Master:
     # These plan loops are the cracks showing in our event sourcing architecture - more things could be commands
     async def _plan(self) -> None:
         while True:
+            self._node_removed = anyio.Event()
             await self._remove_silent_nodes_and_broken_instances()
-            await anyio.sleep(PLAN_INTERVAL)
+            with anyio.move_on_after(PLAN_INTERVAL):
+                await self._node_removed.wait()
 
     async def _remove_silent_nodes_and_broken_instances(self) -> None:
         check = time.monotonic()
@@ -658,6 +663,14 @@ class Master:
             if k in self.state.instances
         }
 
+    def _on_node_removed(self, node_id: NodeId) -> None:
+        if node_id not in self._removing_nodes:
+            # Not one this master timed out: the node announced it was leaving
+            logger.info(f"Node {node_id} left the cluster")
+        # Delete the instances it was part of now, not at the next check
+        if self._node_removed is not None:
+            self._node_removed.set()
+
     @staticmethod
     def _resend_due[K](sent: dict[K, float], key: K) -> bool:
         """Whether to send a removal for key: not sent yet, or sent a while ago and still
@@ -701,6 +714,8 @@ class Master:
 
                     self._remember(event)
                     await self._send_indexed_event(indexed)
+                    if isinstance(event, NodeTimedOut):
+                        self._on_node_removed(event.node_id)
 
     def _remember(self, event: Event) -> None:
         self._recent_events.append(event)
