@@ -164,6 +164,7 @@ from exo.shared.models.model_cards import (
     ModelId,
     ModelTask,
 )
+from exo.shared.request_errors import INSTANCE_GONE_BEFORE_START
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.chunks import (
     ErrorChunk,
@@ -2051,6 +2052,15 @@ class API:
                     event.task, TextGenerationTask
                 ):
                     self._mark_accepted(event.task.command_id)
+                if (
+                    isinstance(event, TaskCreated)
+                    and isinstance(
+                        event.task,
+                        (TextGenerationTask, ImageGenerationTask, ImageEditsTask),
+                    )
+                    and event.task_id not in self.state.tasks
+                ):
+                    await self._end_request_not_started(event.task)
                 if isinstance(event, ChunkGenerated):
                     self._mark_accepted(event.command_id)
                     if queue := self._image_generation_queues.get(
@@ -2091,6 +2101,30 @@ class API:
             sender.close()
         self._text_generation_queues.clear()
         self._image_generation_queues.clear()
+
+    async def _end_request_not_started(
+        self, task: TextGenerationTask | ImageGenerationTask | ImageEditsTask
+    ) -> None:
+        """End a request whose task the cluster didn't add, its instance having been deleted
+        just before. The deletion ended the instance's requests before this one had a task,
+        and nothing else would end it."""
+        text_queue = self._text_generation_queues.get(task.command_id)
+        image_queue = self._image_generation_queues.get(task.command_id)
+        if text_queue is None and image_queue is None:
+            return  # sent through another node's API
+        logger.warning(
+            f"Ending request {task.command_id}: it reached instance {task.instance_id} "
+            "after the instance was deleted"
+        )
+        error = ErrorChunk(
+            model=ModelId(task.task_params.model),
+            error_message=INSTANCE_GONE_BEFORE_START,
+        )
+        with contextlib.suppress(BrokenResourceError, ClosedResourceError):
+            if text_queue is not None:
+                await text_queue.send(error)
+            if image_queue is not None:
+                await image_queue.send(error)
 
     def _close_streams_for_instance(self, instance_id: InstanceId) -> None:
         """Close any active generation streams for commands running on the given instance."""
