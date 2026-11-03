@@ -29,21 +29,28 @@ def remote_prefill(
     t0 = time.perf_counter()
     total_prompt_tokens = int(prompt_tokens.shape[0])
     num_layers: int = 0
+    reported_tokens = 0
 
     def _on_header(header: Header) -> None:
         nonlocal num_layers
         num_layers = header.num_layers
 
     def _on_chunk(_chunk: KVChunk, chunks_received: int) -> None:
-        nonlocal num_layers
+        nonlocal num_layers, reported_tokens
         if on_prefill_progress is None:
             return
         if num_layers > 0 and chunks_received % num_layers == 0:
             tokens_so_far = chunks_received // num_layers
-            on_prefill_progress(
-                min(tokens_so_far, total_prompt_tokens),
-                total_prompt_tokens,
-            )
+            reported_tokens = min(tokens_so_far, total_prompt_tokens)
+            on_prefill_progress(reported_tokens, total_prompt_tokens)
+
+    def _on_wait() -> None:
+        # While the prefill node computes or streams, this runner has nothing else to
+        # report, and the supervisor stops a runner that reports nothing for
+        # RUNNER_STALL_TIMEOUT. The fetch calls this about once a second, and its own
+        # deadlines bound how long it waits.
+        if on_prefill_progress is not None:
+            on_prefill_progress(reported_tokens, total_prompt_tokens)
 
     request = PrefillRequest(
         model_id=model_id,
@@ -52,7 +59,11 @@ def remote_prefill(
         request_id=request_id,
     )
     result = remote_prefill_fetch(
-        endpoint, request, on_header=_on_header, on_kv_chunk=_on_chunk
+        endpoint,
+        request,
+        on_header=_on_header,
+        on_kv_chunk=_on_chunk,
+        on_wait=_on_wait,
     )
     t_received = time.perf_counter()
 
