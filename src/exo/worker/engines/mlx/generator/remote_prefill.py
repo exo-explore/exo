@@ -1,19 +1,62 @@
+import math
+import threading
 import time
 from collections.abc import Callable
-from typing import cast
+from typing import cast, final
 
 import mlx.core as mx
 from mlx_lm.models.cache import ArraysCache, KVCache, RotatingKVCache
 
+from exo.shared.constants import EXO_LAYERWISE_REMOTE_INGEST
 from exo.worker.disaggregated.protocol import Header, KVChunk
 from exo.worker.disaggregated.server import PrefillRequest
 from exo.worker.engines.mlx.cache import CacheSnapshot, snapshot_ssm_states
 from exo.worker.engines.mlx.disaggregated.client import (
+    LayerwiseIngest,
+    PrefillResult,
     ingest_into_mlx_cache,
     remote_prefill_fetch,
 )
 from exo.worker.engines.mlx.types import KVCacheType
 from exo.worker.runner.bootstrap import logger
+
+# While a remote prefill runs, its progress reports are the runner's only sign of life: the
+# runner supervisor stops a generating runner that reports nothing for
+# RUNNER_STALL_TIMEOUT (90 s), and a remote prefill node can stream its KV for longer than
+# that (a long prompt, a cold prefill node). So progress is reported when the stream's
+# header arrives and as its chunks arrive, at most once per this many seconds. Every wait in
+# between is bounded by the client's per-receive socket timeout (60 s), after which the
+# fetch fails and the caller prefills locally: a slow remote prefill keeps reporting or
+# falls back, and is never mistaken for a stuck runner.
+PROGRESS_INTERVAL_SECONDS = 1.0
+
+
+@final
+class RemotePrefillProgress:
+    """How much of a remote prefill's KV stream has arrived.
+
+    The stream holds every layer's KV for the prompt, in one or more chunks per layer, so
+    the tokens received over all layers divided by the number of layers estimates how
+    much of the prompt has arrived, whatever the chunking. Layers sent as ArraysState
+    carry no tokens, so for models with them the estimate stays below the total.
+    """
+
+    def __init__(self, total_tokens: int) -> None:
+        self.total_tokens = total_tokens
+        self._num_layers = 0
+        self._layer_tokens = 0
+
+    def on_header(self, header: Header) -> None:
+        self._num_layers = header.num_layers
+
+    def on_kv_chunk(self, chunk: KVChunk, _chunks_received: int) -> None:
+        self._layer_tokens += chunk.num_tokens
+
+    @property
+    def processed_tokens(self) -> int:
+        if self._num_layers <= 0:
+            return 0
+        return min(self._layer_tokens // self._num_layers, self.total_tokens)
 
 
 def remote_prefill(
@@ -25,25 +68,29 @@ def remote_prefill(
     request_id: str,
     model_id: str,
     start_pos: int = 0,
+    layer_offset: int = 0,
 ) -> tuple[float, int, list[CacheSnapshot]]:
     t0 = time.perf_counter()
     total_prompt_tokens = int(prompt_tokens.shape[0])
-    num_layers: int = 0
+    progress = RemotePrefillProgress(total_prompt_tokens)
+    last_report = -math.inf
 
-    def _on_header(header: Header) -> None:
-        nonlocal num_layers
-        num_layers = header.num_layers
-
-    def _on_chunk(_chunk: KVChunk, chunks_received: int) -> None:
-        nonlocal num_layers
+    def _report(force: bool) -> None:
+        nonlocal last_report
         if on_prefill_progress is None:
             return
-        if num_layers > 0 and chunks_received % num_layers == 0:
-            tokens_so_far = chunks_received // num_layers
-            on_prefill_progress(
-                min(tokens_so_far, total_prompt_tokens),
-                total_prompt_tokens,
-            )
+        now = time.monotonic()
+        if force or now - last_report >= PROGRESS_INTERVAL_SECONDS:
+            last_report = now
+            on_prefill_progress(progress.processed_tokens, total_prompt_tokens)
+
+    def _on_header(header: Header) -> None:
+        progress.on_header(header)
+        _report(force=True)
+
+    def _on_chunk(chunk: KVChunk, chunks_received: int) -> None:
+        progress.on_kv_chunk(chunk, chunks_received)
+        _report(force=False)
 
     request = PrefillRequest(
         model_id=model_id,
@@ -51,13 +98,31 @@ def remote_prefill(
         start_pos=start_pos,
         request_id=request_id,
     )
+    caches = cast(list[KVCache | RotatingKVCache | ArraysCache], list(cache))
+    # Per-layer ingest decodes each of this rank's layers as it arrives; either way the
+    # cache is only written once the whole stream is in, so a failed fetch leaves it
+    # untouched.
+    staged = (
+        LayerwiseIngest.for_caches(caches, layer_offset=layer_offset)
+        if EXO_LAYERWISE_REMOTE_INGEST
+        else None
+    )
+    _report(force=True)
     result = remote_prefill_fetch(
-        endpoint, request, on_header=_on_header, on_kv_chunk=_on_chunk
+        endpoint,
+        request,
+        on_header=_on_header,
+        on_kv_chunk=_on_chunk,
+        layerwise=staged,
     )
     t_received = time.perf_counter()
 
-    caches = cast(list[KVCache | RotatingKVCache | ArraysCache], list(cache))
-    final_offset = ingest_into_mlx_cache(result, caches, start_pos=start_pos)
+    if staged is not None:
+        final_offset = staged.commit(caches, start_pos=start_pos)
+    else:
+        final_offset = ingest_into_mlx_cache(
+            result, caches, start_pos=start_pos, layer_offset=layer_offset
+        )
     t_done = time.perf_counter()
 
     num_tokens = final_offset - start_pos
@@ -65,8 +130,123 @@ def remote_prefill(
 
     logger.info(
         f"Remote prefill: {num_tokens} tokens (start_pos={start_pos}, "
-        f"final_offset={final_offset}) at {tps:.0f} tok/s, "
+        f"final_offset={final_offset}, layerwise={staged is not None}) "
+        f"at {tps:.0f} tok/s, "
         f"transfer={(t_received - t0) * 1000:.0f}ms, "
         f"inject={(t_done - t_received) * 1000:.0f}ms"
     )
     return tps, num_tokens, [snapshot_ssm_states(cache)]
+
+
+@final
+class RemotePrefillHandle:
+    """A remote prefill fetched on a background thread and ingested later.
+
+    The thread only does socket I/O. MLX is not thread safe, so ingest() must run on
+    the engine thread. For the same reason this path always buffers the stream:
+    EXO_LAYERWISE_REMOTE_INGEST (which decodes with MLX as layers arrive) applies to
+    remote_prefill() only. Errors from the fetch are kept and raised by ingest(), where
+    the caller falls back to local prefill.
+
+    The thread also counts what has arrived, and take_progress() hands that to the
+    engine thread to report: the runner supervisor stops a generating runner that
+    reports nothing for RUNNER_STALL_TIMEOUT (90 s), and a remote prefill can stream
+    for longer than that.
+    """
+
+    def __init__(
+        self,
+        prompt_tokens: mx.array,
+        *,
+        endpoint: str,
+        request_id: str,
+        model_id: str,
+        start_pos: int = 0,
+    ) -> None:
+        self._started = time.perf_counter()
+        self._received = self._started
+        self._start_pos = start_pos
+        self._result: PrefillResult | None = None
+        self._error: Exception | None = None
+        # Written by the fetch thread, read by the engine thread (ints, under the GIL).
+        self.total_tokens = int(prompt_tokens.shape[0])
+        self._num_layers = 0
+        self._layer_tokens = 0
+        self._updates = 0
+        self._reported_updates = 0
+        self._reported_at = -math.inf
+        request = PrefillRequest(
+            model_id=model_id,
+            token_ids=cast(list[int], prompt_tokens.tolist()),
+            start_pos=start_pos,
+            request_id=request_id,
+        )
+        self._thread = threading.Thread(
+            target=self._fetch,
+            args=(endpoint, request),
+            name=f"remote-prefill-{request_id[:8]}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _fetch(self, endpoint: str, request: PrefillRequest) -> None:
+        try:
+            self._result = remote_prefill_fetch(
+                endpoint,
+                request,
+                on_header=self._on_header,
+                on_kv_chunk=self._on_kv_chunk,
+            )
+        except Exception as error:
+            self._error = error
+        self._received = time.perf_counter()
+
+    def _on_header(self, header: Header) -> None:
+        self._num_layers = header.num_layers
+        self._updates += 1
+
+    def _on_kv_chunk(self, chunk: KVChunk, _chunks_received: int) -> None:
+        self._layer_tokens += chunk.num_tokens
+        self._updates += 1
+
+    def take_progress(self, interval: float) -> tuple[int, int] | None:
+        """(tokens received, prompt tokens) if more has arrived since the last report
+        and at least ``interval`` seconds have passed; for the engine thread.
+
+        Tokens received is the tokens of every layer's chunks over the layer count, so
+        it rises with the stream for any chunking and ends at the prompt length.
+        """
+        updates = self._updates
+        now = time.monotonic()
+        if updates == self._reported_updates or now - self._reported_at < interval:
+            return None
+        self._reported_updates = updates
+        self._reported_at = now
+        processed = (
+            min(self._layer_tokens // self._num_layers, self.total_tokens)
+            if self._num_layers > 0
+            else 0
+        )
+        return processed, self.total_tokens
+
+    @property
+    def done(self) -> bool:
+        return not self._thread.is_alive()
+
+    def ingest(self, cache: KVCacheType) -> tuple[float, int, list[CacheSnapshot]]:
+        if self._error is not None:
+            raise self._error
+        assert self._result is not None
+        caches = cast(list[KVCache | RotatingKVCache | ArraysCache], list(cache))
+        final_offset = ingest_into_mlx_cache(
+            self._result, caches, start_pos=self._start_pos
+        )
+        finished = time.perf_counter()
+        num_tokens = final_offset - self._start_pos
+        tps = num_tokens / max(finished - self._started, 0.001)
+        logger.info(
+            f"Remote prefill (background): {num_tokens} tokens at {tps:.0f} tok/s, "
+            f"transfer={(self._received - self._started) * 1000:.0f}ms, "
+            f"inject={(finished - self._received) * 1000:.0f}ms"
+        )
+        return tps, num_tokens, [snapshot_ssm_states(cache)]
