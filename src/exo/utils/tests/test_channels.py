@@ -1,7 +1,9 @@
 import ctypes
 import multiprocessing as mp
+import os
 import threading
 import time
+from multiprocessing.connection import Connection
 
 import pytest
 from anyio import (
@@ -119,6 +121,66 @@ def test_closing_wakes_a_reader_of_a_channel_that_sends_immediately():
     time.sleep(0.1)
     recv.close()
     assert ended.wait(2)
+
+
+def test_a_reader_woken_by_close_and_the_closer_both_close_without_error(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # A runner's supervisor closes its event channel while a worker thread waits in receive():
+    # the end-of-stream marker that close writes wakes that thread, which closes the channel
+    # too. Closing a pipe end is slowed down here to hold both threads in the window that a
+    # busy node hits by chance, where both have seen the pipe open and both close it.
+    def slow_close(connection: Connection) -> None:
+        handle = connection.fileno()
+        time.sleep(0.05)
+        os.close(handle)
+
+    monkeypatch.setattr("multiprocessing.connection.Connection._close", slow_close)
+    _, recv = mp_channel[str](send_immediately=True)
+    errors: list[BaseException] = []
+    waiting = threading.Event()
+
+    def read() -> None:
+        waiting.set()
+        try:
+            recv.receive()
+        except (EndOfStream, ClosedResourceError):
+            pass
+        except BaseException as e:
+            errors.append(e)
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    assert waiting.wait(2)
+    time.sleep(0.05)
+    try:
+        recv.close()
+    except BaseException as e:
+        errors.append(e)
+    reader.join(2)
+    assert not reader.is_alive()
+    assert errors == []
+
+
+@pytest.mark.parametrize("send_immediately", [True, False])
+def test_a_receive_that_blocks_on_a_channel_closed_just_before_ends_closed(
+    monkeypatch: pytest.MonkeyPatch, send_immediately: bool
+):
+    # A reader thread finds the channel empty, and the channel is closed before the thread
+    # blocks on it: the queue's get says it is closed (ValueError), which must come out as
+    # ClosedResourceError like any other read of a closed channel.
+    _, recv = mp_channel[int](send_immediately=send_immediately)
+    receive_nowait = recv.receive_nowait
+
+    def empty_then_closed(receiver: MpReceiver[int]) -> int:
+        try:
+            return receive_nowait()
+        finally:
+            receiver.close()
+
+    monkeypatch.setattr(MpReceiver, "receive_nowait", empty_then_closed)
+    with pytest.raises(ClosedResourceError):
+        recv.receive()
 
 
 def test_channel_error_override_replaces_sync_errors_with_subclasses():
