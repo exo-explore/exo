@@ -12,6 +12,7 @@ import {
   extractApiErrorMessage,
   readApiErrorMessage,
 } from "$lib/utils/api_errors";
+import { describeStreamError, type StreamKind } from "$lib/utils/stream_errors";
 
 // UUID generation fallback for browsers without crypto.randomUUID
 function generateUUID(): string {
@@ -308,6 +309,9 @@ export interface Message {
   requestType?: "chat" | "image-generation" | "image-editing";
   sourceImageDataUrl?: string; // For image editing regeneration
   tokens?: TokenData[];
+  // Why the reply stopped early, in one short sentence. Shown under whatever
+  // was streamed before it, which is kept.
+  error?: string;
 }
 
 export interface Conversation {
@@ -528,6 +532,16 @@ function extractIpFromMultiaddr(ma?: string): string | undefined {
   return undefined;
 }
 
+// The text an image request shows while it runs, replaced by the result
+function isProgressPlaceholder(content: string): boolean {
+  return (
+    content === "Generating image..." ||
+    content === "Editing image..." ||
+    content.startsWith("Generating...") ||
+    content.startsWith("Editing...")
+  );
+}
+
 class AppStore {
   // Conversation state
   conversations = $state<Conversation[]>([]);
@@ -547,6 +561,11 @@ class AppStore {
 
   // Abort controller for stopping generation
   private currentAbortController: AbortController | null = null;
+
+  /** The message whose reply just stopped with an error, while its
+   * conversation stays open: screen readers announce only that one, not the
+   * errors saved in a conversation that is opened later */
+  freshErrorMessageId = $state<string | null>(null);
 
   // Topology state
   topologyData = $state<TopologyData | null>(null);
@@ -794,6 +813,7 @@ class AppStore {
   createConversation(name?: string): string {
     const id = generateUUID();
     const now = Date.now();
+    this.freshErrorMessageId = null;
 
     // Try to derive model and strategy immediately from selected model or running instances
     let derivedModelId = this.selectedChatModel || null;
@@ -854,6 +874,7 @@ class AppStore {
   loadConversation(id: string): boolean {
     const conversation = this.conversations.find((c) => c.id === id);
     if (!conversation) return false;
+    this.freshErrorMessageId = null;
 
     this.activeConversationId = id;
     this.messages = [...conversation.messages];
@@ -1671,6 +1692,7 @@ class AppStore {
     // Update the message to show the prefix
     this.messages[msgIndex].content = prefixText;
     this.messages[msgIndex].tokens = tokensToKeep;
+    this.messages[msgIndex].error = undefined;
     this.updateActiveConversation();
 
     // Set up for continuation - modify the existing message in place
@@ -1859,13 +1881,7 @@ class AppStore {
       }
     } catch (error) {
       console.error("Error regenerating from token:", error);
-      if (this.conversationExists(targetConversationId)) {
-        this.updateConversationMessage(targetConversationId, messageId, (m) => {
-          m.content = `${prefixText}\n\nError: ${error instanceof Error ? error.message : "Unknown error"}`;
-        });
-        this.syncActiveMessagesIfNeeded(targetConversationId);
-        this.persistConversation(targetConversationId);
-      }
+      this.handleStreamingError(error, targetConversationId, messageId);
     } finally {
       this.isLoading = false;
       this.currentResponse = "";
@@ -2076,7 +2092,6 @@ class AppStore {
         error,
         targetConversationId,
         assistantMessage.id,
-        "Unknown error",
       );
     } finally {
       this.isLoading = false;
@@ -2229,27 +2244,37 @@ class AppStore {
   }
 
   /**
-   * Handle streaming errors by updating the assistant message with an error.
+   * Record why a reply stopped early. What was streamed before the error is
+   * kept; the error is shown under it as one short sentence (never a
+   * traceback, see describeStreamError).
    *
    * @param error - The caught error
    * @param targetConversationId - The conversation ID
    * @param assistantMessageId - The assistant message ID to update
-   * @param errorPrefix - Optional prefix for the error message (e.g., "Failed to generate image")
+   * @param kind - What was being generated, for the wording
    */
   private handleStreamingError(
     error: unknown,
     targetConversationId: string,
     assistantMessageId: string,
-    errorPrefix = "Failed to get response",
+    kind: StreamKind = "reply",
   ): void {
     if (this.conversationExists(targetConversationId)) {
       this.updateConversationMessage(
         targetConversationId,
         assistantMessageId,
         (msg) => {
-          msg.content = `Error: ${error instanceof Error ? error.message : errorPrefix}`;
+          // Progress placeholders ("Generating image...") aren't a reply
+          if (isProgressPlaceholder(msg.content)) msg.content = "";
+          msg.error = describeStreamError(
+            error instanceof Error ? error.message : String(error ?? ""),
+            kind,
+          );
         },
       );
+      if (this.activeConversationId === targetConversationId) {
+        this.freshErrorMessageId = assistantMessageId;
+      }
       this.syncActiveMessagesIfNeeded(targetConversationId);
       this.persistConversation(targetConversationId);
     }
@@ -2320,6 +2345,7 @@ class AppStore {
     this.ttftMs = null;
     this.tps = null;
     this.totalTokens = 0;
+    this.freshErrorMessageId = null;
 
     // Build attachments from files
     const attachments: MessageAttachment[] = [];
@@ -2722,7 +2748,6 @@ class AppStore {
           error,
           targetConversationId,
           assistantMessage.id,
-          "Failed to get response",
         );
       }
     } finally {
@@ -3001,7 +3026,7 @@ class AppStore {
           error,
           targetConversationId,
           assistantMessage.id,
-          "Failed to generate image",
+          "image",
         );
       }
     } finally {
@@ -3249,7 +3274,7 @@ class AppStore {
           error,
           targetConversationId,
           assistantMessage.id,
-          "Failed to edit image",
+          "image",
         );
       }
     } finally {
@@ -3487,6 +3512,7 @@ export const hasStartedChat = () => appStore.hasStartedChat;
 export const messages = () => appStore.messages;
 export const currentResponse = () => appStore.currentResponse;
 export const isLoading = () => appStore.isLoading;
+export const freshErrorMessageId = () => appStore.freshErrorMessageId;
 export const ttftMs = () => appStore.ttftMs;
 export const tps = () => appStore.tps;
 export const totalTokens = () => appStore.totalTokens;
