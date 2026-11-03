@@ -20,6 +20,19 @@ class EosRule:
 
 @final
 @dataclass(frozen=True)
+class AddedEosTokens:
+    """EOS tokens added to the tokenizer's own for models whose (lowercased) id contains
+    any of the substrings: each one only when the tokenizer has it, as a special token, at
+    that id, since a fine-tune that keeps the name can give the id to another token or end
+    its turns with a token of its own."""
+
+    model_id_substrings: tuple[str, ...]
+    # (token id, token)
+    tokens: tuple[tuple[int, str], ...]
+
+
+@final
+@dataclass(frozen=True)
 class PlacementRules:
     """Constraints the master applies when placing an instance of the family."""
 
@@ -48,6 +61,7 @@ class FamilySpec:
     tensor_parallel_architectures: frozenset[str] = frozenset()
     placement: PlacementRules = PlacementRules()
     eos_rules: tuple[EosRule, ...] = ()
+    added_eos_tokens: tuple[AddedEosTokens, ...] = ()
     # mlx-vlm module to load the vision tower from, for vision model_types whose module
     # has another name: (model_type, mlx-vlm module).
     mlx_vlm_model_type_aliases: tuple[tuple[str, str], ...] = ()

@@ -3,7 +3,7 @@ import os
 import re
 import tempfile
 import time
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -37,7 +37,10 @@ from exo.worker.engines.mlx.models.registry import (
     template_messages_hooks_for,
     tokenizer_loader_for,
 )
-from exo.worker.engines.mlx.models.spec_registry import eos_token_ids_for_model_id
+from exo.worker.engines.mlx.models.spec_registry import (
+    added_eos_tokens_for_model_id,
+    eos_token_ids_for_model_id,
+)
 
 try:
     from mlx_lm.tokenizer_utils import load_tokenizer
@@ -402,16 +405,36 @@ def load_tokenizer_for_model_id(
     # e.g. Kimi uses a custom TikTokenTokenizer that transformers 5.x can't load via AutoTokenizer
     tokenizer_loader = tokenizer_loader_for(model_id)
     if tokenizer_loader is not None:
-        return tokenizer_loader.load(model_path, eos_token_ids)
-
-    # We should really consider going back to mlx lm load to get tokenizer
-    tokenizer = load_tokenizer(
-        model_path,
-        tokenizer_config_extra={"trust_remote_code": trust_remote_code},
-        eos_token_ids=eos_token_ids,
-    )
+        tokenizer = tokenizer_loader.load(model_path, eos_token_ids)
+    else:
+        # We should really consider going back to mlx lm load to get tokenizer
+        tokenizer = load_tokenizer(
+            model_path,
+            tokenizer_config_extra={"trust_remote_code": trust_remote_code},
+            eos_token_ids=eos_token_ids,
+        )
+    add_eos_tokens(tokenizer, added_eos_tokens_for_model_id(model_id))
 
     return tokenizer
+
+
+class _AddedToken(Protocol):
+    content: str
+    special: bool
+
+
+def add_eos_tokens(
+    tokenizer: TokenizerWrapper, tokens: tuple[tuple[int, str], ...]
+) -> None:
+    """Adds each (token id, token) to the tokenizer's EOS tokens where the tokenizer has
+    that special token at that id."""
+    if not tokens:
+        return
+    added_tokens = cast(Mapping[int, _AddedToken], tokenizer.added_tokens_decoder)
+    for token_id, content in tokens:
+        token = added_tokens.get(token_id)
+        if token is not None and token.special and token.content == content:
+            tokenizer.add_eos_token(str(token_id))
 
 
 def _normalize_tool_calls(msg_dict: dict[str, Any]) -> None:

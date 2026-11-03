@@ -98,6 +98,19 @@ def eos_token_ids_for_model_id(model_id: str) -> list[int] | None:
     return None
 
 
+def added_eos_tokens_for_model_id(model_id: str) -> tuple[tuple[int, str], ...]:
+    """(token id, token) of the EOS tokens to add to the tokenizer's own where the
+    tokenizer has them."""
+    model_id_lower = model_id.lower()
+    for spec in FAMILY_SPECS:
+        for rule in spec.added_eos_tokens:
+            if any(
+                substring in model_id_lower for substring in rule.model_id_substrings
+            ):
+                return rule.tokens
+    return ()
+
+
 def mlx_vlm_model_type_aliases() -> dict[str, str]:
     return {
         model_type: module

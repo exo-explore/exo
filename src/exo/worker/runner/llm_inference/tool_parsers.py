@@ -1,7 +1,7 @@
 import json
 import math
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from exo.api.types import ToolCallItem
 
@@ -189,6 +189,18 @@ def _coerce_tool_calls_to_schema(
             tool_call.model_copy(update={"arguments": json.dumps(coerced_args)})
         )
     return coerced_calls
+
+
+def tool_names(tools: list[dict[str, Any]]) -> frozenset[str]:
+    """The names of the request's tools (in the Chat Completions format)."""
+    names: set[str] = set()
+    for tool in tools:
+        function = cast(object, tool.get("function"))
+        if isinstance(function, dict):
+            name = cast(dict[str, object], function).get("name")
+            if isinstance(name, str):
+                names.add(name)
+    return frozenset(names)
 
 
 def coerce_tool_calls_to_schemas(
