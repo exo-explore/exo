@@ -220,7 +220,7 @@ async def test_resuming_keeps_the_pinned_commit(
         hub.when_sent(SHARD1, 50_000, reached.set)
         await reached.wait()
         await node.cancel(REPO)
-        await node.wait_for(REPO, DownloadPending)
+        await node.wait_until_idle(REPO)
         repo.commit({"config.json": b'{"v": 2}', SHARD1: content_for("v2", 1000)})
         await node.start_download(REPO)
         await node.wait_for(REPO, DownloadCompleted, timeout=10)

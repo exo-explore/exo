@@ -401,7 +401,7 @@ async def test_cancel_stops_the_download_and_start_resumes(
         await node.start_download(REPO)
         await sent(hub, SHARD1, 100_000).wait()
         await node.cancel(REPO)
-        await node.wait_for(REPO, DownloadPending, timeout=5)
+        await node.wait_until_idle(REPO, timeout=5)
         await asyncio.sleep(0.2)
         bytes_after_cancel = hub.body_bytes(REPO)
         await asyncio.sleep(1.5)
@@ -427,7 +427,7 @@ async def test_cancel_then_start_repeatedly(
             await node.start_download(REPO)
             await sent(hub, SHARD1, 40_000 * (round_ + 1)).wait()
             await node.cancel(REPO)
-            await node.wait_for(REPO, DownloadPending, timeout=5)
+            await node.wait_until_idle(REPO, timeout=5)
         await node.start_download(REPO)
         await assert_complete(node, repo)
 

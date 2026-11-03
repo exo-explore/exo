@@ -360,7 +360,7 @@ async def test_no_file_descriptors_leak_across_cancels(
             await node.start_download(REPO)
             await asyncio.sleep(0.05)
             await node.cancel(REPO)
-            await node.wait_for(REPO, DownloadPending, timeout=5)
+            await node.wait_until_idle(REPO, timeout=5)
     await asyncio.sleep(0.2)
     assert len(os.listdir("/dev/fd")) <= before + 2
 
@@ -481,7 +481,7 @@ async def test_a_partial_download_in_a_dir_that_filled_up_moves_to_one_with_room
         await node.start_download(REPO)
         await node.wait_for(REPO, DownloadFailed)
         await node.cancel(REPO)
-        await node.wait_for(REPO, DownloadPending)
+        await node.wait_until_idle(REPO)
         node.write_budget = None
         node.free_space[node.models_dir] = 1_000  # still full
         await node.start_download(REPO)
@@ -821,7 +821,7 @@ async def test_an_unreachable_hub_is_reported_when_resuming_too(
         hub.when_sent(SHARD1, 50_000, reached.set)
         await reached.wait()
         await node.cancel(REPO)
-        await node.wait_for(REPO, DownloadPending)
+        await node.wait_until_idle(REPO)
         await hub.go_down("refuse")
         await node.start_download(REPO)
         await asyncio.sleep(3)  # ~5 production minutes at this timing scale
