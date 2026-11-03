@@ -8,8 +8,8 @@ isn't part of the replicated state: two nodes may disagree for a moment.
 """
 
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
-from typing import Literal, Protocol, final
+from datetime import UTC, datetime, timedelta
+from typing import Final, Literal, Protocol, final
 
 import exo_rs
 from anyio import BrokenResourceError, ClosedResourceError
@@ -29,7 +29,18 @@ up but exo on it stopped reporting."""
 
 Quorum = Literal["Majority", "Half", "Minority"]
 """How many of the nodes it knows this node reaches: more than half, exactly half (two nodes with
-one away, or any even split), or less than half."""
+one away, or any even split), or less than half. The same values as deployments' SplitSide: a
+caller of split_side(reachable, last_known) can read Membership.quorum() instead."""
+
+# The membership's timers that exo acts on, from the one table that owns them
+# (rust/networking/src/membership.rs, where each is derived)
+GRACE: Final = timedelta(seconds=exo_rs.GRACE_SECONDS)
+"""How long a node is Suspect before it is Gone"""
+WEDGE_TIMEOUT: Final = timedelta(seconds=exo_rs.WEDGE_TIMEOUT_SECONDS)
+"""How long a node whose transport is up may go without a report before it is Suspect(Wedged)"""
+SPLIT_HOLD: Final = timedelta(seconds=exo_rs.SPLIT_HOLD_SECONDS)
+"""How long the side of a split without a majority holds before it takes over the lost nodes'
+work"""
 
 
 class Member(FrozenModel):
@@ -173,6 +184,10 @@ class Membership(Reachability):
     def view(self) -> MembershipView:
         """Every node this node knows of, and the quorum read, from the networking layer now"""
         return MembershipView.from_snapshot(self.node_id, self._snapshot())
+
+    def quorum(self) -> Quorum:
+        """How much of the cluster this node reaches now"""
+        return self.view().quorum
 
     async def _update(self, member: Member) -> None:
         previous = self._latest.get(member.node_id)

@@ -8,6 +8,7 @@ import pathlib
 import typing
 __all__ = [
     "FromSwarm",
+    "GRACE_SECONDS",
     "LossReason",
     "Member",
     "MemberState",
@@ -16,8 +17,13 @@ __all__ = [
     "Pidfile",
     "PidfileError",
     "Quorum",
+    "SPLIT_HOLD_SECONDS",
+    "WEDGE_TIMEOUT_SECONDS",
 ]
 
+GRACE_SECONDS: builtins.float
+SPLIT_HOLD_SECONDS: builtins.float
+WEDGE_TIMEOUT_SECONDS: builtins.float
 class FromSwarm:
     @typing.final
     class Message(FromSwarm):

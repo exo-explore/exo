@@ -3,7 +3,7 @@ as each node's latest state, the nodes that leave Alive, and the quorum read."""
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
 import anyio
@@ -14,15 +14,18 @@ from exo_rs import FromSwarm, LossReason, MembershipSnapshot, NetworkingHandle, 
 
 import exo.routing.topics as topics
 from exo.routing.membership import (
-    LossReason as LossReasonName,
-)
-from exo.routing.membership import (
+    GRACE,
+    SPLIT_HOLD,
+    WEDGE_TIMEOUT,
     Member,
     Membership,
     MembershipChange,
     MembershipView,
     MemberState,
     Reachability,
+)
+from exo.routing.membership import (
+    LossReason as LossReasonName,
 )
 from exo.routing.router import Router
 from exo.routing.tests.fake_reachability import FakeReachability
@@ -316,3 +319,19 @@ async def test_membership_and_its_fake_both_tell_readers_of_reachability() -> No
     assert fake.is_reachable(ME)
     fake.regain(PEER)
     assert fake.is_reachable(PEER)
+
+
+# ---- The timers and the quorum read, for exo's own code ----
+
+
+def test_exo_reads_the_membership_timers_from_their_one_table() -> None:
+    assert timedelta(seconds=30) == GRACE
+    assert timedelta(seconds=30) == WEDGE_TIMEOUT
+    assert timedelta(minutes=5) == SPLIT_HOLD
+
+
+async def test_the_quorum_read_has_split_sides_values() -> None:
+    own = exo_rs.Member("ME", exo_rs.MemberState.Alive, None, SINCE)
+    snapshot = snapshot_of([own], Quorum.Half, 1, 2)
+    async with running_membership(snapshot) as (membership, _):
+        assert membership.quorum() == "Half"

@@ -5,7 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::ext::{ByteArrayExt as _, FutureExt, PyErrExt as _};
 use crate::ext::{ResultExt as _, TokioMpscSenderExt as _};
 use futures_lite::{Stream, StreamExt as _};
-use networking::membership::{Member, MemberState, Quorum, Reason, Snapshot};
+use networking::membership::{
+    GRACE, Member, MemberState, Quorum, Reason, SPLIT_HOLD, Snapshot, WEDGE_TIMEOUT,
+};
 use networking::swarm::{FromSwarm, Members, Swarm, ToSwarm, create_swarm};
 use networking::{Session, is_valid_zid};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -383,7 +385,16 @@ impl PyNetworkingHandle {
     }
 }
 
+// The membership's timers that exo's Python code acts on, in seconds (see
+// rust/networking/src/membership.rs for what each is and why)
+pyo3_stub_gen::module_variable!("exo_rs", "GRACE_SECONDS", f64);
+pyo3_stub_gen::module_variable!("exo_rs", "WEDGE_TIMEOUT_SECONDS", f64);
+pyo3_stub_gen::module_variable!("exo_rs", "SPLIT_HOLD_SECONDS", f64);
+
 pub fn networking_submodule(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("GRACE_SECONDS", GRACE.as_secs_f64())?;
+    m.add("WEDGE_TIMEOUT_SECONDS", WEDGE_TIMEOUT.as_secs_f64())?;
+    m.add("SPLIT_HOLD_SECONDS", SPLIT_HOLD.as_secs_f64())?;
     m.add_class::<PyNetworkingHandle>()?;
     m.add_class::<PyFromSwarm>()?;
     m.add_class::<PyMemberState>()?;

@@ -88,22 +88,37 @@ pub const HOLD_OFF: Duration = Duration::from_secs(12);
 /// machines on a LAN and 4.8-6.2 s with every node on one machine.
 pub const REJOIN: Duration = Duration::from_secs(6);
 
-/// How long a peer is Suspect before it is Gone (G in the design). A peer frozen just past
-/// the lease has its sessions closed (`LEASE`), holds off when it resumes (`HOLD_OFF`) and then
-/// reconnects (`REJOIN`); with 2 s to spare it is back before it counts as gone.
+/// How much longer than `LEASE` a peer can be frozen (or cut off) and still be back before it
+/// is Gone: `GRACE` rides out a freeze of up to `LEASE + FREEZE_RIDDEN_OUT` (22 s) in all.
+const FREEZE_RIDDEN_OUT: Duration = Duration::from_secs(12);
+
+/// How long a peer is Suspect before it is Gone (G in the design). It is Suspect once its link
+/// was silent for `LEASE` (and the probe ran out); a peer frozen just past that resumes, holds
+/// off for `HOLD_OFF` and reconnects within `REJOIN`, so it is back `HOLD_OFF + REJOIN` = 18 s
+/// after it was Suspect (measured: 18.3 s for a freeze 5.6 s past the lease). The rest is
+/// `FREEZE_RIDDEN_OUT`. A lost peer is Gone 40-42 s after it was lost (`LEASE` or
+/// `PROBE_TIMEOUT`, then this).
 pub const GRACE: Duration =
-    Duration::from_secs(LEASE.as_secs() + HOLD_OFF.as_secs() + REJOIN.as_secs() + 2);
+    Duration::from_secs(HOLD_OFF.as_secs() + REJOIN.as_secs() + FREEZE_RIDDEN_OUT.as_secs());
 
 /// How long a peer whose transport is up may go without a report from exo on it before it is
-/// Suspect(Wedged) (T_WEDGE in the design): the same as `GRACE` on purpose, so a wedged node
-/// and a lost one are given the same time. Nodes report about once a second; only a node that
-/// reported at least once is checked, so nothing is Wedged until reports are fed in.
-pub const WEDGE_TIMEOUT: Duration = GRACE;
+/// Suspect(Wedged) (T_WEDGE in the design). Nodes report about once a second, and a busy
+/// node's reports were up to 6.3 s apart: about 5 times that, so a slow exo isn't taken for a
+/// stuck one. A wedged node is then Gone 60 s after its last report (this, then `GRACE`),
+/// later than a lost one: a slow exo is harder to tell from a stuck one than a lost transport
+/// is. Only a node that reported at least once is checked, so nothing is Wedged until reports
+/// are fed in.
+pub const WEDGE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// How long a node with less than half the cluster reachable waits before it counts only what
-/// it can reach (used by the coordinator, later). Far longer than the faults the grace rides out
-/// (a lid close, a Wi-Fi drop, a router restart), so by then the others are away for a while.
-pub const MINORITY_HOLD_LIMIT: Duration = Duration::from_secs(5 * 60);
+/// How long the side of a split without a majority (an even split, or the smaller side) holds
+/// before it takes over the work of the nodes it lost: placing their models again elsewhere,
+/// and counting only the nodes it reaches (see `FORGET_AFTER`). The other side may still be
+/// serving them. The longest outages that healed by themselves in chaos runs were network cuts
+/// of 90 s and a Mac that rejoined 72 s after waking: about 3 times that, so a blip never moves
+/// a model, and still short enough that the work of a node that really died moves within
+/// minutes. One constant for both: deployments' `EVEN_SPLIT_REPLACE_DELAY` and the design's
+/// `MINORITY_HOLD_LIMIT`.
+pub const SPLIT_HOLD: Duration = Duration::from_secs(5 * 60);
 
 // ---- States --------------------------------------------------------------------------------
 
@@ -1224,16 +1239,20 @@ mod tests {
 
     #[test]
     fn the_timers_keep_their_derivations() {
-        assert!(GRACE >= LEASE + HOLD_OFF + REJOIN, "{GRACE:?}");
+        // A peer frozen just past the lease is back HOLD_OFF + REJOIN after it was Suspect
+        assert_eq!(GRACE, HOLD_OFF + REJOIN + FREEZE_RIDDEN_OUT);
         assert_eq!(GRACE, Duration::from_secs(30));
-        assert_eq!(WEDGE_TIMEOUT, GRACE);
+        // About 5 times the longest gap between a busy node's reports (6.3 s)
+        assert!(WEDGE_TIMEOUT >= Duration::from_millis(6_300) * 4);
         assert!(
             HOLD_OFF > LEASE,
             "stale sessions must close before reconnecting"
         );
         assert!(STALL_THRESHOLD < LEASE);
         assert!(STALL_THRESHOLD > TICK);
-        assert!(MINORITY_HOLD_LIMIT > GRACE);
+        // A split hold outlasts any blip the grace rides out, and the 90 s outages that healed
+        assert!(SPLIT_HOLD > GRACE);
+        assert!(SPLIT_HOLD >= Duration::from_secs(90) * 3);
         assert_eq!(PROBE_FIRST_ASK_DELAY, ZENOH_ROUTES_RECOMPUTED_AFTER * 3);
         assert!(
             PROBE_FIRST_ASK_DELAY * 4 <= PROBE_TIMEOUT,
