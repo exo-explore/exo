@@ -19,6 +19,8 @@ __all__ = [
     "Quorum",
     "SPLIT_HOLD_SECONDS",
     "WEDGE_TIMEOUT_SECONDS",
+    "flush_logs",
+    "write_panics_to",
 ]
 
 GRACE_SECONDS: builtins.float
@@ -235,5 +237,17 @@ class Quorum(enum.Enum):
     Minority = ...
     r"""
     Less than half
+    """
+
+def flush_logs() -> builtins.bool:
+    r"""
+    Waits (without the GIL) until the Rust log records queued so far have reached Python's
+    logging, for at most `EXIT_DRAIN_LIMIT`. Returns whether they all did.
+    """
+
+def write_panics_to(path: builtins.str) -> None:
+    r"""
+    Writes every Rust panic from now on straight into the log file at `path` too (it also goes
+    to stderr, as before): a panic can end the process before a queued record reaches Python.
     """
 

@@ -150,7 +150,7 @@ pub(crate) mod ext {
 #[pymodule(name = "exo_rs", gil_used = true)]
 fn main_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // install logger
-    logging::init(m.py())?;
+    logging::init(m)?;
     let mut builder = tokio::runtime::Builder::new_multi_thread();
     builder.enable_all();
     pyo3_async_runtimes::tokio::init(builder);
