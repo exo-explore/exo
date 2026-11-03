@@ -2,24 +2,23 @@
 # ruff: noqa: E501, F401, F403, F405
 
 import builtins
+import enum
 import os
 import pathlib
 import typing
 __all__ = [
     "FromSwarm",
+    "LossReason",
+    "Member",
+    "MemberState",
+    "MembershipSnapshot",
     "NetworkingHandle",
     "Pidfile",
     "PidfileError",
+    "Quorum",
 ]
 
 class FromSwarm:
-    @typing.final
-    class Connection(FromSwarm):
-        __match_args__ = ("connected",)
-        @property
-        def connected(self) -> builtins.bool: ...
-        def __new__(cls, connected: builtins.bool) -> FromSwarm.Connection: ...
-    
     @typing.final
     class Message(FromSwarm):
         __match_args__ = ("topic", "data",)
@@ -29,12 +28,74 @@ class FromSwarm:
         def data(self) -> bytes: ...
         def __new__(cls, topic: builtins.str, data: bytes) -> FromSwarm.Message: ...
     
+    @typing.final
+    class Membership(FromSwarm):
+        r"""
+        A node's state changed, as this node sees it (this node's own state too, first)
+        """
+        __match_args__ = ("node", "state", "reason", "since",)
+        @property
+        def node(self) -> builtins.str: ...
+        @property
+        def state(self) -> MemberState: ...
+        @property
+        def reason(self) -> typing.Optional[LossReason]: ...
+        @property
+        def since(self) -> builtins.float:
+            r"""
+            Seconds since the Unix epoch
+            """
+        def __new__(cls, node: builtins.str, state: MemberState, reason: typing.Optional[LossReason], since: builtins.float) -> FromSwarm.Membership: ...
+    
     ...
+
+@typing.final
+class Member:
+    r"""
+    A node and the state it has been in since `since` (seconds since the Unix epoch)
+    """
+    @property
+    def node(self) -> builtins.str: ...
+    @property
+    def state(self) -> MemberState: ...
+    @property
+    def reason(self) -> typing.Optional[LossReason]: ...
+    @property
+    def since(self) -> builtins.float: ...
+    def __new__(cls, node: builtins.str, state: MemberState, reason: typing.Optional[LossReason], since: builtins.float) -> Member: ...
+
+@typing.final
+class MembershipSnapshot:
+    r"""
+    Every node this node knows of, with how much of the cluster it reaches
+    """
+    @property
+    def members(self) -> builtins.list[Member]:
+        r"""
+        This node first, then its peers
+        """
+    @property
+    def quorum(self) -> Quorum: ...
+    @property
+    def reachable(self) -> builtins.int:
+        r"""
+        The Alive peers, plus this node unless it is Resuming
+        """
+    @property
+    def last_known(self) -> builtins.int:
+        r"""
+        This node and every peer seen Alive, except those that left
+        """
+    def __new__(cls, members: typing.Sequence[Member], quorum: Quorum, reachable: builtins.int, last_known: builtins.int) -> MembershipSnapshot: ...
 
 @typing.final
 class NetworkingHandle:
     @staticmethod
     def new(identity: builtins.str, namespace: builtins.str, listen_port: builtins.int, discovery_service_port: builtins.int) -> NetworkingHandle: ...
+    def members(self) -> MembershipSnapshot:
+        r"""
+        This node's view of the cluster right now: every node it knows of, and the quorum read
+        """
     def recv(self) -> typing.Awaitable[FromSwarm]: ...
     async def gossipsub_subscribe(self, topic: builtins.str, high_priority: builtins.bool = False) -> builtins.bool:
         r"""
@@ -112,4 +173,56 @@ class Pidfile:
 class PidfileError(builtins.Exception):
     def __repr__(self) -> builtins.str: ...
     def __str__(self) -> builtins.str: ...
+
+@typing.final
+class LossReason(enum.Enum):
+    r"""
+    Why a node isn't Alive
+    """
+    Disconnected = ...
+    r"""
+    Its token was deleted, or its connection closed and it didn't answer
+    """
+    Left = ...
+    r"""
+    It said it was leaving
+    """
+    Wedged = ...
+    r"""
+    Its transport is up but exo on it stopped reporting
+    """
+
+@typing.final
+class MemberState(enum.Enum):
+    r"""
+    A node's state as this node sees it
+    """
+    Alive = ...
+    Suspect = ...
+    r"""
+    Unreachable now; Gone if it stays so for the grace period
+    """
+    Gone = ...
+    Resuming = ...
+    r"""
+    Only ever this node's own state, for a while after it was stopped (frozen or asleep)
+    """
+
+@typing.final
+class Quorum(enum.Enum):
+    r"""
+    How much of the cluster this node can reach
+    """
+    Majority = ...
+    r"""
+    More than half of the nodes it knows
+    """
+    Half = ...
+    r"""
+    Exactly half: two nodes with one away, or any even split
+    """
+    Minority = ...
+    r"""
+    Less than half
+    """
 

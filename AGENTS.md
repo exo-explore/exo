@@ -81,7 +81,7 @@ Components communicate via typed pub/sub topics (src/exo/routing/topics.py):
 - `LOCAL_EVENTS`: Workers send events to master for indexing
 - `COMMANDS`: Workers/API send commands to master
 - `ELECTION_MESSAGES`: Election protocol messages
-- `CONNECTION_MESSAGES`: zenoh connection updates
+- `MEMBERSHIP`: each node's state (Alive / Suspect / Gone) as this node's networking sees it, local only
 
 ### Event Sourcing
 The system uses event sourcing for state management:

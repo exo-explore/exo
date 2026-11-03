@@ -36,8 +36,8 @@ async def _await_recv(h: NetworkingHandle):
     while True:
         event = await h.recv()
         match event:
-            case FromSwarm.Connection() as c:
-                print(f"PYTHON: connection update: {c}")
+            case FromSwarm.Membership() as c:
+                print(f"PYTHON: membership change: {c}")
             case FromSwarm.Message() as m:
                 print(f"PYTHON: message: {m}")
 

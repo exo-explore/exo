@@ -10,7 +10,7 @@ import anyio
 import pytest
 from anyio import create_task_group, fail_after
 
-from exo.routing.connection_message import ConnectionMessage
+from exo.routing.membership import MembershipChange
 from exo.shared.election import Election, ElectionMessage, ElectionResult
 from exo.shared.types.commands import ForwarderCommand
 from exo.shared.types.common import NodeId, SessionId
@@ -71,14 +71,14 @@ async def running_election() -> AsyncIterator[Harness]:
     em_out_tx, em_out_rx = channel[ElectionMessage]()
     em_in_tx, em_in_rx = channel[ElectionMessage]()
     er_tx, er_rx = channel[ElectionResult]()
-    cm_tx, cm_rx = channel[ConnectionMessage]()
+    cm_tx, cm_rx = channel[MembershipChange]()
     co_tx, co_rx = channel[ForwarderCommand]()
     election = Election(
         node_id=ME,
         election_message_receiver=em_in_rx,
         election_message_sender=em_out_tx,
         election_result_sender=er_tx,
-        connection_message_receiver=cm_rx,
+        membership_change_receiver=cm_rx,
         command_receiver=co_rx,
         is_candidate=True,
     )

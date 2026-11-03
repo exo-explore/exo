@@ -4,10 +4,13 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use futures_lite::Stream;
+use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
+use tokio::time::MissedTickBehavior;
 use zenoh::Result;
 use zenoh::Session;
 use zenoh::Wait;
@@ -21,7 +24,9 @@ use zenoh::query::Queryable;
 use zenoh::sample::Sample;
 use zenoh::sample::SampleKind;
 
-use crate::membership::{ALIVE_KEY_PREFIX, Change, Membership, PROBE_TIMEOUT};
+use crate::membership::{
+    ALIVE_KEY_PREFIX, GRACE, Member, Membership, Now, PROBE_TIMEOUT, Snapshot, TICK,
+};
 
 #[derive(Debug)]
 pub enum ToSwarm {
@@ -52,45 +57,71 @@ pub enum FromSwarm {
         topic: String,
         data: Vec<u8>,
     },
-    /// A node joined the cluster (or this node started)
-    Discovered {
-        zid: ZenohId,
-    },
-    /// A node left the cluster
-    Expired {
-        zid: ZenohId,
-    },
+    /// A node's state changed, as this node sees it. This node's own state comes first, when
+    /// the swarm starts. Each change is reported once.
+    Membership(Member),
 }
 
-impl From<Change> for FromSwarm {
-    fn from(change: Change) -> Self {
-        match change {
-            Change::Joined(zid) => Self::Discovered { zid },
-            Change::Left(zid) => Self::Expired { zid },
-        }
+/// This node's view of the cluster, readable at any time
+#[derive(Clone)]
+pub struct Members(Arc<Mutex<Membership>>);
+
+impl Members {
+    pub fn snapshot(&self) -> Snapshot {
+        self.0.lock().snapshot()
     }
 }
 
 pub type Topics = HashMap<String, (Subscriber<()>, Publisher<'static>)>;
 pub struct Swarm {
-    pub session: crate::Session,
-    pub from_client: mpsc::Receiver<ToSwarm>,
+    session: crate::Session,
+    from_client: mpsc::Receiver<ToSwarm>,
+    members: Members,
 }
 
 impl Swarm {
+    pub fn new(session: crate::Session, from_client: mpsc::Receiver<ToSwarm>) -> Self {
+        Self::with_grace(session, from_client, GRACE)
+    }
+
+    /// With `grace` instead of `GRACE` as how long a peer is Suspect before it is Gone
+    pub fn with_grace(
+        session: crate::Session,
+        from_client: mpsc::Receiver<ToSwarm>,
+        grace: Duration,
+    ) -> Self {
+        let membership = Membership::new(session.z.zid(), grace, Now::read());
+        Self {
+            session,
+            from_client,
+            members: Members(Arc::new(Mutex::new(membership))),
+        }
+    }
+
+    pub fn members(&self) -> Members {
+        self.members.clone()
+    }
+
     pub fn into_stream(self) -> Pin<Box<dyn Stream<Item = FromSwarm> + Send>> {
         let Swarm {
             session,
             mut from_client,
+            members,
         } = self;
         let stream = async_stream::stream! {
             let mut session = session;
             let (mut to_topics, mut from_topics) = mpsc::channel(INCOMING_MESSAGE_CAPACITY);
             let mut topics = Topics::new();
-            let Ok((_token, discovery)) = register_liveness(&mut session.z).await else { return; };
-            let Ok((_alive, connections)) = watch_connections(&session.z).await else { return; };
-            let (probe_results, mut finished_probes) = mpsc::unbounded_channel::<(ZenohId, bool)>();
-            let mut membership = Membership::default();
+            let Ok(inputs) = MembershipInputs::declare(&mut session.z).await else { return; };
+            // Membership runs on its own, so it keeps time (and notices this node's stalls)
+            // however often exo reads this stream
+            let (changes_sender, mut changes) = mpsc::unbounded_channel();
+            let _membership = crate::AbortOnDrop(tokio::spawn(drive_membership(
+                session.z.clone(),
+                members,
+                inputs,
+                changes_sender,
+            )));
             loop {
                 tokio::select! {
                     msg = from_client.recv() => {
@@ -102,64 +133,126 @@ impl Swarm {
                             yield event
                         }
                     }
-                    token = discovery.recv_async() => {
-                        let Ok(token) = token else { continue };
-                        let key_expr = token.key_expr().as_str().to_owned();
-                        let Some(zid) = key_expr.strip_prefix("live/").and_then(|zid| zid.parse::<ZenohId>().ok()) else {
-                            log::warn!("ignoring liveliness token {key_expr}");
-                            continue;
-                        };
-                        let change = match token.kind() {
-                            SampleKind::Put => {
-                                log::info!("discovered: {zid}");
-                                membership.token_declared(zid)
-                            }
-                            SampleKind::Delete => {
-                                log::info!("expired: {zid}");
-                                membership.token_deleted(zid)
-                            }
-                        };
-                        if let Some(change) = change {
-                            yield change.into()
-                        }
-                    }
-                    event = connections.recv_async() => {
-                        let Ok(event) = event else { continue };
-                        let zid = *event.transport().zid();
-                        match event.kind() {
-                            SampleKind::Put => {
-                                log::info!("connected to {zid}");
-                                if let Some(change) = membership.connection_opened(zid) {
-                                    yield change.into()
-                                }
-                            }
-                            SampleKind::Delete => {
-                                log::info!("connection to {zid} closed");
-                                if membership.connection_closed(zid) {
-                                    let session = session.z.clone();
-                                    let probe_results = probe_results.clone();
-                                    tokio::spawn(async move {
-                                        let answered = answers(&session, zid).await;
-                                        _ = probe_results.send((zid, answered));
-                                    });
-                                }
-                            }
-                        }
-                    }
-                    Some((zid, answered)) = finished_probes.recv() => {
-                        if let Some(change) = membership.probe_finished(zid, answered) {
-                            log::info!(
-                                "expired: {zid} (its connection closed and it didn't answer within {PROBE_TIMEOUT:?})"
-                            );
-                            yield change.into()
-                        } else if answered {
-                            log::info!("{zid} is still reachable after its connection closed");
-                        }
+                    Some(change) = changes.recv() => {
+                        yield FromSwarm::Membership(change)
                     }
                 }
             }
         };
         Box::pin(stream)
+    }
+}
+
+/// What membership learns from zenoh: this node's liveliness token and everyone's, the
+/// queryable that answers that this node is still there, and this node's connections
+struct MembershipInputs {
+    _token: LivelinessToken,
+    tokens: Subscriber<FifoChannelHandler<Sample>>,
+    _alive: Queryable<()>,
+    connections: ConnectionEvents,
+}
+
+impl MembershipInputs {
+    async fn declare(session: &mut Session) -> Result<Self> {
+        let (token, tokens) = register_liveness(session).await?;
+        let (alive, connections) = watch_connections(session).await?;
+        Ok(Self {
+            _token: token,
+            tokens,
+            _alive: alive,
+            connections,
+        })
+    }
+}
+
+/// Feeds membership its inputs and a tick, and sends on each change it reports
+async fn drive_membership(
+    session: Session,
+    members: Members,
+    inputs: MembershipInputs,
+    changes: mpsc::UnboundedSender<Member>,
+) {
+    let MembershipInputs {
+        _token,
+        tokens,
+        _alive,
+        connections,
+    } = inputs;
+    let (probe_results, mut finished_probes) = mpsc::unbounded_channel::<(ZenohId, bool)>();
+    let mut tick = tokio::time::interval(TICK);
+    // After a stall, one late tick rather than a burst of them
+    tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let own = members.0.lock().own();
+    if changes.send(own).is_err() {
+        return;
+    }
+    loop {
+        let reported: Vec<Member> = tokio::select! {
+            // The tick first: after a stall it tells us so before any queued input is handled
+            biased;
+            _ = tick.tick() => members.0.lock().tick(Now::read()),
+            token = tokens.recv_async() => {
+                // The session is closed
+                let Ok(token) = token else { return };
+                let key_expr = token.key_expr().as_str().to_owned();
+                let Some(zid) = key_expr.strip_prefix("live/").and_then(|zid| zid.parse::<ZenohId>().ok()) else {
+                    log::warn!("ignoring liveliness token {key_expr}");
+                    continue;
+                };
+                let now = Now::read();
+                let mut membership = members.0.lock();
+                let change = match token.kind() {
+                    SampleKind::Put => {
+                        log::info!("token of {zid} declared");
+                        membership.token_put(zid, now)
+                    }
+                    SampleKind::Delete => {
+                        log::info!("token of {zid} deleted");
+                        membership.token_deleted(zid, now)
+                    }
+                };
+                change.into_iter().collect()
+            }
+            event = connections.recv_async() => {
+                let Ok(event) = event else { return };
+                let zid = *event.transport().zid();
+                match event.kind() {
+                    SampleKind::Put => {
+                        log::info!("connected to {zid}");
+                        members.0.lock().connection_opened(zid, Now::read()).into_iter().collect()
+                    }
+                    SampleKind::Delete => {
+                        log::info!("connection to {zid} closed");
+                        if members.0.lock().connection_closed(zid) {
+                            let session = session.clone();
+                            let probe_results = probe_results.clone();
+                            tokio::spawn(async move {
+                                let answered = answers(&session, zid).await;
+                                _ = probe_results.send((zid, answered));
+                            });
+                        }
+                        Vec::new()
+                    }
+                }
+            }
+            Some((zid, answered)) = finished_probes.recv() => {
+                let change = members.0.lock().probe_finished(zid, answered, Now::read());
+                if answered {
+                    log::info!("{zid} is still reachable after its connection closed");
+                } else if change.is_some() {
+                    log::info!(
+                        "{zid} didn't answer within {PROBE_TIMEOUT:?} after its connection closed"
+                    );
+                }
+                change.into_iter().collect()
+            }
+        };
+        for change in reported {
+            log::info!("membership: {} is {:?}", change.node, change.state);
+            if changes.send(change).is_err() {
+                return;
+            }
+        }
     }
 }
 
@@ -331,19 +424,17 @@ pub async fn create_swarm(
 ) -> Result<Swarm> {
     let cfg = crate::cfg(identity, listen_port)?;
     let session = crate::open(cfg, namespace, listen_port, discovery_service_port).await?;
-    Ok(Swarm {
-        session,
-        from_client,
-    })
+    Ok(Swarm::new(session, from_client))
 }
 
 #[cfg(test)]
 mod tests {
-    //! A node that crashes must be reported as gone by every other node's swarm, also when
-    //! zenoh keeps its liveliness token (it does in clusters of three or more: see
-    //! `membership`). The test binary runs itself as each node, in separate processes, so a
-    //! node can be killed the way a crash kills it.
-    use std::collections::HashSet;
+    //! Every node's swarm must report what happens to a peer: a crash (Suspect at once, also
+    //! when zenoh keeps the peer's liveliness token, as it does in clusters of three or more:
+    //! see `membership`; then Gone after the grace), and a freeze (Suspect after the lease,
+    //! Alive again when it resumes). The test binary runs itself as each node, in separate
+    //! processes, so a node can be killed or stopped the way a crash or a sleep does it.
+    use std::collections::{HashMap, HashSet};
     use std::io::{BufRead, BufReader};
     use std::net::TcpListener;
     use std::process::{Child, Command, Stdio};
@@ -357,103 +448,326 @@ mod tests {
     use zenoh_plugin_trait::PluginsManager;
 
     use super::{FromSwarm, Swarm};
-    use crate::membership::PROBE_TIMEOUT;
+    use crate::membership::{GRACE, LEASE, MemberState, PROBE_TIMEOUT};
 
     const NODE_ENV: &str = "EXO_SWARM_TEST_NODE";
-    const TEST_NAME: &str = "swarm::tests::every_node_reports_a_crashed_node_as_gone";
+    /// Set to make these tests fail, instead of skipping, where there is no IPv6 loopback
+    const REQUIRED_ENV: &str = "EXO_SWARM_TESTS_REQUIRED";
     const MESH_TIMEOUT: Duration = Duration::from_secs(30);
+    /// For seeing the lines a node prints, and a tick (1 s) to pass
+    const SLACK: Duration = Duration::from_secs(3);
 
     #[test]
     fn every_node_reports_a_crashed_node_as_gone() {
+        const NAME: &str = "swarm::tests::every_node_reports_a_crashed_node_as_gone";
         if let Ok(spec) = std::env::var(NODE_ENV) {
             run_node(&spec);
             return;
         }
-        let count = 3;
-        let Some(ports) = free_ports(count) else {
-            eprintln!("skipping: no IPv6 loopback to run nodes on");
+        let grace = Duration::from_secs(3);
+        let Some(mut cluster) = Cluster::start(NAME, 3, grace) else {
             return;
         };
-        let zids: Vec<String> = (0..count)
-            .map(|_| format!("{:x}", rand::random::<u128>() | (1 << 124)))
-            .collect();
-        let (events_tx, events) = std_mpsc::channel::<(usize, String, String)>();
-        let mut children: Vec<Child> = (0..count)
-            .map(|i| {
-                let peers: Vec<String> = (0..count)
-                    .filter(|&j| j != i)
-                    .map(|j| format!("{}@{}", zids[j], ports[j]))
-                    .collect();
-                let mut child = Command::new(std::env::current_exe().expect("test binary"))
-                    .args(["--exact", TEST_NAME, "--nocapture", "--test-threads=1"])
-                    .env(
-                        NODE_ENV,
-                        format!("{}@{} {}", zids[i], ports[i], peers.join(" ")),
-                    )
-                    // Events go to stderr: libtest's own "test <name> ..." line on stdout
-                    // isn't ended before the test's output
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::piped())
-                    .spawn()
-                    .expect("start a node");
-                let stderr = child.stderr.take().expect("node stderr");
-                let events_tx = events_tx.clone();
-                std::thread::spawn(move || {
-                    for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                        let mut words = line.split_whitespace();
-                        if words.next() != Some("SWARM") {
-                            continue;
-                        }
-                        if let (Some(kind), Some(zid)) = (words.next(), words.next()) {
-                            let _ = events_tx.send((i, kind.to_owned(), zid.to_owned()));
-                        }
-                    }
-                });
-                child
-            })
-            .collect();
-
-        let mut joined: Vec<HashSet<String>> = vec![HashSet::new(); count];
-        let deadline = Instant::now() + MESH_TIMEOUT;
-        while joined.iter().any(|nodes| nodes.len() < count) {
-            match events.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-                Ok((node, kind, zid)) if kind == "joined" => {
-                    joined[node].insert(zid);
-                }
-                Ok(_) => {}
-                Err(_) => {
-                    kill_all(&mut children);
-                    panic!("the nodes never all saw each other: {joined:?}");
-                }
-            }
-        }
-
         let victim = 1;
-        children[victim].kill().expect("kill a node");
-        let mut reported: HashSet<usize> = HashSet::new();
-        let deadline = Instant::now() + PROBE_TIMEOUT + Duration::from_secs(3);
-        while reported.len() < count - 1 {
-            match events.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-                Ok((node, kind, zid)) if kind == "left" && zid == zids[victim] => {
-                    reported.insert(node);
-                }
-                Ok(_) => {}
-                Err(_) => break,
-            }
+        let observers = cluster.others(victim);
+        let killed = Instant::now();
+        cluster.kill(victim);
+
+        let suspect = cluster.wait_for_all(
+            &observers,
+            victim,
+            "Suspect(Disconnected)",
+            killed,
+            killed + PROBE_TIMEOUT + SLACK,
+        );
+        let gone = cluster.wait_for_all(
+            &observers,
+            victim,
+            "Gone(Disconnected)",
+            killed,
+            killed + PROBE_TIMEOUT + grace + SLACK,
+        );
+        for node in observers {
+            let after = gone[&node] - suspect[&node];
+            eprintln!(
+                "node {node}: suspect {:?} after the kill, gone {after:?} after that",
+                suspect[&node] - killed
+            );
+            assert!(
+                after >= grace - Duration::from_millis(200) && after <= grace + SLACK,
+                "node {node} reported the crashed node gone {after:?} after it was suspect"
+            );
         }
-        kill_all(&mut children);
-        assert_eq!(
-            reported.len(),
-            count - 1,
-            "only nodes {reported:?} reported the killed node {victim} as gone"
+    }
+
+    #[test]
+    fn every_node_reports_a_frozen_node_as_suspect_then_alive_again() {
+        const NAME: &str =
+            "swarm::tests::every_node_reports_a_frozen_node_as_suspect_then_alive_again";
+        if let Ok(spec) = std::env::var(NODE_ENV) {
+            run_node(&spec);
+            return;
+        }
+        let Some(mut cluster) = Cluster::start(NAME, 3, GRACE) else {
+            return;
+        };
+        let victim = 1;
+        let observers = cluster.others(victim);
+        let stopped = Instant::now();
+        cluster.signal(victim, "STOP");
+
+        let suspect = cluster.wait_for_all(
+            &observers,
+            victim,
+            "Suspect(Disconnected)",
+            stopped,
+            stopped + LEASE + PROBE_TIMEOUT + SLACK,
+        );
+        for (node, at) in &suspect {
+            let after = *at - stopped;
+            eprintln!("node {node}: suspect {after:?} after the freeze");
+            // zenoh sends 4 keep-alives per lease, so the last one came up to a quarter of a
+            // lease before the freeze
+            assert!(
+                after >= LEASE * 3 / 4 - Duration::from_millis(500),
+                "node {node} reported the frozen node suspect only {after:?} after it froze"
+            );
+        }
+        let first_suspect = suspect.values().min().copied().unwrap_or(stopped);
+
+        let resumed = Instant::now();
+        cluster.signal(victim, "CONT");
+        let alive =
+            cluster.wait_for_all(&observers, victim, "Alive", resumed, first_suspect + GRACE);
+        let alive_again = alive.values().max().map(|at| *at - resumed);
+        // It noticed its own stall
+        cluster.wait_for_all(&[victim], victim, "Resuming", resumed, resumed + SLACK);
+        assert!(
+            cluster.reported("Gone").is_empty(),
+            "nobody may be gone: {:?}",
+            cluster.reported("Gone")
+        );
+        eprintln!(
+            "suspect after {:?}, alive again {alive_again:?} after it resumed",
+            first_suspect - stopped
         );
     }
 
-    fn kill_all(children: &mut [Child]) {
-        for child in children.iter_mut() {
-            let _ = child.kill();
-            let _ = child.wait();
+    /// Nodes running as child processes, and what each reports
+    struct Cluster {
+        children: Vec<Child>,
+        zids: Vec<String>,
+        events: std_mpsc::Receiver<Event>,
+        /// Every event seen so far
+        seen: Vec<Event>,
+    }
+
+    #[derive(Debug, Clone)]
+    struct Event {
+        /// Which node reported it
+        node: usize,
+        /// The state it reported, e.g. `Suspect(Disconnected)`
+        state: String,
+        /// About which node
+        about: String,
+        at: Instant,
+    }
+
+    impl Cluster {
+        /// Starts `count` nodes, each dialing the others directly, and waits until each
+        /// reports every node (itself included) Alive. `None` when there is no IPv6 loopback.
+        fn start(test_name: &str, count: usize, grace: Duration) -> Option<Self> {
+            let ports = loopback_ports(test_name, count)?;
+            let zids = random_zids(count);
+            let mut cluster = Self::spawn(test_name, grace, &zids, &ports, |_, to| ports[to]);
+            cluster.wait_for_mesh();
+            Some(cluster)
         }
+
+        /// Starts a node for each of `zids`, listening on `ports`; node `from` dials node
+        /// `to` on `port_of(from, to)`
+        fn spawn(
+            test_name: &str,
+            grace: Duration,
+            zids: &[String],
+            ports: &[u16],
+            port_of: impl Fn(usize, usize) -> u16,
+        ) -> Self {
+            let count = zids.len();
+            let (events_tx, events) = std_mpsc::channel::<Event>();
+            let children: Vec<Child> = (0..count)
+                .map(|i| {
+                    let peers: Vec<String> = (0..count)
+                        .filter(|&j| j != i)
+                        .map(|j| format!("{}@{}", zids[j], port_of(i, j)))
+                        .collect();
+                    let mut child = Command::new(std::env::current_exe().expect("test binary"))
+                        .args(["--exact", test_name, "--nocapture", "--test-threads=1"])
+                        .env(
+                            NODE_ENV,
+                            format!(
+                                "{} {}@{} {}",
+                                grace.as_millis(),
+                                zids[i],
+                                ports[i],
+                                peers.join(" ")
+                            ),
+                        )
+                        // Events go to stderr: libtest's own "test <name> ..." line on stdout
+                        // isn't ended before the test's output
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::piped())
+                        .spawn()
+                        .expect("start a node");
+                    let stderr = child.stderr.take().expect("node stderr");
+                    let events_tx = events_tx.clone();
+                    std::thread::spawn(move || {
+                        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                            let mut words = line.split_whitespace();
+                            if words.next() != Some("SWARM") {
+                                continue;
+                            }
+                            if let (Some(state), Some(about)) = (words.next(), words.next()) {
+                                let _ = events_tx.send(Event {
+                                    node: i,
+                                    state: state.to_owned(),
+                                    about: about.to_owned(),
+                                    at: Instant::now(),
+                                });
+                            }
+                        }
+                    });
+                    child
+                })
+                .collect();
+            Self {
+                children,
+                zids: zids.to_vec(),
+                events,
+                seen: Vec::new(),
+            }
+        }
+
+        /// Waits until every node reports every node (itself included) Alive
+        fn wait_for_mesh(&mut self) {
+            let all: Vec<usize> = (0..self.zids.len()).collect();
+            let started = Instant::now();
+            for node in 0..self.zids.len() {
+                self.wait_for_all(&all, node, "Alive", started, started + MESH_TIMEOUT);
+            }
+        }
+
+        fn others(&self, node: usize) -> Vec<usize> {
+            (0..self.zids.len()).filter(|&i| i != node).collect()
+        }
+
+        fn kill(&mut self, node: usize) {
+            self.children[node].kill().expect("kill a node");
+        }
+
+        fn signal(&self, node: usize, signal: &str) {
+            let status = Command::new("kill")
+                .args([format!("-{signal}"), self.children[node].id().to_string()])
+                .status()
+                .expect("run kill");
+            assert!(status.success(), "kill -{signal} failed");
+        }
+
+        /// Waits until each of `nodes` has reported `state` for node `about` at `after` or
+        /// later, and returns when each first did. Panics at `deadline`.
+        fn wait_for_all(
+            &mut self,
+            nodes: &[usize],
+            about: usize,
+            state: &str,
+            after: Instant,
+            deadline: Instant,
+        ) -> HashMap<usize, Instant> {
+            let about_zid = self.zids[about].clone();
+            let matches = |event: &Event| {
+                event.about == about_zid
+                    && event.state == state
+                    && nodes.contains(&event.node)
+                    && event.at >= after
+            };
+            let mut reported: HashMap<usize, Instant> = HashMap::new();
+            for event in self.seen.iter().filter(|event| matches(event)) {
+                reported.entry(event.node).or_insert(event.at);
+            }
+            loop {
+                if nodes.iter().all(|node| reported.contains_key(node)) {
+                    return reported;
+                }
+                match self
+                    .events
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                {
+                    Ok(event) => {
+                        if matches(&event) {
+                            reported.entry(event.node).or_insert(event.at);
+                        }
+                        self.seen.push(event);
+                    }
+                    Err(_) => {
+                        let missing: HashSet<usize> = nodes
+                            .iter()
+                            .copied()
+                            .filter(|node| !reported.contains_key(node))
+                            .collect();
+                        let seen = self.seen.clone();
+                        self.stop();
+                        panic!(
+                            "nodes {missing:?} never reported node {about} {state}; saw {seen:#?}"
+                        );
+                    }
+                }
+            }
+        }
+
+        /// Every event so far whose state starts with `state`
+        fn reported(&mut self, state: &str) -> Vec<Event> {
+            self.seen.extend(self.events.try_iter());
+            self.seen
+                .iter()
+                .filter(|event| event.state.starts_with(state))
+                .cloned()
+                .collect()
+        }
+
+        fn stop(&mut self) {
+            for child in &mut self.children {
+                let _ = Command::new("kill")
+                    .args(["-CONT", &child.id().to_string()])
+                    .status();
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+
+    impl Drop for Cluster {
+        fn drop(&mut self) {
+            self.stop();
+        }
+    }
+
+    fn random_zids(count: usize) -> Vec<String> {
+        (0..count)
+            .map(|_| format!("{:x}", rand::random::<u128>() | (1 << 124)))
+            .collect()
+    }
+
+    /// `count` free ports on the IPv6 loopback. Without one (some build sandboxes) the test is
+    /// skipped, saying so, unless `EXO_SWARM_TESTS_REQUIRED` is set, when it fails.
+    fn loopback_ports(test_name: &str, count: usize) -> Option<Vec<u16>> {
+        let ports = free_ports(count);
+        if ports.is_none() {
+            let message = format!("SKIPPED {test_name}: no IPv6 loopback to run nodes on");
+            assert!(std::env::var_os(REQUIRED_ENV).is_none(), "{message}");
+            println!("{message}");
+            eprintln!("{message}");
+        }
+        ports
     }
 
     /// Ports below the ephemeral range that nothing listens on, on the IPv6 loopback
@@ -470,9 +784,16 @@ mod tests {
     }
 
     /// A node: exo's swarm on an exo-configured router that dials its peers the way discovery
-    /// does (only those with a smaller id), reporting who joins and leaves.
+    /// does (only those with a smaller id), reporting each membership change.
+    /// `spec` is `GRACE_MS ID@PORT PEER_ID@PEER_PORT...`.
     fn run_node(spec: &str) {
         let mut parts = spec.split_whitespace();
+        let grace = Duration::from_millis(
+            parts
+                .next()
+                .and_then(|ms| ms.parse().ok())
+                .expect("grace in ms"),
+        );
         let (zid, port) = parse_peer(parts.next().expect("own id and port"));
         let peers: Vec<(String, u16)> = parts.map(parse_peer).collect();
         tokio::runtime::Runtime::new()
@@ -513,15 +834,18 @@ mod tests {
                     _jh: Arc::new(crate::AbortOnDrop(dialer)),
                 };
                 let (_to_swarm, from_client) = tokio::sync::mpsc::channel(16);
-                let mut stream = Swarm {
-                    session,
-                    from_client,
-                }
-                .into_stream();
+                let mut stream = Swarm::with_grace(session, from_client, grace).into_stream();
                 while let Some(event) = stream.next().await {
                     match event {
-                        FromSwarm::Discovered { zid } => eprintln!("SWARM joined {zid}"),
-                        FromSwarm::Expired { zid } => eprintln!("SWARM left {zid}"),
+                        FromSwarm::Membership(member) => {
+                            let state = match member.state {
+                                MemberState::Alive => "Alive".to_owned(),
+                                MemberState::Resuming => "Resuming".to_owned(),
+                                MemberState::Suspect(reason) => format!("Suspect({reason:?})"),
+                                MemberState::Gone(reason) => format!("Gone({reason:?})"),
+                            };
+                            eprintln!("SWARM {state} {}", member.node);
+                        }
                         FromSwarm::Message { .. } => {}
                     }
                 }

@@ -36,6 +36,11 @@ pub fn cfg(identity: &str, listen_port: u16) -> Result<zenoh::Config> {
     cfg.insert_json5("adminspace/enabled", "true")?;
     //cfg.insert_json5("transport/link/tx/batch_size", "9216")?;
     cfg.insert_json5("transport/link/rx/buffer_size", "16777216")?;
+    // How long a silent connection is kept (see `membership::LEASE`)
+    cfg.insert_json5(
+        "transport/link/tx/lease",
+        &membership::LEASE.as_millis().to_string(),
+    )?;
     //cfg.insert_json5("timestamping/enabled", "true")?;
     cfg.insert_json5("plugins/storage_manager/__required__", "true")?;
     cfg.insert_json5(
@@ -120,4 +125,21 @@ impl Drop for AbortOnDrop {
 pub struct Session {
     pub z: ZSession,
     _jh: Arc<AbortOnDrop>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_lease_is_the_one_membership_times_from() {
+        let cfg = cfg("1f", 52414).expect("config");
+        // The setting zenoh's transport reads its lease from
+        let lease = *cfg.transport().link().tx().lease();
+        assert_eq!(
+            u128::from(lease),
+            membership::LEASE.as_millis(),
+            "zenoh's lease, in ms"
+        );
+    }
 }

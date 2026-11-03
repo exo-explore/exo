@@ -16,6 +16,9 @@ use tokio::{
 };
 use zenoh::config::ZenohId;
 
+// The stall guard's timers are the membership's, so the two agree on what a stall is
+use crate::membership::{HOLD_OFF, STALL_THRESHOLD};
+
 const GROUP: Ipv6Addr = Ipv6Addr::new(0xff12, 0, 0, 0, 0, 0, 0xe0a1, 0xde89);
 const MAGIC: [u8; 3] = *b"EXO";
 /// Replies to any of our last few Hellos are accepted. A reply can arrive after the next
@@ -26,14 +29,6 @@ const RECENT_NONCES: usize = 8;
 const BLOCKED_WARNING_INTERVAL: Duration = Duration::from_secs(60);
 /// How often to repeat that an exo with another version or namespace is on the network.
 const OTHER_CLUSTER_NOTICE_INTERVAL: Duration = Duration::from_secs(10 * 60);
-/// A pause this long (the process was suspended, the machine slept, or the runtime was
-/// starved) may have let peers expire their sessions with us while we still hold ours.
-const STALL_THRESHOLD: Duration = Duration::from_secs(5);
-/// After such a pause we neither answer nor dial peers for this long (zenoh's lease is 10s),
-/// so the stale sessions are closed before new links are made. zenoh adds a new link to a
-/// peer's existing session instead of starting a new one, and when the peer had already
-/// dropped that session it never receives our declarations again: a one-way split.
-const STALL_HOLD_OFF: Duration = Duration::from_secs(12);
 
 pub struct Discovery {
     sock: Arc<UdpSocket>,
@@ -157,7 +152,7 @@ impl Discovery {
                     if self.stall_guard.on_tick(late, Instant::now()) {
                         warn!(
                             "this node was unresponsive for {late:.0?}; ignoring peers for \
-                             {STALL_HOLD_OFF:?} so stale sessions close before reconnecting"
+                             {HOLD_OFF:?} so stale sessions close before reconnecting"
                         );
                     }
                     self.announce().await?;
@@ -322,7 +317,7 @@ impl Discovery {
     }
 }
 
-/// Ignores peers for a while after this process stalled (see `STALL_HOLD_OFF`).
+/// Ignores peers for a while after this process stalled (see `HOLD_OFF`).
 #[derive(Debug, Default)]
 struct StallGuard {
     held_off_until: Option<Instant>,
@@ -334,7 +329,7 @@ impl StallGuard {
         if late < STALL_THRESHOLD {
             return false;
         }
-        self.held_off_until = Some(now + STALL_HOLD_OFF);
+        self.held_off_until = Some(now + HOLD_OFF);
         true
     }
 
@@ -500,9 +495,9 @@ mod tests {
 
         assert!(guard.on_tick(Duration::from_secs(30), start));
         assert!(guard.holding_off(start));
-        assert!(guard.holding_off(start + STALL_HOLD_OFF.saturating_sub(Duration::from_millis(1))));
-        assert!(!guard.holding_off(start + STALL_HOLD_OFF));
-        assert!(!guard.holding_off(start + STALL_HOLD_OFF * 2));
+        assert!(guard.holding_off(start + HOLD_OFF.saturating_sub(Duration::from_millis(1))));
+        assert!(!guard.holding_off(start + HOLD_OFF));
+        assert!(!guard.holding_off(start + HOLD_OFF * 2));
     }
 
     #[tokio::test(start_paused = true)]

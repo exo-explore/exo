@@ -1,6 +1,6 @@
 import math
 from collections import Counter
-from typing import Self
+from typing import Literal, Self
 
 import anyio
 from anyio import (
@@ -10,7 +10,7 @@ from anyio import (
 )
 from loguru import logger
 
-from exo.routing.connection_message import ConnectionMessage
+from exo.routing.membership import MembershipChange
 from exo.shared.types.commands import ForwarderCommand
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, Sender
@@ -88,6 +88,24 @@ def choose_master(candidates: list[ElectionMessage]) -> ElectionMessage:
     return max(candidates)
 
 
+def connection_change(
+    change: MembershipChange,
+) -> Literal["connected", "disconnected"] | None:
+    """What a membership change means for elections: what they knew as a connection change.
+
+    Before membership had states, a node joining counted as "connected" and a node leaving as
+    "disconnected", and either starts an election round. Now a node that becomes Alive (it
+    joined, rejoined, or is reachable again) is "connected" and one that leaves Alive (for
+    Suspect, or Gone when it left) is "disconnected". Everything else starts nothing: a
+    Suspect node becoming Gone, and this node resuming after a stall or being back from it.
+    """
+    if change.became_alive:
+        return "connected"
+    if change.left_alive:
+        return "disconnected"
+    return None
+
+
 class ElectionResult(FrozenModel):
     session_id: SessionId
     won_clock: int
@@ -102,7 +120,7 @@ class Election:
         election_message_receiver: Receiver[ElectionMessage],
         election_message_sender: Sender[ElectionMessage],
         election_result_sender: Sender[ElectionResult],
-        connection_message_receiver: Receiver[ConnectionMessage],
+        membership_change_receiver: Receiver[MembershipChange],
         command_receiver: Receiver[ForwarderCommand],
         is_candidate: bool = True,
         seniority: int = 0,
@@ -123,7 +141,7 @@ class Election:
         self._em_sender = election_message_sender
         self._em_receiver = election_message_receiver
         self._er_sender = election_result_sender
-        self._cm_receiver = connection_message_receiver
+        self._membership_changes = membership_change_receiver
         self._co_receiver = command_receiver
 
         # The latest word from the master we follow: its winning message, then its heartbeats
@@ -298,11 +316,17 @@ class Election:
                 self._candidates.append(message)
 
     async def _connection_receiver(self) -> None:
-        with self._cm_receiver as connection_messages:
-            async for first in connection_messages:
+        with self._membership_changes as changes:
+            async for first in changes:
+                if connection_change(first) is None:
+                    continue
                 # Delay after connection message for time to symmetrically setup
                 await anyio.sleep(0.2)
-                rest = connection_messages.collect()
+                rest = [
+                    change
+                    for change in changes.collect()
+                    if connection_change(change) is not None
+                ]
 
                 logger.debug(
                     f"Connection messages received: {first} followed by {rest}"

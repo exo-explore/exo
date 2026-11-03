@@ -1,16 +1,20 @@
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::ext::{ByteArrayExt as _, FutureExt, PyErrExt as _};
 use crate::ext::{ResultExt as _, TokioMpscSenderExt as _};
 use futures_lite::{Stream, StreamExt as _};
-use networking::swarm::{FromSwarm, Swarm, ToSwarm, create_swarm};
+use networking::membership::{Member, MemberState, Quorum, Reason, Snapshot};
+use networking::swarm::{FromSwarm, Members, Swarm, ToSwarm, create_swarm};
 use networking::{Session, is_valid_zid};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3::{Bound, Py, PyAny, PyErr, PyResult, Python, pymethods};
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_complex_enum, gen_stub_pymethods};
+use pyo3_stub_gen::derive::{
+    gen_stub_pyclass, gen_stub_pyclass_complex_enum, gen_stub_pyclass_enum, gen_stub_pymethods,
+};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 #[gen_stub_pyclass]
@@ -19,19 +23,195 @@ pub struct PyNetworkingHandle {
     // channels
     pub to_swarm: mpsc::Sender<ToSwarm>,
     pub swarm: Arc<Mutex<Pin<Box<dyn Stream<Item = FromSwarm> + Send>>>>,
+    members: Members,
+}
+
+/// A node's state as this node sees it
+#[gen_stub_pyclass_enum]
+#[pyclass(name = "MemberState", eq, eq_int, frozen, hash, from_py_object)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PyMemberState {
+    Alive,
+    /// Unreachable now; Gone if it stays so for the grace period
+    Suspect,
+    Gone,
+    /// Only ever this node's own state, for a while after it was stopped (frozen or asleep)
+    Resuming,
+}
+
+/// Why a node isn't Alive
+#[gen_stub_pyclass_enum]
+#[pyclass(name = "LossReason", eq, eq_int, frozen, hash, from_py_object)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PyLossReason {
+    /// Its token was deleted, or its connection closed and it didn't answer
+    Disconnected,
+    /// It said it was leaving
+    Left,
+    /// Its transport is up but exo on it stopped reporting
+    Wedged,
+}
+
+/// How much of the cluster this node can reach
+#[gen_stub_pyclass_enum]
+#[pyclass(name = "Quorum", eq, eq_int, frozen, hash, from_py_object)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PyQuorum {
+    /// More than half of the nodes it knows
+    Majority,
+    /// Exactly half: two nodes with one away, or any even split
+    Half,
+    /// Less than half
+    Minority,
+}
+
+impl From<Quorum> for PyQuorum {
+    fn from(value: Quorum) -> Self {
+        match value {
+            Quorum::Majority => Self::Majority,
+            Quorum::Half => Self::Half,
+            Quorum::Minority => Self::Minority,
+        }
+    }
+}
+
+impl From<Reason> for PyLossReason {
+    fn from(value: Reason) -> Self {
+        match value {
+            Reason::Disconnected => Self::Disconnected,
+            Reason::Left => Self::Left,
+            Reason::Wedged => Self::Wedged,
+        }
+    }
+}
+
+/// The state, and the reason for one that isn't Alive
+fn split(state: MemberState) -> (PyMemberState, Option<PyLossReason>) {
+    match state {
+        MemberState::Alive => (PyMemberState::Alive, None),
+        MemberState::Resuming => (PyMemberState::Resuming, None),
+        MemberState::Suspect(reason) => (PyMemberState::Suspect, Some(reason.into())),
+        MemberState::Gone(reason) => (PyMemberState::Gone, Some(reason.into())),
+    }
+}
+
+/// Seconds since the Unix epoch
+fn timestamp(time: SystemTime) -> f64 {
+    time.duration_since(UNIX_EPOCH)
+        .map_or(0.0, |since| since.as_secs_f64())
+}
+
+/// A node and the state it has been in since `since` (seconds since the Unix epoch)
+#[gen_stub_pyclass]
+#[pyclass(name = "Member", frozen, get_all, from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyMember {
+    node: String,
+    state: PyMemberState,
+    reason: Option<PyLossReason>,
+    since: f64,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl PyMember {
+    #[new]
+    #[pyo3(signature = (node, state, reason, since))]
+    fn new(node: String, state: PyMemberState, reason: Option<PyLossReason>, since: f64) -> Self {
+        Self {
+            node,
+            state,
+            reason,
+            since,
+        }
+    }
+}
+
+impl From<Member> for PyMember {
+    fn from(member: Member) -> Self {
+        let (state, reason) = split(member.state);
+        Self {
+            node: member.node.to_string(),
+            state,
+            reason,
+            since: timestamp(member.since),
+        }
+    }
+}
+
+/// Every node this node knows of, with how much of the cluster it reaches
+#[gen_stub_pyclass]
+#[pyclass(name = "MembershipSnapshot", frozen, get_all, skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyMembershipSnapshot {
+    /// This node first, then its peers
+    members: Vec<PyMember>,
+    quorum: PyQuorum,
+    /// The Alive peers, plus this node unless it is Resuming
+    reachable: usize,
+    /// This node and every peer seen Alive, except those that left
+    last_known: usize,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl PyMembershipSnapshot {
+    #[new]
+    #[pyo3(signature = (members, quorum, reachable, last_known))]
+    fn new(members: Vec<PyMember>, quorum: PyQuorum, reachable: usize, last_known: usize) -> Self {
+        Self {
+            members,
+            quorum,
+            reachable,
+            last_known,
+        }
+    }
+}
+
+impl From<Snapshot> for PyMembershipSnapshot {
+    fn from(snapshot: Snapshot) -> Self {
+        Self {
+            members: snapshot.members.into_iter().map(PyMember::from).collect(),
+            quorum: snapshot.quorum.into(),
+            reachable: snapshot.reachable,
+            last_known: snapshot.last_known,
+        }
+    }
 }
 
 #[gen_stub_pyclass_complex_enum]
 #[pyclass(name = "FromSwarm")]
 pub enum PyFromSwarm {
-    Connection { connected: bool },
-    Message { topic: String, data: Py<PyBytes> },
+    Message {
+        topic: String,
+        data: Py<PyBytes>,
+    },
+    /// A node's state changed, as this node sees it (this node's own state too, first)
+    Membership {
+        node: String,
+        state: PyMemberState,
+        reason: Option<PyLossReason>,
+        /// Seconds since the Unix epoch
+        since: f64,
+    },
 }
 impl From<FromSwarm> for PyFromSwarm {
     fn from(value: FromSwarm) -> Self {
         match value {
-            FromSwarm::Discovered { .. } => Self::Connection { connected: true },
-            FromSwarm::Expired { .. } => Self::Connection { connected: false },
+            FromSwarm::Membership(member) => {
+                let PyMember {
+                    node,
+                    state,
+                    reason,
+                    since,
+                } = member.into();
+                Self::Membership {
+                    node,
+                    state,
+                    reason,
+                    since,
+                }
+            }
             FromSwarm::Message { topic, data } => Self::Message {
                 topic: topic,
                 data: data.pybytes(),
@@ -43,11 +223,9 @@ impl From<FromSwarm> for PyFromSwarm {
 impl PyNetworkingHandle {
     pub fn from_session(session: Session) -> Self {
         let (to_swarm, from_client) = mpsc::channel(1024);
-        let swarm = Swarm {
-            from_client,
-            session,
-        };
+        let swarm = Swarm::new(session, from_client);
         PyNetworkingHandle {
+            members: swarm.members(),
             swarm: Arc::new(Mutex::new(swarm.into_stream())),
             to_swarm,
         }
@@ -96,9 +274,15 @@ impl PyNetworkingHandle {
             .pyerr()?;
 
         Ok(PyNetworkingHandle {
+            members: swarm.members(),
             swarm: Arc::new(Mutex::new(swarm.into_stream())),
             to_swarm,
         })
+    }
+
+    /// This node's view of the cluster right now: every node it knows of, and the quorum read
+    pub fn members(&self) -> PyMembershipSnapshot {
+        self.members.snapshot().into()
     }
 
     #[gen_stub(override_return_type(
@@ -196,6 +380,11 @@ impl PyNetworkingHandle {
 pub fn networking_submodule(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyNetworkingHandle>()?;
     m.add_class::<PyFromSwarm>()?;
+    m.add_class::<PyMemberState>()?;
+    m.add_class::<PyLossReason>()?;
+    m.add_class::<PyQuorum>()?;
+    m.add_class::<PyMember>()?;
+    m.add_class::<PyMembershipSnapshot>()?;
 
     Ok(())
 }
