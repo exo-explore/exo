@@ -237,7 +237,7 @@ interface RawStateResponse {
   runners?: Record<string, unknown>;
   instanceLinks?: Record<string, RawInstanceLink>;
   downloads?: Record<string, unknown[]>;
-  // When each node last reported, stamped by the node's clock
+  // When each node last reported, stamped by the master's clock
   lastSeen?: Record<string, string>;
   // New granular node state fields
   nodeIdentities?: Record<string, RawNodeIdentity>;

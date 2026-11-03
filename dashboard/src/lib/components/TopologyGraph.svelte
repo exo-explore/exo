@@ -1206,6 +1206,21 @@
             );
         }
       }
+
+      // Said in words too, not only by dimming: outside the dimmed group,
+      // under the device
+      if (notResponding) {
+        const box = (nodeG.node() as SVGGElement).getBBox();
+        nodesGroup
+          .append("text")
+          .attr("x", nodeInfo.x)
+          .attr("y", box.y + box.height + 12)
+          .attr("text-anchor", "middle")
+          .attr("fill", "rgb(251,146,60)")
+          .attr("font-size", 10)
+          .attr("font-family", "SF Mono, Monaco, monospace")
+          .text("NOT RESPONDING");
+      }
     });
   }
 

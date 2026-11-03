@@ -13,19 +13,26 @@
  *   with some runners Ready and others gone can't serve.
  */
 
-/** Silence after which a device counts as not responding. Healthy devices
- * report about every second (at most 6.3 s apart on four busy devices); the
- * master removes a device after 15 s. */
-export const DEVICE_SILENCE_MS = 8_000;
+/** Silence after which a device counts as not responding.
+ *
+ * Healthy devices report about once a second; on four busy devices (800
+ * events/s) reports reached the master at most 6.3 s apart. The dashboard
+ * sees them up to a /state poll (1 s) later, so a healthy device can look
+ * quiet for about 7.3 s. 12 s leaves 4.7 s of margin above that, so a busy
+ * cluster doesn't flip a healthy model to Unavailable, and still flags a
+ * silent device about 3 s before the master removes it (after 15 s,
+ * NODE_SILENCE_TIMEOUT in master/main.py) and with it the model. */
+export const DEVICE_SILENCE_MS = 12_000;
 
 /**
  * When each device was last heard from, on this browser's clock.
  *
- * lastSeen is stamped by each device's own clock, which may not match the
- * browser's, so silence is measured by when a device's lastSeen last changed.
- * A device seen for the first time is placed by how far its lastSeen lags the
- * newest one, so that a device that went quiet before the page loaded is
- * known at once.
+ * lastSeen is stamped by the master's clock when it indexes each device's
+ * report (master/main.py replaces the report's own time), so devices' lastSeen
+ * compare exactly with each other, but not with the browser's clock. So
+ * silence is measured by when a device's lastSeen last changed. A device seen
+ * for the first time is placed by how far its lastSeen lags the newest one,
+ * so that a device that went quiet before the page loaded is known at once.
  */
 export class DeviceSilenceTracker {
   private heard = new Map<string, { lastSeen: string; heardAt: number }>();

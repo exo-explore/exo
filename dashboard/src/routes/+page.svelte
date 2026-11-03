@@ -2469,6 +2469,30 @@
     };
   }
 
+  // Said to screen readers when a model becomes unavailable or reconnecting,
+  // or its reason changes (the card shows it in orange)
+  let healthAnnouncement = $state("");
+  let previousHealthNotes: Record<string, string> = {};
+  $effect(() => {
+    const notes: Record<string, string> = {};
+    for (const [id, inst] of Object.entries(instanceData)) {
+      const note = getInstanceHealthNote(
+        inst,
+        getInstanceDownloadStatus(id, inst).statusText,
+      );
+      if (!note) continue;
+      const state =
+        note.statusText === "RECONNECTING" ? "reconnecting" : "unavailable";
+      notes[id] =
+        `${getModelDisplayName(getInstanceModelId(inst))} is ${state}: ${note.message}`;
+    }
+    const fresh = Object.entries(notes)
+      .filter(([id, text]) => previousHealthNotes[id] !== text)
+      .map(([, text]) => text);
+    if (fresh.length > 0) healthAnnouncement = fresh.join(". ");
+    previousHealthNotes = notes;
+  });
+
   function deriveInstanceStatus(instanceWrapped: unknown): {
     statusText: string;
     statusClass: string;
@@ -5063,6 +5087,10 @@
 <div
   class="relative h-screen w-full flex flex-col bg-exo-dark-gray overflow-hidden"
 >
+  <!-- Says when a running model becomes unavailable, for screen readers -->
+  <div class="sr-only" role="status" aria-live="polite">
+    {healthAnnouncement}
+  </div>
   <!-- Scanline overlay -->
   <!-- Scanline overlay -->
   <div
