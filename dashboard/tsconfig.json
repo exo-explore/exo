@@ -2,6 +2,7 @@
 	"extends": "./.svelte-kit/tsconfig.json",
 	"compilerOptions": {
 		"allowJs": true,
+		"allowImportingTsExtensions": true,
 		"checkJs": true,
 		"esModuleInterop": true,
 		"forceConsistentCasingInFileNames": true,
