@@ -21,7 +21,11 @@ from exo.routing.router import get_node_zid
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
-from exo.shared.types.commands import ForwarderCommand, ForwarderDownloadCommand
+from exo.shared.types.commands import (
+    DeleteInstance,
+    ForwarderCommand,
+    ForwarderDownloadCommand,
+)
 from exo.shared.types.common import NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     Event,
@@ -191,7 +195,11 @@ async def test_a_request_whose_task_was_not_added_ends_with_an_error() -> None:
 async def test_a_chat_sent_just_after_deleting_its_instance_ends_promptly() -> None:
     """The whole path: the API sends DeleteInstance and then a chat request, the master
     handles both before its own events come back to it, and the API applies what the master
-    indexed. The request must end with an error, not hang."""
+    indexed. The request must end with an error, not hang.
+
+    DELETE /instance answers only once the deletion has applied, so a chat from the same
+    client comes too late for this race. A chat from another client, sent while the deletion
+    is on its way, still meets it: the DeleteInstance is sent here without waiting for it."""
     instance = instance_on(NODE)
     topology = Topology()
     topology.add_node(NODE)
@@ -254,7 +262,7 @@ async def test_a_chat_sent_just_after_deleting_its_instance_ends_promptly() -> N
             tg.start_soon(to_api)
             tg.start_soon(api._apply_state)
 
-            await api.delete_instance(instance.instance_id)
+            await api._send(DeleteInstance(instance_id=instance.instance_id))
             body = await read_body(await start_chat(api))
             tg.cancel_scope.cancel()
 

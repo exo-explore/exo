@@ -4,12 +4,13 @@ import pytest
 from fastapi import HTTPException
 
 from exo.api.main import API
+from exo.api.tests.applying_master import sent_while_applying
 from exo.api.types import PlaceInstanceParams
 from exo.master.tests.conftest import create_node_memory, create_node_network
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask, card_cache
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
-from exo.shared.types.commands import ForwarderCommand, PlaceInstance
+from exo.shared.types.commands import CreateInstance, ForwarderCommand
 from exo.shared.types.common import NodeId, SystemId
 from exo.shared.types.memory import Memory
 from exo.shared.types.state import State
@@ -51,9 +52,14 @@ def single_node_api() -> tuple[API, Receiver[ForwarderCommand]]:
 async def test_a_placement_that_fits_is_sent_to_the_master() -> None:
     api, commands = single_node_api()
 
-    await api.place_instance(PlaceInstanceParams(model_id=MODEL.model_id))
+    _, sent = await sent_while_applying(
+        api,
+        commands,
+        lambda: api.place_instance(PlaceInstanceParams(model_id=MODEL.model_id)),
+    )
 
-    assert [type(c.command) for c in commands.collect()] == [PlaceInstance]
+    # Launched as the placement made here, so it can be sent again without starting twice
+    assert [type(command) for command in sent] == [CreateInstance]
 
 
 async def test_a_placement_that_cannot_fit_is_refused_with_the_reason() -> None:

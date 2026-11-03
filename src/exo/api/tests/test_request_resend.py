@@ -56,6 +56,7 @@ async def running_api() -> AsyncIterator[tuple[API, Receiver[ForwarderCommand]]]
     api._system_id = SystemId()  # pyright: ignore[reportPrivateUsage]
     api.command_sender, commands = channel[ForwarderCommand]()
     api._text_generation_queues = {}  # pyright: ignore[reportPrivateUsage]
+    api._image_generation_queues = {}  # pyright: ignore[reportPrivateUsage]
     api._tg = TaskGroup()  # pyright: ignore[reportPrivateUsage]
     async with api._tg:  # pyright: ignore[reportPrivateUsage]
         yield api, commands
