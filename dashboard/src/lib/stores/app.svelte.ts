@@ -23,6 +23,12 @@ import {
   extractModelIdFromDownload,
   getDownloadTag,
 } from "$lib/utils/downloads";
+import {
+  mergeConversations,
+  mergeTombstones,
+  sameConversations,
+  type Tombstones,
+} from "$lib/utils/conversation_sync";
 
 // UUID generation fallback for browsers without crypto.randomUUID
 function generateUUID(): string {
@@ -344,6 +350,28 @@ export interface Conversation {
 }
 
 const STORAGE_KEY = "exo-conversations";
+// Conversations deleted in any tab (id -> when), so merging another tab's
+// copy doesn't bring them back (see conversation_sync.ts)
+const DELETED_STORAGE_KEY = "exo-conversations-deleted";
+
+// A stored conversation with every field set. Missing times count as
+// fallbackTime: now when first loaded, 0 (older than anything) when merging.
+function normalizeConversation(
+  conversation: Partial<Conversation>,
+  fallbackTime: number,
+): Conversation {
+  return {
+    id: conversation.id ?? generateUUID(),
+    name: conversation.name ?? "Chat",
+    messages: conversation.messages ?? [],
+    createdAt: conversation.createdAt ?? fallbackTime,
+    updatedAt: conversation.updatedAt ?? fallbackTime,
+    modelId: conversation.modelId ?? null,
+    sharding: conversation.sharding ?? null,
+    instanceType: conversation.instanceType ?? null,
+    enableThinking: conversation.enableThinking ?? null,
+  };
+}
 const IMAGE_PARAMS_STORAGE_KEY = "exo-image-generation-params";
 
 // Image generation params interface matching backend API
@@ -678,12 +706,26 @@ class AppStore {
   private fetchInterval: ReturnType<typeof setInterval> | null = null;
   private previewsInterval: ReturnType<typeof setInterval> | null = null;
   private lastConversationPersistTs = 0;
+  // Conversations deleted in any tab, kept so merges don't bring them back
+  private deletedConversations: Tombstones = {};
+  // What this tab last wrote: unchanged storage needs no merge
+  private lastWrittenConversations: string | null = null;
   private previousNodeIds: Set<string> = new Set();
 
   constructor() {
     if (browser) {
       this.startPolling();
       this.loadConversationsFromStorage();
+      // Another tab saved its conversations: take in what it changed
+      window.addEventListener("storage", (event) => {
+        if (
+          event.key === null ||
+          event.key === STORAGE_KEY ||
+          event.key === DELETED_STORAGE_KEY
+        ) {
+          this.syncConversationsFromStorage();
+        }
+      });
       this.loadDebugModeFromStorage();
       this.loadTopologyOnlyModeFromStorage();
       this.loadChatSidebarVisibleFromStorage();
@@ -696,46 +738,151 @@ class AppStore {
    */
   private loadConversationsFromStorage() {
     try {
+      this.deletedConversations = this.readDeletedConversations();
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored) as Array<Partial<Conversation>>;
-        this.conversations = parsed.map((conversation) => ({
-          id: conversation.id ?? generateUUID(),
-          name: conversation.name ?? "Chat",
-          messages: conversation.messages ?? [],
-          createdAt: conversation.createdAt ?? Date.now(),
-          updatedAt: conversation.updatedAt ?? Date.now(),
-          modelId: conversation.modelId ?? null,
-          sharding: conversation.sharding ?? null,
-          instanceType: conversation.instanceType ?? null,
-          enableThinking: conversation.enableThinking ?? null,
-        }));
+        const now = Date.now();
+        this.conversations = parsed
+          .map((conversation) => normalizeConversation(conversation, now))
+          .filter(
+            (conversation) =>
+              !(
+                (this.deletedConversations[conversation.id] ?? -1) >=
+                conversation.updatedAt
+              ),
+          );
+        // Fields filled in here (ids, times) must be stored as they are now,
+        // or each later read would fill them in differently
+        if (
+          parsed.some(
+            (conversation) =>
+              !conversation.id ||
+              conversation.createdAt === undefined ||
+              conversation.updatedAt === undefined,
+          )
+        ) {
+          this.writeConversations(this.conversations);
+        }
       }
     } catch (error) {
       console.error("Failed to load conversations:", error);
     }
   }
 
+  private readDeletedConversations(): Tombstones {
+    try {
+      const stored = localStorage.getItem(DELETED_STORAGE_KEY);
+      return stored ? (JSON.parse(stored) as Tombstones) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  // The conversations other tabs saved, or null when the stored list is the
+  // one this tab last wrote
+  private readOtherTabsConversations(): Conversation[] | null {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored || stored === this.lastWrittenConversations) return null;
+    const parsed = JSON.parse(stored) as Array<Partial<Conversation>>;
+    return parsed
+      .filter((conversation) => conversation.id)
+      .map((conversation) => normalizeConversation(conversation, 0));
+  }
+
+  private writeConversations(conversations: Conversation[]) {
+    // Strip tokens from messages before saving to avoid bloating localStorage
+    const stripped = conversations.map((conv) => ({
+      ...conv,
+      messages: conv.messages.map((msg) => {
+        if (msg.tokens) {
+          const { tokens: _, ...rest } = msg;
+          return rest;
+        }
+        return msg;
+      }),
+    }));
+    const serialized = JSON.stringify(stripped);
+    localStorage.setItem(STORAGE_KEY, serialized);
+    this.lastWrittenConversations = serialized;
+  }
+
   /**
-   * Save conversations to localStorage
+   * Merge what other tabs saved into this tab's conversations: by id, the
+   * version updated last wins, and only deleted ones go away. Returns the
+   * merged list.
+   */
+  private mergeOtherTabsConversations(): Conversation[] {
+    const deleted = mergeTombstones(
+      this.deletedConversations,
+      this.readDeletedConversations(),
+      Date.now(),
+    );
+    this.deletedConversations = deleted;
+    const merged = mergeConversations(
+      this.conversations,
+      this.readOtherTabsConversations() ?? [],
+      deleted,
+    );
+    if (!sameConversations(this.conversations, merged)) {
+      this.applyMergedConversations(merged);
+    }
+    return merged;
+  }
+
+  private applyMergedConversations(merged: Conversation[]) {
+    const active = this.activeConversationId
+      ? merged.find((c) => c.id === this.activeConversationId)
+      : undefined;
+    const activeBefore = this.activeConversationId
+      ? this.conversations.find((c) => c.id === this.activeConversationId)
+      : undefined;
+    this.conversations = merged;
+    if (this.activeConversationId && !active) {
+      // Deleted in another tab
+      this.activeConversationId = null;
+      this.messages = [];
+      this.hasStartedChat = false;
+      this.isTopologyMinimized = false;
+    } else if (active && active !== activeBefore && !this.isLoading) {
+      // Changed in another tab
+      this.messages = [...active.messages];
+    }
+  }
+
+  /** Another tab saved: take in its changes, without writing. */
+  private syncConversationsFromStorage() {
+    try {
+      this.mergeOtherTabsConversations();
+    } catch (error) {
+      console.error("Failed to sync conversations:", error);
+    }
+  }
+
+  /**
+   * Save conversations to localStorage, merged with what other tabs saved
+   * so that none of theirs is lost
    */
   private saveConversationsToStorage() {
     try {
-      // Strip tokens from messages before saving to avoid bloating localStorage
-      const stripped = this.conversations.map((conv) => ({
-        ...conv,
-        messages: conv.messages.map((msg) => {
-          if (msg.tokens) {
-            const { tokens: _, ...rest } = msg;
-            return rest;
-          }
-          return msg;
-        }),
-      }));
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(stripped));
+      const merged = this.mergeOtherTabsConversations();
+      this.writeConversations(merged);
+      const deleted = JSON.stringify(this.deletedConversations);
+      if (localStorage.getItem(DELETED_STORAGE_KEY) !== deleted) {
+        localStorage.setItem(DELETED_STORAGE_KEY, deleted);
+      }
     } catch (error) {
       console.error("Failed to save conversations:", error);
     }
+  }
+
+  // Remember that conversations were deleted, for the other tabs
+  private markConversationsDeleted(ids: string[]) {
+    const now = Date.now();
+    this.deletedConversations = {
+      ...this.deletedConversations,
+      ...Object.fromEntries(ids.map((id) => [id, now])),
+    };
   }
 
   private loadDebugModeFromStorage() {
@@ -940,6 +1087,7 @@ class AppStore {
    * Delete a conversation by ID
    */
   deleteConversation(id: string) {
+    this.markConversationsDeleted([id]);
     this.conversations = this.conversations.filter((c) => c.id !== id);
 
     if (this.activeConversationId === id) {
@@ -956,6 +1104,17 @@ class AppStore {
    * Delete all conversations
    */
   deleteAllConversations() {
+    // Including those only other tabs have shown so far
+    let stored: Conversation[] = [];
+    try {
+      stored = this.readOtherTabsConversations() ?? [];
+    } catch {
+      // Unreadable: nothing more to delete
+    }
+    this.markConversationsDeleted([
+      ...this.conversations.map((c) => c.id),
+      ...stored.map((c) => c.id),
+    ]);
     this.conversations = [];
     this.activeConversationId = null;
     this.messages = [];
@@ -1198,6 +1357,8 @@ class AppStore {
     if (!message) return false;
 
     updater(message);
+    // Other tabs take the version updated last (see conversation_sync.ts)
+    conversation.updatedAt = Date.now();
     return true;
   }
 
@@ -1279,6 +1440,7 @@ class AppStore {
       timestamp: Date.now(),
     };
     conversation.messages.push(message);
+    conversation.updatedAt = Date.now();
     return message;
   }
 
