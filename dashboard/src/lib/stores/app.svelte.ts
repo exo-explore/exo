@@ -562,6 +562,11 @@ class AppStore {
   // Abort controller for stopping generation
   private currentAbortController: AbortController | null = null;
 
+  /** The message whose reply just stopped with an error, while its
+   * conversation stays open: screen readers announce only that one, not the
+   * errors saved in a conversation that is opened later */
+  freshErrorMessageId = $state<string | null>(null);
+
   // Topology state
   topologyData = $state<TopologyData | null>(null);
   instances = $state<Record<string, unknown>>({});
@@ -808,6 +813,7 @@ class AppStore {
   createConversation(name?: string): string {
     const id = generateUUID();
     const now = Date.now();
+    this.freshErrorMessageId = null;
 
     // Try to derive model and strategy immediately from selected model or running instances
     let derivedModelId = this.selectedChatModel || null;
@@ -868,6 +874,7 @@ class AppStore {
   loadConversation(id: string): boolean {
     const conversation = this.conversations.find((c) => c.id === id);
     if (!conversation) return false;
+    this.freshErrorMessageId = null;
 
     this.activeConversationId = id;
     this.messages = [...conversation.messages];
@@ -2265,6 +2272,9 @@ class AppStore {
           );
         },
       );
+      if (this.activeConversationId === targetConversationId) {
+        this.freshErrorMessageId = assistantMessageId;
+      }
       this.syncActiveMessagesIfNeeded(targetConversationId);
       this.persistConversation(targetConversationId);
     }
@@ -2335,6 +2345,7 @@ class AppStore {
     this.ttftMs = null;
     this.tps = null;
     this.totalTokens = 0;
+    this.freshErrorMessageId = null;
 
     // Build attachments from files
     const attachments: MessageAttachment[] = [];
@@ -3501,6 +3512,7 @@ export const hasStartedChat = () => appStore.hasStartedChat;
 export const messages = () => appStore.messages;
 export const currentResponse = () => appStore.currentResponse;
 export const isLoading = () => appStore.isLoading;
+export const freshErrorMessageId = () => appStore.freshErrorMessageId;
 export const ttftMs = () => appStore.ttftMs;
 export const tps = () => appStore.tps;
 export const totalTokens = () => appStore.totalTokens;

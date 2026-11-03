@@ -3,6 +3,7 @@
     messages,
     currentResponse,
     isLoading,
+    freshErrorMessageId,
     prefillProgress,
     deleteMessage,
     editAndRegenerate,
@@ -27,6 +28,7 @@
   const response = $derived(currentResponse());
   const loading = $derived(isLoading());
   const prefill = $derived(prefillProgress());
+  const freshErrorId = $derived(freshErrorMessageId());
 
   // Scroll management - user controls scroll, show button when not at bottom
   const SCROLL_THRESHOLD = 100;
@@ -636,13 +638,14 @@
                   {/if}
                 </div>
                 {#if message.error}
-                  <!-- Why the reply stopped early; what was streamed stays above -->
+                  <!-- Why the reply stopped early; what was streamed stays above.
+                       Announced when it happens, not each time it's shown. -->
                   <div
                     class="flex items-start gap-2 text-xs font-mono text-red-400/90 leading-relaxed {message.content ||
                     message.thinking
                       ? 'mt-3 pt-3 border-t border-red-500/20'
                       : ''}"
-                    role="alert"
+                    role={message.id === freshErrorId ? "alert" : undefined}
                     data-testid="message-error"
                   >
                     <svg
