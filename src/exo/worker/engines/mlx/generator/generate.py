@@ -62,6 +62,7 @@ from exo.worker.engines.mlx.types import KVCacheType, Model, SnapshotCache
 from exo.worker.engines.mlx.utils_mlx import (
     apply_chat_template,
     fix_unmatched_think_end_tokens,
+    mx_any,
     mx_barrier,
     system_prompt_token_count,
 )
@@ -542,6 +543,7 @@ def mlx_generate(
     distributed_prompt_progress_callback: Callable[[], None] | None = None,
     on_generation_token: Callable[[], None] | None = None,
     vision_processor: VisionProcessor | None = None,
+    start_layer: int = 0,
 ) -> Generator[GenerationResponse]:
     # Ensure that generation stats only contains peak memory for this generation
     mx.reset_peak_memory()
@@ -659,12 +661,34 @@ def mlx_generate(
                     request_id=str(uuid.uuid4()),
                     model_id=str(task.model),
                     start_pos=prefix_hit_length,
+                    layer_offset=start_layer,
                 )
                 remote_prefilled = True
             except Exception:
                 logger.opt(exception=True).warning(
                     "Remote prefill failed, falling back to local prefill"
                 )
+
+            # Every rank of a multi-node instance fetches the remote prefill on its own.
+            # Local prefill runs collectives, so if any rank failed, all ranks must fall
+            # back together, from the same full prompt and a fresh cache.
+            if (
+                use_remote
+                and group is not None
+                and group.size() > 1
+                and mx_any(not remote_prefilled, group)
+            ):
+                if remote_prefilled:
+                    logger.warning(
+                        "Remote prefill failed on another rank, prefilling locally"
+                    )
+                remote_prefilled = False
+                caches = make_kv_cache(model=model)
+                prompt_tokens = all_prompt_tokens
+                prefix_hit_length = 0
+                matched_index = None
+                is_exact_hit = False
+
         if not remote_prefilled:
             prefill_tps, prefill_tokens, ssm_snapshots_list = prefill(
                 model,

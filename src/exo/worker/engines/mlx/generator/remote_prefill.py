@@ -25,6 +25,7 @@ def remote_prefill(
     request_id: str,
     model_id: str,
     start_pos: int = 0,
+    layer_offset: int = 0,
 ) -> tuple[float, int, list[CacheSnapshot]]:
     t0 = time.perf_counter()
     total_prompt_tokens = int(prompt_tokens.shape[0])
@@ -57,7 +58,9 @@ def remote_prefill(
     t_received = time.perf_counter()
 
     caches = cast(list[KVCache | RotatingKVCache | ArraysCache], list(cache))
-    final_offset = ingest_into_mlx_cache(result, caches, start_pos=start_pos)
+    final_offset = ingest_into_mlx_cache(
+        result, caches, start_pos=start_pos, layer_offset=layer_offset
+    )
     t_done = time.perf_counter()
 
     num_tokens = final_offset - start_pos

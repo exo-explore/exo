@@ -101,6 +101,9 @@ class SequentialGenerator(Engine):
     event_sender: MpSender[Event]
     vision_processor: VisionProcessor | None = None
     check_for_cancel_every: int = 50
+    # Global index of this rank's first layer (the shard's start_layer). A remote
+    # prefill sends every layer by its global index.
+    start_layer: int = 0
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
     _maybe_queue: list[TextGeneration] = field(default_factory=list, init=False)
@@ -301,6 +304,7 @@ class SequentialGenerator(Engine):
             on_generation_token=on_generation_token,
             group=self.group,
             vision_processor=self.vision_processor,
+            start_layer=self.start_layer,
         )
 
     def close(self) -> None:
@@ -336,6 +340,7 @@ class BatchGenerator(Engine):
     event_sender: MpSender[Event]
     check_for_cancel_every: int = 50
     vision_processor: VisionProcessor | None = None
+    start_layer: int = 0
 
     _cancelled_tasks: set[TaskId] = field(default_factory=set, init=False)
     _maybe_queue: list[TextGeneration] = field(default_factory=list, init=False)
@@ -359,6 +364,7 @@ class BatchGenerator(Engine):
             group=self.group,
             kv_prefix_cache=self.kv_prefix_cache,
             vision_processor=self.vision_processor,
+            start_layer=self.start_layer,
         )
 
     def warmup(self):

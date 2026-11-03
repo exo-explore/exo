@@ -108,16 +108,24 @@ def ingest_into_mlx_cache(
     caches: list[KVCache | RotatingKVCache | ArraysCache],
     *,
     start_pos: int = 0,
+    layer_offset: int = 0,
 ) -> int:
+    """Inject a remote prefill into this rank's caches and return the new offset.
+
+    The prefill server numbers layers globally. A pipeline rank holds only its own
+    layers, so local cache i is global layer i + layer_offset (the shard's
+    start_layer).
+    """
     max_received = max(
         (sum(c.num_tokens for c in chunks) for chunks in result.kv_chunks.values()),
         default=0,
     )
     final_offset = start_pos + max_received
 
-    for i, cache in enumerate(caches):
-        if i in result.kv_chunks:
-            chunks = result.kv_chunks[i]
+    for local_index, cache in enumerate(caches):
+        layer_index = local_index + layer_offset
+        if layer_index in result.kv_chunks:
+            chunks = result.kv_chunks[layer_index]
             if len(chunks) == 1:
                 k_nhd, v_nhd = chunk_to_mlx_nhd(chunks[0])
             else:
@@ -141,7 +149,7 @@ def ingest_into_mlx_cache(
                 else:
                     inject_kv_chunk(cache, k_nhd, v_nhd, final_offset)
 
-        if i in result.arrays and isinstance(cache, ArraysCache):
-            inject_arrays_cache(cache, result.arrays[i])
+        if layer_index in result.arrays and isinstance(cache, ArraysCache):
+            inject_arrays_cache(cache, result.arrays[layer_index])
 
     return final_offset

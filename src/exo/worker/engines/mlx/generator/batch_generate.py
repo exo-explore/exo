@@ -49,6 +49,7 @@ from exo.worker.engines.mlx.patches.opt_batch_gen import (
 from exo.worker.engines.mlx.types import KVCacheType, Model
 from exo.worker.engines.mlx.utils_mlx import (
     fix_unmatched_think_end_tokens,
+    mx_any,
     system_prompt_token_count,
 )
 from exo.worker.engines.mlx.vision import (
@@ -98,6 +99,9 @@ class ExoBatchGenerator:
     group: mx.distributed.Group | None
     kv_prefix_cache: KVPrefixCache | None
     vision_processor: VisionProcessor | None = None
+    # Global index of this rank's first layer (the shard's start_layer). A remote
+    # prefill sends every layer by its global index.
+    start_layer: int = 0
 
     _mlx_gen: MlxBatchGenerator = field(init=False)
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
@@ -227,12 +231,33 @@ class ExoBatchGenerator:
                         request_id=str(uuid.uuid4()),
                         model_id=str(task_params.model),
                         start_pos=prefix_hit_length,
+                        layer_offset=self.start_layer,
                     )
                     remote_prefilled = True
                 except Exception:
                     logger.opt(exception=True).warning(
                         "Remote prefill failed, falling back to local prefill"
                     )
+
+            # Every rank of a multi-node instance fetches the remote prefill on its own.
+            # Local prefill runs collectives, so if any rank failed, all ranks must fall
+            # back together, from the same full prompt and a fresh cache.
+            if (
+                use_remote
+                and self.group is not None
+                and self.group.size() > 1
+                and mx_any(not remote_prefilled, self.group)
+            ):
+                if remote_prefilled:
+                    logger.warning(
+                        "Remote prefill failed on another rank, prefilling locally"
+                    )
+                remote_prefilled = False
+                cache = make_kv_cache(self.model)
+                prompt_tokens = all_prompt_tokens
+                prefix_hit_length = 0
+                matched_index = None
+                is_exact_hit = False
 
             if not remote_prefilled:
                 _prefill_tps, _prefill_tokens, cache_snapshots = prefill(
