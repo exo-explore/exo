@@ -1,6 +1,6 @@
 # pyright: reportUnusedImport = false
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set
 
 from exo.shared.types.common import ModelId, NodeId
 from exo.shared.types.tasks import (
@@ -54,6 +54,9 @@ def plan(
     instance_backoff: KeyedBackoff[InstanceId],
     download_backoff: KeyedBackoff[ModelId],
     failed_download_backoff: KeyedBackoff[InstanceId] | None = None,
+    # This node's runners whose process has exited, but whose last report (that they are
+    # going) has yet to come back in `all_runners`
+    exits_in_flight: Set[RunnerId] = frozenset(),
 ) -> Task | None:
     # A runner that is going (stopped, failed or exited) is left alone until its process has
     # exited and the worker forgets it; only then can it be replaced.
@@ -75,7 +78,9 @@ def plan(
     return (
         _cancel_tasks(live, tasks)
         or _kill_runner(live, all_runners, instances)
-        or _create_runner(node_id, runners, all_runners, instances, instance_backoff)
+        or _create_runner(
+            node_id, runners, all_runners, instances, instance_backoff, exits_in_flight
+        )
         or _model_needs_download(
             node_id,
             live,
@@ -105,23 +110,33 @@ _JOINED = (
 _GOING = (RunnerFailed, RunnerShuttingDown)
 
 
+def joined_to(runner: RunnerSupervisor, peer: RunnerId) -> bool:
+    """Whether `runner` has joined the other runner `peer` of its instance, so that it must go
+    when `peer` goes."""
+    return (
+        not runner.stopping
+        and isinstance(runner.status, _JOINED)
+        and peer != runner.bound_instance.bound_runner_id
+        and peer in runner.bound_instance.instance.shard_assignments.runner_to_shard
+    )
+
+
 def _kill_runner(
     runners: Mapping[RunnerId, RunnerSupervisor],
     all_runners: Mapping[RunnerId, RunnerStatus],
     instances: Mapping[InstanceId, Instance],
 ) -> Shutdown | None:
     """Stop a runner whose instance is gone, or that has joined runners of its instance
-    of which one is going (a runner that failed stops itself). An idle runner is tied to
-    no other: it waits for the others' replacements."""
+    of which one is going, or was seen going (`peer_went`). A runner that failed stops
+    itself. An idle runner is tied to no other: it waits for the others' replacements."""
     for runner in runners.values():
         runner_id = runner.bound_instance.bound_runner_id
         instance_id = runner.bound_instance.instance.instance_id
         if instance_id not in instances:
             return Shutdown(instance_id=instance_id, runner_id=runner_id)
-        if isinstance(runner.status, _JOINED) and any(
-            isinstance(all_runners.get(peer), _GOING)
+        if runner.peer_went or any(
+            joined_to(runner, peer) and isinstance(all_runners.get(peer), _GOING)
             for peer in runner.bound_instance.instance.shard_assignments.node_to_runner.values()
-            if peer != runner_id
         ):
             return Shutdown(instance_id=instance_id, runner_id=runner_id)
 
@@ -132,6 +147,7 @@ def _create_runner(
     all_runners: Mapping[RunnerId, RunnerStatus],
     instances: Mapping[InstanceId, Instance],
     instance_backoff: KeyedBackoff[InstanceId],
+    exits_in_flight: Set[RunnerId],
 ) -> CreateRunner | None:
     for instance in instances.values():
         runner_id = instance.shard_assignments.node_to_runner.get(node_id, None)
@@ -139,6 +155,12 @@ def _create_runner(
             continue
 
         if runner_id in runners:
+            continue
+
+        # Until this node's last report on the runner it replaces is back in its copy of the
+        # state, that copy can still hold what the old process last said (Idle, Connecting):
+        # this plan, and the other nodes', would take it for the new runner's.
+        if runner_id in exits_in_flight:
             continue
 
         # A runner of the instance that has joined others is tied to this runner's last

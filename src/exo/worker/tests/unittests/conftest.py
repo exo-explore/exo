@@ -26,6 +26,7 @@ class FakeRunnerSupervisor:
     pending: dict[TaskId, object] = field(default_factory=dict)
     awaiting_acknowledgement: bool = False
     stopping: bool = False
+    peer_went: bool = False
 
 
 class OtherTask(BaseTask):
