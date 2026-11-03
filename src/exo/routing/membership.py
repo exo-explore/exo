@@ -112,7 +112,7 @@ class MembershipView(FrozenModel):
     node_id: NodeId
     self_state: MemberState
     quorum: Quorum
-    # The Alive peers, plus this node unless it is Resuming
+    # The counted Alive peers, plus this node unless it is Resuming
     reachable: int
     # This node and every peer it counts
     last_known: int

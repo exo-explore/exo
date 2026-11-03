@@ -20,6 +20,10 @@
 //! a wedged exo by a report from it. Each change is reported once, whichever input shows it
 //! first.
 //!
+//! exo tells it what only exo knows: that exo on a node reported ([`Membership::heard_from`]),
+//! that the cluster's state lists a node ([`Membership::listed`]), and that the coordinator
+//! removed one ([`Membership::forget`]).
+//!
 //! The quorum read counts this node and the peers it knows, and a peer stops counting (it stays
 //! in the view, as Gone, until it is removed) when it leaves, and when it has been Gone for
 //! [`FORGET_AFTER`]. The coordinator removing it (`forget`, unless this node still reaches it)
@@ -255,8 +259,9 @@ pub struct Member {
     pub node: ZenohId,
     pub state: MemberState,
     pub since: SystemTime,
-    /// Whether it counts in the quorum read: a peer Gone for `FORGET_AFTER`, or that left,
-    /// doesn't (it stays in the view until the coordinator removes it)
+    /// Whether it counts in the quorum read: a peer counts once it is Alive and the cluster's
+    /// state lists it; one Gone for `FORGET_AFTER`, or that left, doesn't (it stays in the view
+    /// until the coordinator removes it)
     pub counted: bool,
 }
 
@@ -266,7 +271,7 @@ pub struct Snapshot {
     /// This node first, then its peers
     pub members: Vec<Member>,
     pub quorum: Quorum,
-    /// The Alive peers, plus this node unless it is Resuming
+    /// The counted Alive peers, plus this node unless it is Resuming
     pub reachable: usize,
     /// The nodes counted in the quorum: this node and every counted peer (see `FORGET_AFTER`)
     pub last_known: usize,
@@ -293,11 +298,17 @@ struct Peer {
     /// Its time Suspect before the current state, since it was last Alive for `STEADY_AFTER`:
     /// it counts toward `GRACE` with the current time Suspect
     away_before: Duration,
-    /// Whether it counts in the quorum read (see `FORGET_AFTER`)
+    /// Whether it counts in the quorum read (see `FORGET_AFTER`): from when it is Alive and
+    /// `listed`
     counted: bool,
     /// The coordinator removed it: it leaves the view once this node reads Majority (see
     /// `forget`)
     removed: bool,
+    /// Whether the cluster's state lists it (it reported, or a snapshot named it). Until then
+    /// it doesn't count: a node that leaves before it ever reported (it quit within seconds of
+    /// starting) isn't in the cluster's state, so nothing removes it, and it would otherwise
+    /// count until `FORGET_AFTER`. Once Gone, a peer the state never listed leaves the view.
+    listed: bool,
 }
 
 #[derive(Debug)]
@@ -440,6 +451,43 @@ impl Membership {
         .then(|| self.set(node, MemberState::Alive, now))
     }
 
+    /// The cluster's state lists the node: it reported to the coordinator, or a snapshot of the
+    /// state names it. A node this one has never seen is Suspect(Disconnected) from now, and
+    /// Gone after the grace unless its transport shows it, so a node that went away before this
+    /// one started (a new coordinator can inherit such nodes, or a late report can bring one
+    /// back) is removed like any other instead of staying listed for good. A peer counts in the
+    /// quorum once it is both listed and Alive.
+    pub fn listed(&mut self, node: ZenohId, now: Now) -> Option<Member> {
+        if node == self.own {
+            return None;
+        }
+        if let Some(peer) = self.peers.get_mut(&node) {
+            if !peer.listed {
+                peer.listed = true;
+                peer.counted = peer.state == MemberState::Alive;
+            }
+            return None;
+        }
+        self.peers.insert(
+            node,
+            Peer {
+                state: MemberState::Suspect(Reason::Disconnected),
+                since: now,
+                connected: false,
+                probing: false,
+                probe_again: false,
+                opened_while_probing: false,
+                next_probe: None,
+                last_heard: None,
+                away_before: Duration::ZERO,
+                counted: false,
+                listed: true,
+                removed: false,
+            },
+        );
+        Some(self.member(node))
+    }
+
     /// The coordinator removed the node from the cluster: it leaves the view (and no longer
     /// counts), and if it comes back it is new. Only once it isn't Alive here, and this node reads
     /// Majority with it still counted, now or later:
@@ -533,6 +581,9 @@ impl Membership {
                 }
             }
         }
+        // A Gone peer the cluster's state never listed has nothing to remove: it leaves the view
+        self.peers
+            .retain(|_, peer| peer.listed || !matches!(peer.state, MemberState::Gone(_)));
 
         // Ask again, every REPROBE_INTERVAL, each node Alive without a connection of its own
         let mut ask = Vec::new();
@@ -589,7 +640,7 @@ impl Membership {
         own + self
             .peers
             .values()
-            .filter(|peer| peer.state == MemberState::Alive)
+            .filter(|peer| peer.state == MemberState::Alive && peer.counted)
             .count()
     }
 
@@ -615,7 +666,9 @@ impl Membership {
                     next_probe: None,
                     last_heard: None,
                     away_before: Duration::ZERO,
-                    counted: true,
+                    // Until the cluster's state lists it (see `listed`)
+                    counted: false,
+                    listed: false,
                     removed: false,
                 },
             );
@@ -678,8 +731,8 @@ impl Membership {
             peer.since = now;
             peer.next_probe = None;
             if state == MemberState::Alive {
-                // Back: it counts again, and isn't removed
-                peer.counted = true;
+                // Back: it counts again (once the cluster's state lists it), and isn't removed
+                peer.counted = peer.listed;
                 peer.removed = false;
             }
             if state == MemberState::Alive {
@@ -823,9 +876,11 @@ mod tests {
         (zid(n), MemberState::Gone(reason))
     }
 
+    /// A peer that joined and reported: its transport is up and the cluster's state lists it
     fn connected_peer(membership: &mut Membership, clock: &Clock, n: u8) {
         membership.token_put(zid(n), clock.now);
         membership.connection_opened(zid(n), clock.now);
+        membership.listed(zid(n), clock.now);
     }
 
     /// Closes the node's connection, and says whether that made the membership ask it
@@ -1632,6 +1687,168 @@ mod tests {
         );
         run_for(&mut membership, &mut clock, TICK);
         assert_eq!(membership.quorum(), Quorum::Majority);
+    }
+
+    // ---- Nodes the cluster's state lists ----
+
+    #[test]
+    fn a_listed_node_never_seen_is_suspect_and_gone_after_the_grace() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        assert_eq!(
+            state(membership.listed(zid(2), clock.now)),
+            Some(suspect(2, Reason::Disconnected))
+        );
+        // Listed again (it is in every report and snapshot): reported once
+        assert_eq!(membership.listed(zid(2), clock.now), None);
+        // It isn't counted: the quorum is what this node has seen
+        let snapshot = membership.snapshot();
+        assert_eq!((snapshot.reachable, snapshot.last_known), (2, 2));
+        assert_eq!(run_for(&mut membership, &mut clock, GRACE - TICK), vec![]);
+        assert_eq!(
+            run_for(&mut membership, &mut clock, TICK),
+            vec![gone(2, Reason::Disconnected)]
+        );
+    }
+
+    #[test]
+    fn a_listed_node_counts_once_its_transport_shows_it() {
+        let clock = Clock::new();
+        let mut membership = membership(&clock);
+        membership.listed(zid(1), clock.now);
+        assert_eq!(
+            state(membership.token_put(zid(1), clock.now)),
+            Some(alive(1))
+        );
+        assert_eq!(membership.snapshot().last_known, 2);
+        // A report alone doesn't show it: only the transport does
+        membership.listed(zid(2), clock.now);
+        assert_eq!(membership.heard_from(zid(2), clock.now), None);
+        assert_eq!(membership.snapshot().last_known, 2);
+    }
+
+    #[test]
+    fn listing_a_known_node_or_this_one_changes_nothing() {
+        let clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        lose(&mut membership, clock.now, 1);
+        assert_eq!(membership.listed(zid(1), clock.now), None);
+        assert_eq!(membership.listed(zid(OWN), clock.now), None);
+        assert_eq!(
+            states(membership.snapshot().members),
+            vec![alive(OWN), suspect(1, Reason::Disconnected)]
+        );
+    }
+
+    #[test]
+    fn a_listed_node_is_timed_from_the_end_of_resuming() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        membership.tick(clock.now);
+        membership.tick(clock.advance(Duration::from_secs(20)));
+        membership.listed(zid(1), clock.now);
+        assert_eq!(
+            run_for(
+                &mut membership,
+                &mut clock,
+                HOLD_OFF + REJOIN + GRACE - TICK
+            ),
+            vec![alive(OWN)]
+        );
+        assert_eq!(
+            run_for(&mut membership, &mut clock, TICK),
+            vec![gone(1, Reason::Disconnected)]
+        );
+    }
+
+    #[test]
+    fn a_node_that_leaves_before_the_cluster_lists_it_never_counts() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        // Node 2 starts and quits within seconds, before it ever reports
+        membership.token_put(zid(2), clock.now);
+        let snapshot = membership.snapshot();
+        assert_eq!((snapshot.reachable, snapshot.last_known), (2, 2));
+        membership.token_deleted(zid(2), clock.now);
+        assert_eq!(membership.quorum(), Quorum::Majority);
+        // Gone, and never listed: nothing to remove, so it leaves the view
+        run_for(&mut membership, &mut clock, GRACE);
+        assert_eq!(
+            states(membership.snapshot().members),
+            vec![alive(OWN), alive(1)]
+        );
+    }
+
+    #[test]
+    fn a_node_counts_once_it_is_alive_and_listed_in_either_order() {
+        let clock = Clock::new();
+        let mut membership = membership(&clock);
+        membership.token_put(zid(1), clock.now);
+        assert_eq!(membership.snapshot().last_known, 1);
+        membership.listed(zid(1), clock.now);
+        assert_eq!(membership.snapshot().last_known, 2);
+        membership.listed(zid(2), clock.now);
+        membership.token_put(zid(2), clock.now);
+        let snapshot = membership.snapshot();
+        assert_eq!((snapshot.reachable, snapshot.last_known), (3, 3));
+    }
+
+    #[test]
+    fn a_pair_whose_other_node_restarts_quickly_three_times_stays_a_majority() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        // It quits, and comes back under new ids that quit again before they report
+        lose(&mut membership, clock.now, 1);
+        for n in 2..=4 {
+            run_for(&mut membership, &mut clock, TICK);
+            membership.token_put(zid(n), clock.now);
+            run_for(&mut membership, &mut clock, TICK * 3);
+            membership.token_deleted(zid(n), clock.now);
+        }
+        // The last one stays and reports
+        connected_peer(&mut membership, &clock, 5);
+        assert_eq!(membership.quorum(), Quorum::Majority);
+        let snapshot = membership.snapshot();
+        // This node, the original peer (until the coordinator removes it) and the last one
+        assert_eq!((snapshot.reachable, snapshot.last_known), (2, 3));
+    }
+
+    #[test]
+    fn a_node_waking_from_a_real_sleep_blames_no_peer_for_it() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        connected_peer(&mut membership, &clock, 2);
+        membership.heard_from(zid(1), clock.now);
+        membership.heard_from(zid(2), clock.now);
+        membership.tick(clock.now);
+        // Asleep for two minutes: only the clock that counts sleep moves
+        clock.sleep(Duration::from_secs(120));
+        assert_eq!(
+            states(membership.tick(clock.advance(TICK))),
+            vec![(zid(OWN), MemberState::Resuming)]
+        );
+        // Its peers dropped their sessions with it meanwhile: it sees them close on waking
+        lose(&mut membership, clock.now, 1);
+        lose(&mut membership, clock.now, 2);
+        // Neither Gone nor wedged within a grace of the end of Resuming
+        assert_eq!(
+            run_for(
+                &mut membership,
+                &mut clock,
+                HOLD_OFF + REJOIN + GRACE - TICK
+            ),
+            vec![alive(OWN)]
+        );
+        // They are back once discovery lets them in again
+        membership.token_put(zid(1), clock.now);
+        membership.token_put(zid(2), clock.now);
+        assert_eq!(membership.quorum(), Quorum::Majority);
+        assert_eq!(membership.snapshot().last_known, 3);
     }
 
     #[test]
