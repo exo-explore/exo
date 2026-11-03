@@ -824,20 +824,18 @@
                         </div>
                       </div>
                     {:else}
+                      <!-- Nothing of the model on this device: the button a 0-byte "not started" entry had -->
                       <div
-                        class="flex flex-col items-center"
+                        class="flex flex-col items-center gap-1"
                         title="Not on this device"
                       >
-                        <span class="text-exo-medium-gray text-lg leading-none"
-                          >--</span
-                        >
                         <button
                           type="button"
-                          class="text-white/50 hover:text-exo-yellow transition-colors mt-0.5 opacity-0 group-hover:opacity-100 cursor-pointer"
+                          class="text-white/50 hover:text-exo-yellow transition-colors cursor-pointer"
                           onclick={() => downloadTo(col.nodeId, row)}
-                          title="Download to this device"
+                          title="Start download on this device"
                         >
-                          {@render downloadIcon()}
+                          {@render downloadIcon("w-6 h-6")}
                         </button>
                       </div>
                     {/if}
