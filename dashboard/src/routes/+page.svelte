@@ -3464,7 +3464,7 @@
     {
       modelId: string;
       nodeIds: string[];
-      // Names of its devices, to recognise one that comes back after a restart
+      // Names of its devices, to say which one left
       nodeNames: Record<string, string>;
       failed: boolean;
       failureReason: string | null;
@@ -3500,23 +3500,17 @@
       dismissByMessage(stoppedModelMessage(shortName, { kind: "stopped" }));
     }
     const connectedNodeIds = new Set(Object.keys(data?.nodes ?? {}));
-    const connectedNames = new Set(
-      Object.values(data?.nodes ?? {}).flatMap((node) =>
-        node.friendly_name ? [node.friendly_name] : [],
-      ),
-    );
     for (const [id, lost] of Object.entries(previousInstanceSnapshot)) {
       if (current[id] || userDeletedInstanceIds.delete(id)) continue;
       if (lost.modelId === "Unknown" || lost.modelId === "Unknown Model")
         continue;
       const shortName = getModelDisplayName(lost.modelId);
-      // A device that left, or exo restarting on one (this one included),
-      // which also gives the device a new identity
+      // A device that left, or exo restarting on this one (which gives it
+      // a new identity). Devices are told apart by id; names are for display
       const reason = whyModelStopped({
         nodeIds: lost.nodeIds,
         connectedNodeIds,
         nameOf: (nodeId) => lost.nodeNames[nodeId],
-        connectedNames,
         thisDeviceIds: readThisDeviceIds(),
       });
       if (reason.kind === "stopped" && lost.failed) {

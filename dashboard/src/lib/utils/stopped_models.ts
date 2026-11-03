@@ -1,8 +1,11 @@
 /**
  * Notices for models that stopped on their own (a device left, or exo
- * restarted on a device). Nothing restarts such a model, so the notice, with
- * its "Start again", stays until it is dismissed or the model runs again,
- * across reloads and in every tab: it is kept in localStorage.
+ * restarted on this device). Nothing restarts such a model, so the notice,
+ * with its "Start again", stays until it is dismissed or the model runs
+ * again, across reloads and in every tab: it is kept in localStorage.
+ *
+ * Devices are told apart by their node ids only. Names are for display:
+ * two Macs can share one (macOS names them "<Name>'s Mac Studio").
  */
 
 export const STOPPED_MODELS_KEY = "exo-stopped-models";
@@ -21,8 +24,6 @@ export interface StoppedModelNotice {
 export type StopReason =
   /** exo restarted on the device serving this dashboard */
   | { kind: "this-device-restarted" }
-  /** exo restarted on another device: it is back under a new identity */
-  | { kind: "device-restarted"; device: string }
   | { kind: "device-left"; device: string | null }
   /** Its devices are all still here */
   | { kind: "stopped" };
@@ -32,10 +33,8 @@ export interface StopContext {
   nodeIds: string[];
   /** Devices in the cluster now */
   connectedNodeIds: Set<string>;
-  /** A device's name when the model was last seen running */
+  /** A device's name when the model was last seen running, for display */
   nameOf: (nodeId: string) => string | undefined;
-  /** Names of the devices in the cluster now */
-  connectedNames: Set<string>;
   /** Ids this dashboard's own device has had */
   thisDeviceIds: Set<string>;
 }
@@ -53,16 +52,14 @@ export function whyModelStopped(context: StopContext): StopReason {
   if (gone.some((nodeId) => context.thisDeviceIds.has(nodeId))) {
     return { kind: "this-device-restarted" };
   }
-  const names = gone.map(context.nameOf);
-  if (names.every((name) => name && context.connectedNames.has(name))) {
-    return { kind: "device-restarted", device: names.join(", ") };
-  }
-  const missing = names.filter(
-    (name): name is string => !!name && !context.connectedNames.has(name),
-  );
+  // Any other device that went may have restarted or left for good: its new
+  // identity, if any, can't be linked to the old one (names aren't unique)
+  const names = gone
+    .map(context.nameOf)
+    .filter((name): name is string => !!name);
   return {
     kind: "device-left",
-    device: missing.length > 0 ? missing.join(", ") : null,
+    device: names.length > 0 ? names.join(", ") : null,
   };
 }
 
@@ -74,8 +71,6 @@ export function stoppedModelMessage(
   switch (reason.kind) {
     case "this-device-restarted":
       return `${modelName} stopped — exo restarted on this device`;
-    case "device-restarted":
-      return `${modelName} stopped — exo restarted on ${reason.device}`;
     case "device-left":
       return reason.device
         ? `${modelName} stopped — ${reason.device} left the cluster`

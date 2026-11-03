@@ -23,7 +23,6 @@ function context(overrides: Partial<StopContext>): StopContext {
     nodeIds: ["old-a", "c", "d"],
     connectedNodeIds: connected,
     nameOf: (nodeId) => names[nodeId],
-    connectedNames: new Set([...connected].map((nodeId) => names[nodeId])),
     thisDeviceIds: new Set(),
     ...overrides,
   };
@@ -54,16 +53,12 @@ test("exo restarted on the dashboard's own device is not a device leaving", () =
   );
 });
 
-test("a device back under a new identity restarted", () => {
-  // e.g. after a reload, when this page never knew the old identity
+test("a device back under a new identity counts as having left", () => {
+  // Its new identity can't be linked to the old one: names aren't unique
   const reason = whyModelStopped(
     context({ connectedNodeIds: new Set(["new-a", "c", "d"]) }),
   );
-  assert.deepEqual(reason, { kind: "device-restarted", device: "studio-a" });
-  assert.equal(
-    stoppedModelMessage("Qwen3 30B", reason),
-    "Qwen3 30B stopped — exo restarted on studio-a",
-  );
+  assert.deepEqual(reason, { kind: "device-left", device: "studio-a" });
 });
 
 test("all devices still here: just stopped", () => {
