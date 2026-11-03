@@ -4,6 +4,7 @@ import anyio
 
 from exo.master.main import Master
 from exo.routing.router import get_node_zid
+from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import (
     ForwarderCommand,
@@ -69,6 +70,7 @@ async def test_a_new_master_carries_on_from_its_nodes_state() -> None:
         local_event_receiver=local_recv,
         command_receiver=command_recv,
         download_command_sender=download_send,
+        membership=FakeMembership(node_id),
         initial_state=state,
     )
 
@@ -114,6 +116,7 @@ def test_a_master_of_a_new_cluster_starts_empty() -> None:
         local_event_receiver=channel[LocalForwarderEvent]()[1],
         command_receiver=channel[ForwarderCommand]()[1],
         download_command_sender=channel[ForwarderDownloadCommand]()[0],
+        membership=FakeMembership(node_id),
     )
 
     assert master.state.last_event_applied_idx == State().last_event_applied_idx

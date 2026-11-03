@@ -7,6 +7,7 @@ from loguru import logger
 
 from exo.master.main import Master
 from exo.routing.router import get_node_zid
+from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (
@@ -81,6 +82,7 @@ async def test_master():
         local_event_receiver=le_receiver,
         command_receiver=co_receiver,
         download_command_sender=fcds,
+        membership=FakeMembership(node_id),
     )
     logger.info("run the master")
     async with anyio.create_task_group() as tg:

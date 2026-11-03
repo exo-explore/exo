@@ -30,6 +30,7 @@ from exo.api.types import (
 from exo.master.main import Master
 from exo.master.tests.conftest import create_node_network
 from exo.routing.router import get_node_zid
+from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask, card_cache
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
@@ -190,6 +191,8 @@ def a_master(
         global_event_sender=global_event_sender,
         snapshot_sender=channel[StateSnapshot]()[0],
         download_command_sender=channel[ForwarderDownloadCommand]()[0],
+        # Reaching every node the state lists
+        membership=FakeMembership(node_id, *state.topology.list_nodes()),
         initial_state=state,
     )
     return master, broadcast, local_sender

@@ -1,7 +1,7 @@
-import time
+import copy
 from collections import deque
 from collections.abc import Set as AbstractSet
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from itertools import islice
 
 import anyio
@@ -20,11 +20,13 @@ from exo.routing.event_router import (
     EventRouterBrokenResourceError,
     EventRouterClosedResourceError,
 )
+from exo.routing.membership import MembershipReader, MembershipView, listed_nodes
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_TRACING_ENABLED
 from exo.shared.model_readiness import instance_is_ready, instance_readiness
 from exo.shared.models.model_cards import ModelId
 from exo.shared.request_errors import INSTANCE_GONE_BEFORE_START
+from exo.shared.topology import Topology
 from exo.shared.types.chunks import ErrorChunk, ImageChunk
 from exo.shared.types.commands import (
     AddCustomModelCard,
@@ -89,18 +91,10 @@ from exo.utils.channels import Receiver, Sender
 from exo.utils.event_buffer import MultiSourceBuffer
 from exo.utils.task_group import TaskGroup
 
-# Every node reports its info about once a second. A node the master hasn't heard from for
-# this long is treated as gone (crashed, frozen, asleep or cut off), and its instances are
-# deleted so that requests on them end with an error instead of waiting. On four busy nodes
-# (800 events/s) a healthy node's reports were never more than 6.3 s apart.
-NODE_SILENCE_TIMEOUT = timedelta(seconds=15)
-# How often the master looks for silent nodes and for instances that lost a node
+# How often the master looks for nodes to remove and for instances that lost a node. Which
+# nodes are gone, and since when, is the membership's to say (rust/networking/src/
+# membership.rs owns every liveness timer); this only bounds how late the master acts on it.
 PLAN_INTERVAL = 1.0
-# A check this late means the master itself was stalled (frozen, asleep or overloaded) and
-# couldn't hear anyone. Nodes then get time to reconnect (discovery holds off for a while
-# after a stall) and a full NODE_SILENCE_TIMEOUT to report again before any is removed.
-MASTER_STALL = 5.0
-RECONNECT_ALLOWANCE = timedelta(seconds=15)
 # Recent events kept for nodes that missed a few. A node further behind than this
 # is sent a snapshot of the current state instead of the whole history.
 REPLAYABLE_EVENTS = 10_000
@@ -195,6 +189,50 @@ def _without_requests(state: State) -> State:
 PROCESSED_COMMANDS_KEPT = 100_000
 
 
+def gone_nodes(listed: AbstractSet[NodeId], view: MembershipView) -> set[NodeId]:
+    """The listed nodes Gone in this node's membership view (Suspect for the grace period, or
+    listed and never seen for as long), as far as its quorum read lets it act on them: their
+    instances can't serve, so they are ended. Never this node itself.
+
+    - Majority, or Half (two nodes with one away, or an even split): all of them.
+    - Minority: none. This node is most likely the one cut off, and the rest of the cluster
+      still runs what it can't see.
+
+    Suspect nodes are never among them: they may be back within the grace period. Their
+    requests end at once anyway (every API checks reachability itself).
+    """
+    if view.quorum == "Minority":
+        return set()
+    return {
+        member.node_id
+        for member in view.members
+        if member.state == "Gone"
+        and member.node_id in listed
+        and member.node_id != view.node_id
+    }
+
+
+def nodes_to_remove(gone: AbstractSet[NodeId], view: MembershipView) -> set[NodeId]:
+    """Which of the gone nodes the coordinator removes from the cluster now (D4):
+
+    - Majority: all of them.
+    - Half: none yet. The node stays listed as Gone, and its instances end; it is removed
+      once it has been Gone for FORGET_AFTER (the split hold, SPLIT_HOLD): it then stops
+      counting, and the read is Majority. Removing it at once would make this side a
+      majority of one, which must not happen before the split hold. Once deployments
+      exist (step 3), this is also where the other side's deployments are kept, and
+      re-placed only after SPLIT_HOLD unless the user acts.
+    - Minority: none (no node is gone, see gone_nodes). Once they have been Gone for
+      FORGET_AFTER, they stop counting in its quorum read, which then is a majority of the
+      nodes it reaches, and they are removed.
+    """
+    match view.quorum:
+        case "Majority":
+            return set(gone)
+        case "Half" | "Minority":
+            return set()
+
+
 class NoInstanceForModelError(Exception):
     """A request for a model with no instance that can serve it: none at all (one deleted after
     the API checked for it), or none ready. The request is ended with this error: dropping it
@@ -217,11 +255,15 @@ class Master:
         global_event_sender: Sender[GlobalForwarderEvent],
         snapshot_sender: Sender[StateSnapshot],
         download_command_sender: Sender[ForwarderDownloadCommand],
+        membership: MembershipReader,
         initial_state: State | None = None,
     ):
         """global_event_sender must never block (the router's channels are unbounded): the
         master sends each event as it indexes it, without awaiting."""
         self.node_id = node_id
+        # This node's view of which nodes are reachable and gone, and of how much of the
+        # cluster it reaches: what removals and the choice of instance go by
+        self.membership = membership
         self.session_id = session_id
         # A master elected in a running cluster carries on from the state its node already
         # has, so model instances survive the change of master. Its events are numbered on
@@ -242,12 +284,11 @@ class Master:
         self._replayable_events = REPLAYABLE_EVENTS
         self._replayable_image_bytes = REPLAYABLE_IMAGE_BYTES
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
-        # Since when the master has been able to hear nodes, and when it last checked on them
-        self._listening_since = time.monotonic()
-        self._last_check: float | None = None
         # Set when a node is removed, so its instances are deleted at once rather than at the
         # next check (created by the plan loop, which waits on it)
         self._node_removed: anyio.Event | None = None
+        # The gone nodes kept listed because this node's quorum read isn't Majority
+        self._held_back: frozenset[NodeId] = frozenset()
         self._processed_commands: set[CommandId] = set()
         self._processed_order: deque[CommandId] = deque()
         self._expected_ranks: dict[TaskId, set[int]] = {}
@@ -420,7 +461,7 @@ class Master:
                         case PlaceInstance():
                             placement = place_instance(
                                 command,
-                                self.state.topology,
+                                self._reachable_topology(),
                                 self.state.instances,
                                 self.state.node_memory,
                                 self.state.node_network,
@@ -597,33 +638,27 @@ class Master:
                 await self._node_removed.wait()
 
     def _remove_silent_nodes_and_broken_instances(self) -> None:
-        check = time.monotonic()
-        if self._last_check is not None and check - self._last_check > MASTER_STALL:
-            logger.warning(
-                f"Master was unresponsive for {check - self._last_check:.0f}s; "
-                "giving nodes time to report before removing any"
-            )
-            self._listening_since = check + RECONNECT_ALLOWANCE.total_seconds()
-        self._last_check = check
-        # A node is silent only if the master was listening and didn't hear from it
-        listened = timedelta(seconds=check - self._listening_since)
-        now = datetime.now(tz=timezone.utc)
-        silent = {
-            node_id: now - seen
-            for node_id, seen in self.state.last_seen.items()
-            if min(now - seen, listened) > NODE_SILENCE_TIMEOUT
-        }
+        # Gone in this node's membership view, as far as its quorum read allows: a node that
+        # was stopped itself (frozen, or its Mac asleep) is Resuming for a while, and doesn't
+        # time the peers it lost meanwhile toward Gone, so it doesn't blame them for its stall
+        view = self.membership.view()
+        listed = listed_nodes(self.state)
+        gone = gone_nodes(listed, view)
+        self._note_held_back(listed, view)
+        members = {member.node_id: member for member in view.members}
         # Each removal is in the state as soon as it is made, so a node or an instance is
         # removed once
-        for node_id, silence in silent.items():
+        for node_id in nodes_to_remove(gone, view):
+            member = members[node_id]
             logger.info(
-                f"Manually removing node {node_id} due to inactivity "
-                f"({silence.total_seconds():.0f}s without hearing from it)"
+                f"Removing node {node_id}: gone ({member.reason}) since "
+                f"{member.since.isoformat(timespec='seconds')}"
             )
             self._index(NodeTimedOut(node_id=node_id))
 
-        # An instance that lost a node can't serve anything, so delete it straight away
-        connected = set(self.state.topology.list_nodes())
+        # An instance that lost a node can't serve anything, so delete it straight away (in
+        # an even split, while the node stays listed)
+        connected = set(self.state.topology.list_nodes()) - gone
         for instance_id, instance in list(self.state.instances.items()):
             if any(
                 node_id not in connected
@@ -639,6 +674,52 @@ class Master:
         # Delete the instances it was part of now, not at the next check
         if self._node_removed is not None:
             self._node_removed.set()
+
+    def _reachable_topology(self) -> Topology:
+        """The topology without the nodes this node can't reach now, as its membership sees
+        them: a model isn't placed on a node that can't serve it (one Suspect, or one Gone
+        that an even split keeps listed)"""
+        unreachable = [
+            node
+            for node in self.state.topology.list_nodes()
+            if not self.membership.is_reachable(node)
+        ]
+        if not unreachable:
+            return self.state.topology
+        topology = copy.deepcopy(self.state.topology)
+        for node in unreachable:
+            topology.remove_node(node)
+        return topology
+
+    def _note_held_back(
+        self, listed: AbstractSet[NodeId], view: MembershipView
+    ) -> None:
+        """Logs when the gone nodes kept listed because of this node's quorum read change"""
+        held_back = frozenset(
+            member.node_id
+            for member in view.members
+            if view.quorum != "Majority"
+            and member.state == "Gone"
+            and member.node_id in listed
+            and member.node_id != view.node_id
+        )
+        if held_back and held_back != self._held_back:
+            if view.quorum == "Minority":
+                logger.warning(
+                    f"Not removing {len(held_back)} gone node(s) or their instances: this "
+                    f"node reaches {view.reachable} of the {view.last_known} nodes it knows, "
+                    "so it is most likely the one cut off"
+                )
+            else:
+                logger.warning(
+                    f"Keeping {len(held_back)} gone node(s) listed, and ending their "
+                    f"instances: this node reaches {view.reachable} of the "
+                    f"{view.last_known} nodes it knows, exactly half, so it removes them "
+                    "only after the split hold"
+                )
+        elif self._held_back and not held_back:
+            logger.info("No longer holding back the removal of gone nodes")
+        self._held_back = held_back
 
     async def _event_processor(self) -> None:
         with self.local_event_receiver as local_events:

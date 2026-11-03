@@ -20,6 +20,7 @@ from exo.api.recent_events import RecentEvents
 from exo.api.types import ChatCompletionMessage, ChatCompletionRequest
 from exo.master.main import Master
 from exo.routing.router import get_node_zid
+from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
@@ -228,6 +229,7 @@ async def test_a_chat_sent_just_after_deleting_its_instance_ends_promptly() -> N
         global_event_sender=global_events_sender,
         snapshot_sender=channel[StateSnapshot]()[0],
         download_command_sender=channel[ForwarderDownloadCommand]()[0],
+        membership=FakeMembership(node_id, NODE),
         initial_state=initial,
     )
 

@@ -8,6 +8,7 @@ import pytest
 import exo.master.main as master_main
 from exo.master.main import Master
 from exo.master.tests.test_silent_nodes import instance_on
+from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.topology import Topology
 from exo.shared.types.commands import ForwarderCommand, ForwarderDownloadCommand
 from exo.shared.types.common import NodeId, SessionId, SystemId
@@ -56,6 +57,7 @@ async def test_a_departed_node_and_its_instances_are_removed_without_waiting_for
         local_event_receiver=local_events,
         command_receiver=commands,
         download_command_sender=download_send,
+        membership=FakeMembership(MASTER, LEAVING),
         initial_state=state,
     )
 

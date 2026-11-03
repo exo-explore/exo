@@ -10,6 +10,7 @@ import anyio
 
 from exo.master.main import Master
 from exo.routing.router import get_node_zid
+from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.commands import (
     ForwarderCommand,
@@ -73,6 +74,7 @@ async def running_master(
             local_event_receiver=local_recv,
             command_receiver=command_recv,
             download_command_sender=download_send,
+            membership=FakeMembership(node_id),
         )
     async with anyio.create_task_group() as tg:
         tg.start_soon(master.run)

@@ -178,6 +178,7 @@ class Node:
             local_event_receiver=router.receiver(topics.LOCAL_EVENTS),
             command_receiver=router.receiver(topics.COMMANDS),
             download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
+            membership=membership,
         )
 
         er_send, er_recv = channel[ElectionResult]()
@@ -330,6 +331,7 @@ class Node:
                         download_command_sender=self.router.sender(
                             topics.DOWNLOAD_COMMANDS
                         ),
+                        membership=self.membership,
                         initial_state=self._cluster_state(),
                     )
                     self._tg.start_soon(self.master.run)
