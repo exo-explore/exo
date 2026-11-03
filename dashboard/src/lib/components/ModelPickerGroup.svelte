@@ -26,7 +26,11 @@
     nodeNames: string[];
     nodeIds: string[];
   };
-  type ModelFitStatus = "fits_now" | "fits_cluster_capacity" | "too_large";
+  type ModelFitStatus =
+    | "fits_now"
+    | "no_disk_space"
+    | "fits_cluster_capacity"
+    | "too_large";
 
   type ModelPickerGroupProps = {
     group: ModelGroup;
@@ -36,6 +40,8 @@
     selectedModelId: string | null;
     canModelFit: (id: string) => boolean;
     getModelFitStatus: (id: string) => ModelFitStatus;
+    /** Why a model doesn't fit, when it's not memory (e.g. disk space) */
+    getModelFitNote?: (id: string) => string | null;
     onToggleExpand: () => void;
     onSelectModel: (modelId: string) => void;
     onToggleFavorite: (baseModelId: string) => void;
@@ -53,6 +59,7 @@
     selectedModelId,
     canModelFit,
     getModelFitStatus,
+    getModelFitNote,
     onToggleExpand,
     onSelectModel,
     onToggleFavorite,
@@ -104,15 +111,18 @@
   );
   const groupFitStatus = $derived.by((): ModelFitStatus => {
     let hasClusterCapacityOnly = false;
+    let lacksDiskOnly = false;
     for (const variant of group.variants) {
       const fitStatus = getModelFitStatus(variant.id);
       if (fitStatus === "fits_now") {
         return "fits_now";
       }
+      if (fitStatus === "no_disk_space") lacksDiskOnly = true;
       if (fitStatus === "fits_cluster_capacity") {
         hasClusterCapacityOnly = true;
       }
     }
+    if (lacksDiskOnly) return "no_disk_space";
     return hasClusterCapacityOnly ? "fits_cluster_capacity" : "too_large";
   });
 
@@ -121,6 +131,7 @@
       case "fits_now":
         return "text-white/40";
       case "fits_cluster_capacity":
+      case "no_disk_space":
         return "text-orange-400/80";
       case "too_large":
         return "text-red-400/70";
@@ -321,8 +332,11 @@
         class="text-xs font-mono flex-shrink-0 {getSizeClassForFitStatus(
           singleVariantFitStatus,
         )}"
+        title={getModelFitNote?.(group.smallestVariant.id) ?? undefined}
       >
-        {formatSize(group.smallestVariant.storage_size_megabytes)}
+        {formatSize(
+          group.smallestVariant.storage_size_megabytes,
+        )}{#if singleVariantFitStatus === "no_disk_space"}{" · no disk space"}{/if}
       </span>
     {/if}
 
@@ -531,8 +545,11 @@
             class="text-xs font-mono flex-1 {getSizeClassForFitStatus(
               fitStatus,
             )}"
+            title={getModelFitNote?.(variant.id) ?? undefined}
           >
-            {formatSize(variant.storage_size_megabytes)}
+            {formatSize(
+              variant.storage_size_megabytes,
+            )}{#if fitStatus === "no_disk_space"}{" · no disk space"}{/if}
           </span>
 
           <!-- Download indicator for this variant -->
