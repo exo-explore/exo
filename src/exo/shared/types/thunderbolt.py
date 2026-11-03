@@ -25,6 +25,28 @@ class _ReceptacleTag(BaseModel, extra="ignore"):
 
 class _ConnectivityItem(BaseModel, extra="ignore"):
     domain_uuid_key: str | None = None
+    items: list["_ConnectivityItem"] | None = Field(None, alias="_items")
+
+
+def _first_descendant_domain_uuid(items: list[_ConnectivityItem]) -> str | None:
+    """Return the first ``domain_uuid_key`` found by depth-first search.
+
+    Apple's ``system_profiler SPThunderboltDataType`` output places intermediate
+    Thunderbolt hubs/docks (e.g. an iVANKY Fusiondock Ultra) between the local
+    receptacle and the peer Mac. The hub appears as an ``_items`` entry without
+    a ``domain_uuid_key`` of its own; the peer Mac sits one level deeper. We
+    descend until we hit the first node that exposes a domain UUID, which is
+    always the actual peer endpoint regardless of how many transparent
+    switches sit between us.
+    """
+    for item in items:
+        if item.domain_uuid_key is not None:
+            return item.domain_uuid_key
+        if item.items is not None:
+            descendant = _first_descendant_domain_uuid(item.items)
+            if descendant is not None:
+                return descendant
+    return None
 
 
 class ThunderboltConnectivityData(BaseModel, extra="ignore"):
@@ -53,14 +75,7 @@ class ThunderboltConnectivityData(BaseModel, extra="ignore"):
         if self.domain_uuid_key is None or self.items is None:
             return
 
-        sink_key = next(
-            (
-                item.domain_uuid_key
-                for item in self.items
-                if item.domain_uuid_key is not None
-            ),
-            None,
-        )
+        sink_key = _first_descendant_domain_uuid(self.items)
         if sink_key is None:
             return None
 
