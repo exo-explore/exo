@@ -1,10 +1,11 @@
 """Every Shutdown task the worker creates is finished, so none stays in the cluster state.
 
-When a runner of a multi-node instance fails, each node shuts its runner down with a Shutdown
-task, and the instance's runners are started again. Those tasks were never finished: a runner
-that had died never got its task (it stayed Pending), one that took it up was no longer
+When a runner of a multi-node instance fails, each other node shuts its runner down with a
+Shutdown task, and the instance's runners are started again. Those tasks were never finished: a
+runner that had died never got its task (it stayed Pending), one that took it up was no longer
 listened to by the time it reported it done (Running), and one that didn't take it up in time
-was marked TimedOut. Each runner failure left more of them in the state for good.
+was marked TimedOut. Each runner failure left more of them in the state for good. (A runner that
+failed stops by itself, and is no longer sent one.)
 """
 
 from collections.abc import AsyncIterator
@@ -34,7 +35,6 @@ from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runners import (
     RunnerFailed,
-    RunnerIdle,
     RunnerReady,
     RunnerShuttingDown,
     RunnerStatus,
@@ -160,7 +160,7 @@ async def _cluster(
     worker._instance_backoff = no_restarts  # pyright: ignore[reportPrivateUsage]
 
     async with anyio.create_task_group() as tg:
-        tg.start_soon(supervisor.run)
+        tg.start_soon(worker._supervise, supervisor)  # pyright: ignore[reportPrivateUsage]
         tg.start_soon(worker.plan_step)
         yield worker, _Runner(supervisor, task_receiver, events_sender), event_receiver
         tg.cancel_scope.cancel()
@@ -176,10 +176,10 @@ async def _after_shutdown(worker: Worker, sent: Receiver[Event]) -> list[Event]:
     return sent.collect()
 
 
-def _shutdown_tasks_left(sent: list[Event]) -> list[Task]:
+def _shutdown_tasks_left(sent: list[Event], shutdowns: int = 1) -> list[Task]:
     """The Shutdown tasks in the cluster state once the master has applied what was sent"""
     created = [e for e in sent if isinstance(e, TaskCreated)]
-    assert [type(e.task) for e in created] == [Shutdown]
+    assert [type(e.task) for e in created] == [Shutdown] * shutdowns
     state = State()
     for idx, event in enumerate(sent):
         state = apply(state, IndexedEvent(idx=idx, event=event))
@@ -210,13 +210,14 @@ async def test_shutting_down_a_crashed_runner_leaves_no_task_behind() -> None:
         isinstance(e, RunnerStatusUpdated) and isinstance(e.runner_status, RunnerFailed)
         for e in events
     )
-    # The task could never reach the dead runner, so it used to stay Pending
-    assert _shutdown_tasks_left(events) == []
+    # The task could never reach the dead runner, so it used to stay Pending; the runner
+    # stops by itself now, and is sent no Shutdown at all
+    assert _shutdown_tasks_left(events, shutdowns=0) == []
 
 
 async def test_shutting_down_a_runner_that_takes_it_up_leaves_no_task_behind() -> None:
     # The instance's runner on the other node failed, so this node's runner is shut down
-    async with _cluster(_Process(alive=True), RunnerIdle(), PEER_FAILED) as (
+    async with _cluster(_Process(alive=True), RunnerReady(), PEER_FAILED) as (
         worker,
         runner,
         sent,
@@ -244,7 +245,7 @@ async def test_shutting_down_a_runner_that_takes_it_up_leaves_no_task_behind() -
 async def test_shutting_down_a_runner_that_never_takes_it_up_leaves_no_task_behind() -> (
     None
 ):
-    async with _cluster(_Process(alive=True), RunnerIdle(), PEER_FAILED) as (
+    async with _cluster(_Process(alive=True), RunnerReady(), PEER_FAILED) as (
         worker,
         runner,
         sent,

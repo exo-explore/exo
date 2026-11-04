@@ -1,3 +1,4 @@
+import contextlib
 import hashlib
 import time
 from collections import defaultdict
@@ -5,7 +6,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 
 import anyio
-from anyio import fail_after, to_thread
+from anyio import BrokenResourceError, ClosedResourceError, to_thread
 from loguru import logger
 
 from exo.api.types import ImageEditsTaskParams
@@ -30,6 +31,7 @@ from exo.shared.types.common import CommandId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
+    EventId,
     InputChunkReceived,
     InstanceDeleted,
     NodeDownloadProgress,
@@ -60,13 +62,19 @@ from exo.shared.types.text_generation import Base64Image, Base64ImageHash
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import DownloadCompleted, DownloadFailed
 from exo.shared.types.worker.instances import InstanceId
-from exo.shared.types.worker.runners import RunnerId, RunnerReady
+from exo.shared.types.worker.runners import (
+    RunnerFailed,
+    RunnerId,
+    RunnerReady,
+    RunnerShuttingDown,
+    RunnerStatus,
+)
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.info_gatherer.info_gatherer import GatheredInfo, InfoGatherer
 from exo.utils.info_gatherer.net_profile import check_reachable
 from exo.utils.keyed_backoff import KeyedBackoff
 from exo.utils.task_group import TaskGroup
-from exo.worker.plan import plan
+from exo.worker.plan import joined_to, plan
 from exo.worker.runner.supervisor import RunnerSupervisor
 
 # How often the custom model cards saved on this node are synced with the cluster state,
@@ -138,6 +146,13 @@ class Worker:
         # that (its info, its connections, a model it found on disk) would add it back to the
         # cluster's state
         self._reporting = True
+        # This node's runners whose process has exited, and that are yet to be replaced, with
+        # what they last were (ShuttingDown or Failed): a new master may lack it
+        self._gone: dict[RunnerId, RunnerStatus] = {}
+        # Of those, the ones whose last report has yet to come back in this node's copy of the
+        # state, by the report's event id. Until it does, that copy still holds what the old
+        # process last said (Idle, Connecting...), which would be read as its replacement's.
+        self._gone_unconfirmed: dict[RunnerId, EventId] = {}
 
     async def run(self):
         logger.info("Starting Worker")
@@ -162,7 +177,7 @@ class Worker:
             self.event_sender.close()
             self.command_sender.close()
             self.download_command_sender.close()
-            for runner in self.runners.values():
+            for runner in list(self.runners.values()):
                 runner.shutdown()
             self._stopped.set()
 
@@ -198,6 +213,15 @@ class Worker:
                 if isinstance(update, StateSnapshot):
                     self.state = update.state
                     self._snapshot_session = update.session
+                    # A report folded into the snapshot never arrives on its own
+                    for runner_id in list(self._gone_unconfirmed):
+                        if isinstance(
+                            self.state.runners.get(runner_id),
+                            (RunnerFailed, RunnerShuttingDown),
+                        ):
+                            del self._gone_unconfirmed[runner_id]
+                    # ... nor does an instance's deletion
+                    self._forget_gone_of_deleted_instances()
                     if update.session == self._awaiting_state_of:
                         self._awaiting_state_of = None
                         # Every request from before the change of master has ended
@@ -210,6 +234,17 @@ class Worker:
                 if isinstance(event, InstanceDeleted):
                     self._instance_backoff.reset(event.instance_id)
                     self._deletion_requested.pop(event.instance_id, None)
+                    self._forget_gone_of_deleted_instances()
+
+                if isinstance(event, RunnerStatusUpdated):
+                    if self._gone_unconfirmed.get(event.runner_id) == event.event_id:
+                        del self._gone_unconfirmed[event.runner_id]
+                    if isinstance(
+                        event.runner_status, (RunnerFailed, RunnerShuttingDown)
+                    ):
+                        for runner in self.runners.values():
+                            if joined_to(runner, event.runner_id):
+                                runner.peer_went = True
 
                 # Our runner for an instance has started: the attempts before it no longer
                 # count towards giving up on the instance, which is for one that can't start
@@ -262,6 +297,16 @@ class Worker:
                         cmd_id := self._tasks_with_inputs.pop(event.task_id, None)
                     ) is not None:
                         self._drop_inputs(cmd_id)
+
+    def _forget_gone_of_deleted_instances(self) -> None:
+        """A gone runner of an instance that no longer exists is never replaced"""
+        for runner_id in list(self._gone):
+            if not any(
+                runner_id in instance.shard_assignments.runner_to_shard
+                for instance in self.state.instances.values()
+            ):
+                self._gone.pop(runner_id)
+                self._gone_unconfirmed.pop(runner_id, None)
 
     def _keep_inputs_if_needed_here(self, task: TextGeneration | ImageEdits) -> None:
         """Every node receives every request's images; only the nodes that run it keep them."""
@@ -362,6 +407,7 @@ class Worker:
                 self._instance_backoff,
                 self._download_backoff,
                 self._failed_download_backoff,
+                self._gone_unconfirmed.keys(),
             )
             if task is None:
                 continue
@@ -402,6 +448,7 @@ class Worker:
             # lets not kill the worker if a runner is unresponsive
             match task:
                 case CreateRunner():
+                    self._gone.pop(task.bound_instance.bound_runner_id, None)
                     await self._create_supervisor(task)
                     self._instance_backoff.record_attempt(task.instance_id)
                     await self.event_sender.send(
@@ -458,18 +505,10 @@ class Worker:
                             )
                         )
                 case Shutdown(runner_id=runner_id):
-                    runner = self.runners.pop(runner_id)
-                    try:
-                        with fail_after(RUNNER_SHUTDOWN_GRACE):
-                            await runner.start_task(task)
-                            # Give it a moment to start shutting down by itself
-                            await runner.wait_for_acknowledgement(task.task_id)
-                    except TimeoutError:
-                        logger.warning(
-                            f"Runner {runner_id} didn't take up its shutdown, stopping it"
-                        )
-                    finally:
-                        runner.shutdown()
+                    # It stays in self.runners until its process has exited: only then is
+                    # it replaced (see _supervise)
+                    if (runner := self.runners.get(runner_id)) is not None:
+                        await runner.stop(task, RUNNER_SHUTDOWN_GRACE)
                     # The runner is stopped, which is what the task is for, and only the worker
                     # can say so: a runner that has died never gets the task, and one that takes
                     # it up is no longer listened to once it has acknowledged it, so its own
@@ -482,7 +521,8 @@ class Worker:
                 case CancelTask(
                     cancelled_task_id=cancelled_task_id, runner_id=runner_id
                 ):
-                    await self.runners[runner_id].cancel_task(cancelled_task_id)
+                    if (runner := self.runners.get(runner_id)) is not None:
+                        await runner.cancel_task(cancelled_task_id)
                     await self.event_sender.send(
                         TaskStatusUpdated(
                             task_id=task.task_id, task_status=TaskStatus.Complete
@@ -584,16 +624,31 @@ class Worker:
                     runner_status=runner.status,
                 )
             )
+        # Runners that are gone too: their instance's other runners must still be stopped,
+        # and this node waits for the report to come back before it replaces them
+        for runner_id in list(self._gone):
+            # The plan may replace one during a send: its replacement isn't going
+            if runner_id in self._gone and runner_id not in self.runners:
+                await self._report_gone(runner_id, self._gone[runner_id])
+
+    async def _report_gone(self, runner_id: RunnerId, status: RunnerStatus) -> None:
+        event = RunnerStatusUpdated(runner_id=runner_id, runner_status=status)
+        self._gone[runner_id] = status
+        self._gone_unconfirmed[runner_id] = event.event_id
+        with contextlib.suppress(ClosedResourceError, BrokenResourceError):
+            await self.event_sender.send(event)
 
     async def shutdown(self):
         self._tg.cancel_tasks()
         await self._stopped.wait()
 
     async def _start_runner_task(self, task: Task):
-        if (instance := self.state.instances.get(task.instance_id)) is not None:
-            await self.runners[
-                instance.shard_assignments.node_to_runner[self.node_id]
-            ].start_task(task)
+        if (instance := self.state.instances.get(task.instance_id)) is None:
+            return
+        runner_id = instance.shard_assignments.node_to_runner[self.node_id]
+        # A runner can leave the table while this task was being announced
+        if (runner := self.runners.get(runner_id)) is not None:
+            await runner.start_task(task)
 
     async def _create_supervisor(self, task: CreateRunner) -> RunnerSupervisor:
         """Creates and stores a new AssignedRunner with initial downloading status."""
@@ -602,8 +657,33 @@ class Worker:
             event_sender=self.event_sender.clone(),
         )
         self.runners[task.bound_instance.bound_runner_id] = runner
-        self._tg.start_soon(runner.run)
+        self._tg.start_soon(self._supervise, runner)
         return runner
+
+    async def _supervise(self, runner: RunnerSupervisor) -> None:
+        """Run the supervisor, and forget the runner once it has finished, which is once the
+        runner's process has exited. Until then the runner keeps its place in self.runners,
+        so nothing replaces it: a replacement started any earlier would meet the old process
+        still holding the instance's ports, or pair with the instance's other runners in its
+        place."""
+        try:
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(runner.report_if_unstoppable)
+                await runner.run()
+                tg.cancel_scope.cancel()
+        finally:
+            runner_id = runner.bound_instance.bound_runner_id
+            if self.runners.get(runner_id) is runner:
+                # Its last word, sent after everything its process said (so, once it is back
+                # in this node's state, nothing the old process said can follow): it is going
+                with anyio.CancelScope(shield=True):
+                    await self._report_gone(
+                        runner_id,
+                        runner.status
+                        if isinstance(runner.status, (RunnerFailed, RunnerShuttingDown))
+                        else RunnerShuttingDown(),
+                    )
+                del self.runners[runner_id]
 
     async def _poll_connection_updates(self):
         while True:
