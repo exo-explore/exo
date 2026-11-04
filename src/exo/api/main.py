@@ -7,7 +7,7 @@ import random
 import shutil
 import socket
 import time
-from collections.abc import AsyncGenerator, Callable, Iterable
+from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import partial
@@ -196,6 +196,7 @@ from exo.shared.request_errors import (
     MODEL_STOPPED,
     GenerationErrorCode,
 )
+from exo.shared.topology import Topology
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.chunks import (
     ErrorChunk,
@@ -282,6 +283,11 @@ CLUSTER_COMMAND_RESEND_INTERVAL = 5.0
 # the command is sent again.
 CLUSTER_COMMAND_TIMEOUT = (
     MASTER_SILENCE_TIMEOUT + HEARTBEAT_INTERVAL + 2 * DEFAULT_ELECTION_TIMEOUT + 5.0
+)
+# A model that would fit only with a device this node can't reach now
+PLACEMENT_UNREACHABLE_MESSAGE = (
+    "A device that could hold this model can't be reached right now. Try again in a "
+    "moment."
 )
 # A launch onto a device this node can't reach now: its model couldn't load there
 LAUNCH_UNREACHABLE_MESSAGE = (
@@ -680,27 +686,37 @@ class API:
         min_nodes: int = 1,
     ) -> Instance:
         model_card = await ModelCard.load(model_id)
+        command = PlaceInstance(
+            model_card=model_card,
+            sharding=sharding,
+            instance_meta=instance_meta,
+            min_nodes=min_nodes,
+        )
 
-        try:
-            placements = get_instance_placements(
-                PlaceInstance(
-                    model_card=model_card,
-                    sharding=sharding,
-                    instance_meta=instance_meta,
-                    min_nodes=min_nodes,
-                ),
+        def place(topology: Topology) -> Mapping[InstanceId, Instance]:
+            return get_instance_placements(
+                command,
                 node_memory=self.state.node_memory,
                 node_network=self.state.node_network,
                 node_backends=self.state.node_backends,
-                # Not on a node this node can't reach now: the model couldn't load there
-                topology=reachable_topology(self.membership, self.state.topology),
+                topology=topology,
                 current_instances=self.state.instances,
                 download_status=self.state.downloads,
                 node_rdma_ctl=self.state.node_rdma_ctl,
                 runners=self.state.runners,
                 node_identities=self.state.node_identities,
             )
+
+        # Not on a node this node can't reach now: the model couldn't load there
+        reachable = reachable_topology(self.membership, self.state.topology)
+        try:
+            placements = place(reachable)
         except ValueError as exc:
+            # It would fit with the nodes it can't reach: say that, not why it doesn't fit
+            if reachable is not self.state.topology:
+                with contextlib.suppress(ValueError):
+                    place(self.state.topology)
+                    raise ModelUnreachableError(PLACEMENT_UNREACHABLE_MESSAGE) from exc
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         current_ids = set(self.state.instances.keys())

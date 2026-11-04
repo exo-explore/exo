@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from exo.api.main import (
     API,
     LAUNCH_UNREACHABLE_MESSAGE,
+    PLACEMENT_UNREACHABLE_MESSAGE,
     ModelUnreachableError,
 )
 from exo.api.tests.applying_master import sent_while_applying
@@ -57,9 +58,11 @@ def _memory(free_gb: float) -> MemoryUsage:
     )
 
 
-def pair_api() -> tuple[API, FakeMembership, Receiver[ForwarderCommand]]:
-    """Two Macs that can each hold the model, the larger one preferred, and the membership of
-    the node the API runs on: it reaches both."""
+def pair_api(
+    small_free_gb: float = 24,
+) -> tuple[API, FakeMembership, Receiver[ForwarderCommand]]:
+    """Two Macs that can each hold the model (unless the smaller has less free), the larger one
+    preferred, and the membership of the node the API runs on: it reaches both."""
     topology = Topology()
     for node in (SMALL, LARGE):
         topology.add_node(node)
@@ -72,7 +75,7 @@ def pair_api() -> tuple[API, FakeMembership, Receiver[ForwarderCommand]]:
     api = object.__new__(API)
     api.state = State(
         topology=topology,
-        node_memory={SMALL: _memory(24), LARGE: _memory(96)},
+        node_memory={SMALL: _memory(small_free_gb), LARGE: _memory(96)},
         node_network={node: create_node_network() for node in (SMALL, LARGE)},
         node_backends={node: [Backend.MlxMetal] for node in (SMALL, LARGE)},
     )
@@ -136,3 +139,38 @@ async def test_a_launch_naming_a_node_it_cant_reach_is_answered_at_once() -> Non
     assert refused.value.code == "device_unreachable"
     assert refused.value.detail == LAUNCH_UNREACHABLE_MESSAGE
     assert commands.collect() == []
+
+
+async def test_a_model_that_fits_only_with_a_node_it_cant_reach_is_answered_so() -> (
+    None
+):
+    """The smaller Mac can't hold the model on its own, and the larger one can't be reached
+    now: the answer is that a device that could hold it can't be reached (try again), not
+    that the model doesn't fit."""
+    api, membership, commands = pair_api(small_free_gb=4)
+    await membership.lose(LARGE)
+
+    with pytest.raises(HTTPException) as refused:
+        await api.place_instance(PlaceInstanceParams(model_id=MODEL.model_id))
+
+    assert isinstance(refused.value, ModelUnreachableError)
+    assert refused.value.status_code == 503
+    assert refused.value.code == "device_unreachable"
+    assert refused.value.detail == PLACEMENT_UNREACHABLE_MESSAGE
+    assert commands.collect() == []
+
+
+async def test_a_model_that_fits_on_no_node_is_still_told_why() -> None:
+    """Too big for the two Macs together, reachable or not: the reason it doesn't fit, as
+    before"""
+    api, membership, _ = pair_api(small_free_gb=4)
+    api.state = api.state.model_copy(
+        update={"node_memory": {SMALL: _memory(4), LARGE: _memory(3)}}
+    )
+    await membership.lose(LARGE)
+
+    with pytest.raises(HTTPException) as refused:
+        await api.place_instance(PlaceInstanceParams(model_id=MODEL.model_id))
+
+    assert refused.value.status_code == 400
+    assert not isinstance(refused.value, ModelUnreachableError)
