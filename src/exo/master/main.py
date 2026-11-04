@@ -465,6 +465,17 @@ class Master:
                                 self.state.instances, placement, self.state.tasks
                             )
                             generated_events.extend(transition_events)
+                        case CreateInstance() if not instance_is_reachable(
+                            self.membership, command.instance
+                        ):
+                            # Its model couldn't load, and it would be ended as soon as the
+                            # node is removed. Refused, as PlaceInstance leaves such a node out:
+                            # the API sends a launch again until it shows, by when the node may
+                            # be back, and calls it off after CLUSTER_COMMAND_TIMEOUT.
+                            logger.warning(
+                                f"Not launching instance {command.instance.instance_id}: a "
+                                "node it needs can't be reached now"
+                            )
                         case CreateInstance():
                             try:
                                 placement = add_instance_to_placements(
