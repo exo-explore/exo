@@ -415,6 +415,87 @@ async def test_the_same_launch_tried_again_while_its_late_copy_is_undone_waits_f
     assert instance.instance_id in api.state.instances
 
 
+# A change the old master applied, but the master that replaced it never saw, is sent again
+# to the new one: the request was answered already
+
+
+OLD_MASTER = SessionId(master_node_id=NodeId("old-master"), election_clock=1)
+
+
+async def launched(
+    api: API, commands: Receiver[ForwarderCommand], events: Sender[NodeEvents]
+) -> CreateInstance:
+    """Launch an instance through the API, applied by this node's master."""
+    instance = await a_placement(api)
+    sent: list[CreateInstance] = []
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(api.create_instance, CreateInstanceParams(instance=instance))
+        with anyio.fail_after(5):
+            sent.append(await first_sent(commands, CreateInstance))
+            await events.send(next_event(api, InstanceCreated(instance=instance)))
+    return sent[0]
+
+
+async def test_a_launch_applied_by_a_master_that_lost_a_merge_is_sent_to_the_winner() -> (
+    None
+):
+    """Two sides of a split meet again: this side's master applied the launch, the other
+    side's master wins the election and never saw it. Before, the launch was answered and
+    then lost. It goes under a new command id: the winner may have seen the old one (as the
+    link came back) without applying it, and it ignores an id it has processed."""
+    async with running_api() as (api, commands, events):
+        before = api.state
+        launch = await launched(api, commands, events)
+        instance = launch.instance
+        await events.send(
+            StateSnapshot(session=NEW_MASTER, requester=SystemId(), state=before)
+        )
+        with anyio.fail_after(5):
+            resent = await first_sent(commands, CreateInstance)
+        await events.send(next_event(api, InstanceCreated(instance=instance)))
+        await until(lambda: instance.instance_id in api.state.instances)
+
+    assert resent.instance == instance
+    assert resent.command_id != launch.command_id
+
+
+async def test_a_launch_undone_since_is_not_restored_by_a_new_master() -> None:
+    """The cluster deleted the instance since (its node was lost, say): a new master
+    without it doesn't bring it back."""
+    async with running_api() as (api, commands, events):
+        before = api.state
+        instance = (await launched(api, commands, events)).instance
+        await until(lambda: instance.instance_id in api.state.instances)
+        await events.send(
+            next_event(api, InstanceDeleted(instance_id=instance.instance_id))
+        )
+        await until(lambda: instance.instance_id not in api.state.instances)
+        await events.send(
+            StateSnapshot(session=NEW_MASTER, requester=SystemId(), state=before)
+        )
+        await anyio.sleep(0.2)
+
+    assert commands.collect() == []
+
+
+async def test_catching_up_from_the_same_master_restores_nothing() -> None:
+    """A snapshot from the master that applied the launch, without it: the master changed
+    it in events this node skipped, so it isn't this node's to restore."""
+    async with running_api() as (api, commands, events):
+        await events.send(
+            StateSnapshot(session=OLD_MASTER, requester=SystemId(), state=api.state)
+        )
+        before = api.state
+        instance = (await launched(api, commands, events)).instance
+        await until(lambda: instance.instance_id in api.state.instances)
+        await events.send(
+            StateSnapshot(session=OLD_MASTER, requester=SystemId(), state=before)
+        )
+        await anyio.sleep(0.2)
+
+    assert commands.collect() == []
+
+
 # Image requests are sent again until accepted, like chats
 
 
