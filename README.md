@@ -126,13 +126,13 @@ If a Mac doesn't show up:
 
 EXO checks for updates by itself and tells you when one is ready. You can also use **Check for Updates** in EXO's menu or Settings. A Homebrew installation updates itself the same way.
 
-**Update every Mac in your cluster.** Devices running different versions of exo don't join each other, so a Mac you haven't updated yet drops out of the cluster until you update it too. Mixing versions in one cluster isn't supported.
+**Update every Mac in your cluster.** Devices running different versions of exo don't join each other, so a Mac you haven't updated yet drops out of the cluster until you update it too; the dashboard then shows "DEVICE ON ANOTHER EXO VERSION". Mixing versions in one cluster isn't supported.
 
 From source, pull the latest code, rebuild the dashboard and run `uv sync` again, on every device.
 
 #### Cluster name
 
-Devices join each other only when they use the same cluster name (in the CLI, the "namespace") and run the same build of exo (see below). By default the cluster name is `exo`, the same for every version of exo, so a device can say that another one runs a different version instead of not seeing it. The app's Automatic setting uses the app's version as the cluster name instead.
+Devices join each other only when they use the same cluster name (in the CLI, the "namespace") and run the same build of exo (see below). By default the cluster name is `exo`, in the app and from source, the same for every version of exo, so a device can say that another one runs a different version instead of not seeing it.
 
 To run separate clusters on one network, for example a test cluster next to your main one, give each cluster its own name:
 

@@ -243,7 +243,7 @@ final class ExoProcessController: ObservableObject {
                 at: exoHomeURL, withIntermediateDirectories: true
             )
             child.currentDirectoryURL = exoHomeURL
-            let settingsEnvironment = launchSettings.environment(buildTag: buildTag())
+            let settingsEnvironment = launchSettings.environment(buildID: Self.buildID)
             for variable in customEnvironmentVariables where variable.hasInvalidName {
                 Self.logger.warning(
                     "Not passing custom environment variable with invalid name \"\(variable.trimmedKey, privacy: .public)\" to exo"
@@ -463,7 +463,7 @@ final class ExoProcessController: ObservableObject {
         let decision = SettingsRestartPolicy.decide(
             status: status,
             runningEnvironment: runningSettingsEnvironment,
-            settingsEnvironment: launchSettings.environment(buildTag: buildTag()),
+            settingsEnvironment: launchSettings.environment(buildID: Self.buildID),
             modelsRunningOnThisMac: modelsRunningOnThisMac()
         )
         switch decision {
@@ -585,8 +585,21 @@ final class ExoProcessController: ObservableObject {
         Self.buildTag
     }
 
-    /// This build's version, which is also exo's cluster name when none is
-    /// set.
+    /// What exo calls this build: it connects only to devices running the same
+    /// one. The release and, when known, the commit: alpha and test builds of
+    /// different commits share one release.
+    nonisolated static var buildID: String {
+        buildID(
+            tag: buildTag,
+            commit: Bundle.main.infoDictionary?["EXOBuildCommit"] as? String)
+    }
+
+    nonisolated static func buildID(tag: String, commit: String?) -> String {
+        let commit = commit?.trimmingCharacters(in: .whitespaces) ?? ""
+        return commit.isEmpty ? tag : "\(tag) (\(commit))"
+    }
+
+    /// This build's version, as the app shows it.
     nonisolated static var buildTag: String {
         if let tag = Bundle.main.infoDictionary?["EXOBuildTag"] as? String, !tag.isEmpty {
             return tag

@@ -16,15 +16,16 @@ struct ClusterSettingsPane: View {
                 SettingTextField(
                     title: "Cluster name",
                     value: $controller.customNamespace,
-                    prompt: Text("Automatic (EXO \(ExoProcessController.buildTag))"),
+                    prompt: Text("Automatic"),
                     normalize: { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 )
                 .help("Passed to exo as EXO_ZENOH_NAMESPACE.")
             } footer: {
                 SettingFootnote(
-                    "Devices on your network with the same cluster name work together, "
-                        + "if they run compatible versions of EXO. Automatic joins only "
-                        + "devices running the same version of EXO.")
+                    "Devices on your network with the same cluster name work together when "
+                        + "they run the same version of EXO. On Automatic, every EXO on your "
+                        + "network uses one name, so one on another version is named in the "
+                        + "dashboard instead of being left out silently.")
             }
 
             Section {

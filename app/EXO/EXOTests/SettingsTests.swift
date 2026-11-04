@@ -126,10 +126,27 @@ struct ModelFolderTests {
 
 struct ExoLaunchSettingsTests {
 
-    @Test func defaultsGiveOnlyTheVersionAsClusterName() {
+    @Test func automaticPassesTheBuildAndLeavesTheClusterNameToExo() {
+        // exo keeps other builds apart itself, and with one cluster name for every
+        // release it names them instead of them forming a cluster of their own
         #expect(
-            ExoLaunchSettings().environment(buildTag: "1.0.71") == ["EXO_ZENOH_NAMESPACE": "1.0.71"]
-        )
+            ExoLaunchSettings().environment(buildID: "1.0.72 (4f1c2a9)")
+                == ["EXO_BUILD_ID": "1.0.72 (4f1c2a9)"])
+        var blank = ExoLaunchSettings()
+        blank.clusterName = "  "
+        #expect(blank.environment(buildID: "t")["EXO_ZENOH_NAMESPACE"] == nil)
+    }
+
+    @Test func theBuildIDIsTheReleaseAndTheCommit() {
+        #expect(
+            ExoProcessController.buildID(tag: "1.0.72", commit: "4f1c2a9")
+                == "1.0.72 (4f1c2a9)")
+        // Alpha and test builds share a release: the commit tells them apart
+        #expect(
+            ExoProcessController.buildID(tag: "0.0.0-alpha.0", commit: "aaa")
+                != ExoProcessController.buildID(tag: "0.0.0-alpha.0", commit: "bbb"))
+        #expect(ExoProcessController.buildID(tag: "dev", commit: nil) == "dev")
+        #expect(ExoProcessController.buildID(tag: "dev", commit: " ") == "dev")
     }
 
     @Test func eachSettingReachesExo() {
@@ -147,7 +164,8 @@ struct ExoLaunchSettingsTests {
         ]
 
         #expect(
-            settings.environment(buildTag: "1.0.71") == [
+            settings.environment(buildID: "1.0.71") == [
+                "EXO_BUILD_ID": "1.0.71",
                 "EXO_ZENOH_NAMESPACE": "studio",
                 "HF_TOKEN": "hf_secret",
                 "HF_ENDPOINT": "https://hf-mirror.com",
@@ -163,7 +181,7 @@ struct ExoLaunchSettingsTests {
     @Test func fastSynchOnIsPassed() {
         var settings = ExoLaunchSettings()
         settings.fastSynch = .on
-        #expect(settings.environment(buildTag: "t")["EXO_FAST_SYNCH"] == "true")
+        #expect(settings.environment(buildID: "t")["EXO_FAST_SYNCH"] == "true")
     }
 
     @Test func customVariablesOverrideTheOtherSettingsAndInvalidOnesAreLeftOut() {
@@ -173,7 +191,7 @@ struct ExoLaunchSettingsTests {
             CustomEnvironmentVariable(key: "EXO_OFFLINE", value: "false"),
             CustomEnvironmentVariable(key: "1BAD", value: "x"),
         ]
-        let environment = settings.environment(buildTag: "t")
+        let environment = settings.environment(buildID: "t")
         #expect(environment["EXO_OFFLINE"] == "false")
         #expect(environment["1BAD"] == nil)
     }
@@ -213,7 +231,7 @@ struct ExoLaunchSettingsTests {
         #expect(controller.customNamespace == "studio")
         #expect(controller.fastSynch == .automatic)
         #expect(controller.otherModelFolders.map(\.path) == ["/a"])
-        #expect(controller.launchSettings.environment(buildTag: "t")["EXO_FAST_SYNCH"] == nil)
+        #expect(controller.launchSettings.environment(buildID: "t")["EXO_FAST_SYNCH"] == nil)
     }
 
     @MainActor
