@@ -3,7 +3,7 @@ from copy import copy
 from itertools import count
 from math import inf
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from anyio import (
     BrokenResourceError,
@@ -18,6 +18,7 @@ from exo_rs import (
 )
 from loguru import logger
 
+from exo import __version__
 from exo.shared.constants import EXO_NODE_ZID
 from exo.shared.types.common import NodeId
 from exo.utils.channels import Receiver, Sender, channel
@@ -26,6 +27,7 @@ from exo.utils.task_group import TaskGroup
 
 from .membership import Member
 from .topics import MEMBERSHIP, PublishPolicy, TypedTopic
+from .wire import DEFAULT_CLUSTER_NAME, WIRE_VERSION, DeviceOnOtherVersion, build_id
 
 
 # A significant current limitation of the TopicRouter is that it is not capable
@@ -119,10 +121,21 @@ class Router:
         namespace: str,
         listen_port: int,
         discovery_service_port: int,
+        wire_version: int = WIRE_VERSION,
+        build: str | None = None,
     ) -> "Router":
+        """Networking that connects only to nodes with the same namespace, wire version and
+        build (this node's, unless given)."""
         return cls(
             handle=NetworkingHandle.new(
-                identity, namespace, listen_port, discovery_service_port
+                identity,
+                namespace,
+                wire_version,
+                build if build is not None else build_id(),
+                # Exos from before wire versions used the package version as the default name
+                __version__ if namespace == DEFAULT_CLUSTER_NAME else None,
+                listen_port,
+                discovery_service_port,
             )
         )
 
@@ -145,6 +158,18 @@ class Router:
         self.topic_routers[topic.topic] = cast(TopicRouter[FrozenModel], router)
         if self._tg.is_running():
             await self._networking_subscribe(topic)
+
+    def devices_on_other_versions(self) -> list[DeviceOnOtherVersion]:
+        """Devices on the network in this namespace that can't join: they run another wire
+        version or build of exo, or one from before wire versions."""
+        return [
+            DeviceOnOtherVersion(
+                addresses=addresses,
+                reason=cast(Literal["older_exo", "wire_version", "build"], reason),
+                wire_version=wire_version,
+            )
+            for addresses, reason, wire_version in self._net.devices_on_other_versions()
+        ]
 
     def sender[T: FrozenModel](self, topic: TypedTopic[T]) -> Sender[T]:
         router = self.topic_routers.get(topic.topic, None)

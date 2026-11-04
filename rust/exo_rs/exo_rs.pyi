@@ -107,7 +107,12 @@ class MembershipSnapshot:
 @typing.final
 class NetworkingHandle:
     @staticmethod
-    def new(identity: builtins.str, namespace: builtins.str, listen_port: builtins.int, discovery_service_port: builtins.int) -> NetworkingHandle: ...
+    def new(identity: builtins.str, namespace: builtins.str, wire_version: builtins.int, build_id: builtins.str, pre_gate_namespace: typing.Optional[builtins.str], listen_port: builtins.int, discovery_service_port: builtins.int) -> NetworkingHandle:
+        r"""
+        Starts this node's networking. It connects only to nodes with the same `namespace`,
+        `wire_version` and `build_id`. Exos from before wire versions are recognised under
+        `namespace`, and under `pre_gate_namespace` if given.
+        """
     def members(self) -> MembershipSnapshot:
         r"""
         This node's view of the cluster right now: every node it knows of, and the quorum read
@@ -116,6 +121,13 @@ class NetworkingHandle:
         r"""
         The coordinator removed `node` from the cluster: it stops counting in the quorum, unless
         this node still reaches it. Ignored for a node id that isn't valid.
+        """
+    def devices_on_other_versions(self) -> builtins.list[tuple[builtins.list[builtins.str], builtins.str, typing.Optional[builtins.int]]]:
+        r"""
+        The devices discovery hears in this namespace that can't join, one per device:
+        `(addresses, reason, wire_version)`. The reason is "older_exo" (from before wire
+        versions), "wire_version" (another wire version, given), or "build" (this wire version
+        but another build). A device is listed until its Hellos have stopped for 30 s.
         """
     def recv(self) -> typing.Awaitable[FromSwarm]: ...
     async def gossipsub_subscribe(self, topic: builtins.str, high_priority: builtins.bool = False) -> builtins.bool:

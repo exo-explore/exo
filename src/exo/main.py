@@ -28,6 +28,7 @@ from exo.master.main import Master
 from exo.routing.event_router import EventRouter
 from exo.routing.membership import Membership
 from exo.routing.router import Router, get_node_zid
+from exo.routing.wire import DEFAULT_CLUSTER_NAME, WIRE_VERSION, build_id
 from exo.shared.constants import (
     EXO_DEFAULT_MODELS_DIR,
     EXO_EVENT_LOG_DIR,
@@ -151,6 +152,7 @@ class Node:
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
                 election_receiver=router.receiver(topics.ELECTION_MESSAGES),
                 membership=membership,
+                devices_on_other_versions=router.devices_on_other_versions,
             )
         else:
             api = None
@@ -430,7 +432,10 @@ def main_inner(args: "Args"):
         logger.warning(
             "EXO_LIBP2P_NAMESPACE is deprecated - use EXO_ZENOH_NAMESPACE instead"
         )
-    logger.info(f"Discovery namespace: {args.namespace}")
+    logger.info(
+        f"Discovery namespace: {args.namespace} (wire version {WIRE_VERSION}, build "
+        f"{build_id()}: only nodes with all three the same connect)"
+    )
 
     if args.offline:
         logger.info("Running in OFFLINE mode — no internet checks, local models only")
@@ -470,7 +475,8 @@ def main_inner(args: "Args"):
 
 
 def default_namespace(environ: Mapping[str, str]) -> str:
-    """Namespace used when --namespace isn't given.
+    """Namespace used when --namespace isn't given: one name for every version of exo,
+    since the wire version and the build decide which nodes can talk.
 
     EXO_LIBP2P_NAMESPACE is still honoured (with a deprecation warning at
     startup) so clusters isolated before the zenoh migration stay isolated.
@@ -478,7 +484,7 @@ def default_namespace(environ: Mapping[str, str]) -> str:
     return (
         environ.get("EXO_ZENOH_NAMESPACE")
         or environ.get("EXO_LIBP2P_NAMESPACE")
-        or __version__
+        or DEFAULT_CLUSTER_NAME
     )
 
 
@@ -590,8 +596,9 @@ class Args(FrozenModel):
             type=str,
             default=default_namespace(os.environ),
             dest="namespace",
-            help="Discovery namespace, nodes with different namespaces will not connect "
-            "(env: EXO_ZENOH_NAMESPACE, defaults to the exo version).",
+            help="Discovery namespace, nodes with different namespaces will not connect, "
+            "nor will nodes that run incompatible versions of exo "
+            f"(env: EXO_ZENOH_NAMESPACE, defaults to {DEFAULT_CLUSTER_NAME!r}).",
         )
         parser.add_argument(
             "--zenoh-port",

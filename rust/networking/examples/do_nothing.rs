@@ -7,7 +7,17 @@ async fn main() -> Result<()> {
     zenoh::init_log_from_env_or("info");
     info!("Opening session...");
     let cfg = networking::cfg(&format!("{:x}", rand::random::<u128>()), 52414)?;
-    let session = networking::open(cfg, "exo", 52414, 52413).await?;
+    // Their own cluster name: exo nodes on the network don't see them as another version
+    let session = networking::open(
+        cfg,
+        "exo-networking-example",
+        0,
+        "example",
+        None,
+        52414,
+        52413,
+    )
+    .await?;
     let _tok = session
         .z
         .liveliness()

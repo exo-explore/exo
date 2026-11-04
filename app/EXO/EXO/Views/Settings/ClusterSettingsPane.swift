@@ -22,8 +22,9 @@ struct ClusterSettingsPane: View {
                 .help("Passed to exo as EXO_ZENOH_NAMESPACE.")
             } footer: {
                 SettingFootnote(
-                    "Devices on your network with the same cluster name work together. "
-                        + "Automatic joins only devices running the same version of EXO.")
+                    "Devices on your network with the same cluster name work together, "
+                        + "if they run compatible versions of EXO. Automatic joins only "
+                        + "devices running the same version of EXO.")
             }
 
             Section {

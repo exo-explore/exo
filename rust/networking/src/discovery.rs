@@ -19,6 +19,7 @@ use zenoh::config::ZenohId;
 // The stall guard uses the membership's stall rule and hold-off, so the two agree on when this
 // node was stopped (a sleep included) and on how long it holds off afterwards
 use crate::membership::{HOLD_OFF, Now, TICK, stall};
+use crate::wire::{ClusterKey, OtherVersions, Peer, PeerVersion};
 
 const GROUP: Ipv6Addr = Ipv6Addr::new(0xff12, 0, 0, 0, 0, 0, 0xe0a1, 0xde89);
 const MAGIC: [u8; 3] = *b"EXO";
@@ -28,13 +29,15 @@ const MAGIC: [u8; 3] = *b"EXO";
 const RECENT_NONCES: usize = 8;
 /// How often to repeat the warning while no Hello can be sent at all.
 const BLOCKED_WARNING_INTERVAL: Duration = Duration::from_secs(60);
-/// How often to repeat that an exo with another version or namespace is on the network.
+/// How often to repeat that an exo with another version or namespace is on the network (and,
+/// separately, that a device in this namespace runs another version).
 const OTHER_CLUSTER_NOTICE_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
 pub struct Discovery {
     sock: Arc<UdpSocket>,
     ifaces: Arc<Mutex<Vec<SocketAddrV6>>>,
-    namespace: [u8; 8],
+    cluster: ClusterKey,
+    other_versions: OtherVersions,
     recent_nonces: Mutex<RecentNonces>,
     /// the port of the service we are doing discovery for - transmitted to peers
     listen_port: u16,
@@ -43,6 +46,7 @@ pub struct Discovery {
     /// When we last warned that no Hello could be sent; `None` while sending works.
     blocked_since_warning: Mutex<Option<Instant>>,
     other_cluster_notice: Mutex<OtherClusterNotice>,
+    other_version_notice: Mutex<OtherClusterNotice>,
     stall_guard: StallGuard,
     _sync: Mutex<WatchHandle>,
 }
@@ -56,7 +60,8 @@ pub struct Discovered {
 impl Discovery {
     pub async fn new(
         zid: ZenohId,
-        namespace: [u8; 8],
+        cluster: ClusterKey,
+        other_versions: OtherVersions,
         listen_port: u16,
         discovery_port: u16,
     ) -> io::Result<Self> {
@@ -124,7 +129,8 @@ impl Discovery {
         );
         Ok(Self {
             sock,
-            namespace,
+            cluster,
+            other_versions,
             ifaces,
             recent_nonces: Mutex::new(RecentNonces::default()),
             listen_port,
@@ -137,6 +143,7 @@ impl Discovery {
             },
             blocked_since_warning: Mutex::new(None),
             other_cluster_notice: Mutex::new(OtherClusterNotice::default()),
+            other_version_notice: Mutex::new(OtherClusterNotice::default()),
             stall_guard: StallGuard::default(),
             _sync,
         })
@@ -206,18 +213,25 @@ impl Discovery {
                     trace!("dropped: local hello nonce");
                     return Ok(None);
                 }
-                if hello.namespace != self.namespace {
-                    trace!("dropped: different namespace");
-                    if self.other_cluster_notice.lock().due(Instant::now()) {
-                        info!(
-                            "found another exo at {} that can't join this cluster: it runs a \
+                match self.cluster.classify(&hello.namespace) {
+                    Peer::Compatible => {}
+                    Peer::OtherVersion(version) => {
+                        self.heard_another_version(version, hello.nonce, addr);
+                        return Ok(None);
+                    }
+                    Peer::OtherCluster => {
+                        trace!("dropped: different namespace");
+                        if self.other_cluster_notice.lock().due(Instant::now()) {
+                            info!(
+                                "found another exo at {} that can't join this cluster: it runs a \
                              different version of exo, or was started with a different \
                              namespace. Nodes connect only when both match, so update every \
                              device to the same version of exo.",
-                            addr.ip()
-                        );
+                                addr.ip()
+                            );
+                        }
+                        return Ok(None);
                     }
-                    return Ok(None);
                 }
 
                 // reply
@@ -274,12 +288,32 @@ impl Discovery {
         }
     }
 
+    /// Notes a Hello from our cluster that can't join, and says so (rate-limited).
+    fn heard_another_version(&self, version: PeerVersion, hello: [u8; 8], addr: SocketAddr) {
+        trace!("dropped: {version}");
+        let now = Instant::now();
+        self.other_versions.heard(addr.ip(), version, hello, now);
+        if self.other_version_notice.lock().due(now) {
+            let what = match version {
+                PeerVersion::Build => "another build of exo",
+                PeerVersion::Wire(_) | PeerVersion::Unversioned => "another version of exo",
+            };
+            warn!(
+                "a device at {} runs {what} ({version}; this one runs {}), so it can't join \
+                 this cluster. Devices connect only when they run the same build: update both \
+                 devices to the same version of exo.",
+                addr.ip(),
+                self.cluster.describe()
+            );
+        }
+    }
+
     async fn announce(&self) -> io::Result<()> {
         let nonce = rand::random();
         self.recent_nonces.lock().push(nonce);
         let buf = Hello {
             nonce,
-            namespace: self.namespace,
+            namespace: self.cluster.hash(),
         }
         .alloc();
 
@@ -560,6 +594,41 @@ mod tests {
         assert!(!notice.due(start + OTHER_CLUSTER_NOTICE_INTERVAL - Duration::from_millis(1)));
         assert!(notice.due(start + OTHER_CLUSTER_NOTICE_INTERVAL));
         assert!(!notice.due(start + OTHER_CLUSTER_NOTICE_INTERVAL + Duration::from_secs(1)));
+    }
+
+    /// Discovery's packets are part of what exo nodes send each other. Changing them is a wire
+    /// change: bump WIRE_VERSION in src/exo/routing/wire.py, then update this test.
+    #[test]
+    fn the_discovery_packets_are_pinned() {
+        let hello = Hello {
+            nonce: [1; 8],
+            namespace: [2; 8],
+        }
+        .alloc();
+        let mut expected = b"EXO\0".to_vec();
+        expected.extend([1; 8]);
+        expected.extend([2; 8]);
+        assert_eq!(
+            hello.as_slice(),
+            expected,
+            "a wire change: bump WIRE_VERSION"
+        );
+
+        let whats_up = WhatsUp {
+            nonce: [3; 8],
+            zid: [4; 16],
+            port_le: 0x1234_u16.to_le_bytes(),
+        }
+        .alloc();
+        let mut expected_whats_up = b"EXO\x01".to_vec();
+        expected_whats_up.extend([3; 8]);
+        expected_whats_up.extend([4; 16]);
+        expected_whats_up.extend([0x34, 0x12]);
+        assert_eq!(
+            whats_up.as_slice(),
+            expected_whats_up,
+            "a wire change: bump WIRE_VERSION"
+        );
     }
 
     #[test]

@@ -25,7 +25,9 @@ _START = textwrap.dedent(
         port = 20000 + random.randrange(30000)
         zid = os.urandom(16).hex().lstrip("0")
         try:
-            return exo_rs.NetworkingHandle.new(zid, f"gil-{os.getpid()}-{name}", port, port + 1)
+            return exo_rs.NetworkingHandle.new(
+                zid, f"gil-{os.getpid()}-{name}", 1, "test", None, port, port + 1
+            )
         except Exception as error:
             print(f"no networking: {error}", flush=True)
             sys.exit(77)
