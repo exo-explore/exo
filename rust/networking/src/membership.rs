@@ -24,14 +24,15 @@
 //! that the cluster's state lists a node ([`Membership::listed`]), and that the coordinator
 //! removed one ([`Membership::forget`]).
 //!
-//! The quorum read counts this node and the peers it knows, and a peer stops counting (it stays
-//! in the view, as Gone, until it is removed) when it leaves, and when it has been Gone for
-//! [`FORGET_AFTER`]. The coordinator removing it (`forget`, unless this node still reaches it)
-//! takes it out of the view too, once this node reads Majority with it still counted: a node cut
-//! off from most of the cluster (or either side of an even split) may be told by its own
-//! coordinator to remove the others, and honouring that at once would make it read Majority
-//! before the split hold ends. Otherwise every restart of a node, which comes back with a new
-//! id, would count as one more node for good. A peer that comes back counts again.
+//! The quorum read counts this node and the peers the cluster's state lists (seen here or not:
+//! see [`Membership::listed`]), and a peer stops counting (it stays in the view, as Gone, until
+//! it is removed) when it leaves, and when it has been Gone for [`FORGET_AFTER`]. The
+//! coordinator removing it (`forget`, unless this node still reaches it) takes it out of the
+//! view too, once this node reads Majority with it still counted: a node cut off from most of
+//! the cluster (or either side of an even split) may be told by its own coordinator to remove
+//! the others, and honouring that at once would make it read Majority before the split hold
+//! ends. Otherwise every restart of a node, which comes back with a new id, would count as one
+//! more node for good. A peer that comes back counts again.
 //!
 //! The liveliness token is the main signal, but in a cluster of three or more zenoh can keep
 //! the token of a node that crashed (or lost power, or was cut off) for good. So a closed
@@ -259,9 +260,9 @@ pub struct Member {
     pub node: ZenohId,
     pub state: MemberState,
     pub since: SystemTime,
-    /// Whether it counts in the quorum read: a peer counts once it is Alive and the cluster's
-    /// state lists it; one Gone for `FORGET_AFTER`, or that left, doesn't (it stays in the view
-    /// until the coordinator removes it)
+    /// Whether it counts in the quorum read: a peer counts once the cluster's state lists it;
+    /// one Gone for `FORGET_AFTER`, or that left, doesn't (it stays in the view until the
+    /// coordinator removes it)
     pub counted: bool,
 }
 
@@ -298,8 +299,7 @@ struct Peer {
     /// Its time Suspect before the current state, since it was last Alive for `STEADY_AFTER`:
     /// it counts toward `GRACE` with the current time Suspect
     away_before: Duration,
-    /// Whether it counts in the quorum read (see `FORGET_AFTER`): from when it is Alive and
-    /// `listed`
+    /// Whether it counts in the quorum read (see `FORGET_AFTER`): from when it is `listed`
     counted: bool,
     /// The coordinator removed it: it leaves the view once it isn't Alive here and this node
     /// reads Majority (see `forget`), unless the cluster lists it again first (see `listed`)
@@ -452,14 +452,20 @@ impl Membership {
     }
 
     /// The cluster's state lists the node: it reported to the coordinator, or a snapshot of the
-    /// state names it. A node this one has never seen is Suspect(Disconnected) from now, and
-    /// Gone after the grace unless its transport shows it, so a node that went away before this
-    /// one started (a new coordinator can inherit such nodes, or a late report can bring one
-    /// back) is removed like any other instead of staying listed for good. A peer counts in the
-    /// quorum once it is both listed and Alive. A removal still waiting (the node was Alive
-    /// here, or this node didn't read Majority) no longer holds: the node reported after it,
-    /// and is back in the state; taking it out of the view would leave the state listing a
-    /// node that, lost, never shows as Gone to be removed.
+    /// state names it. It counts in the quorum read from then on (until it leaves, or has been
+    /// Gone for `FORGET_AFTER`), seen here or not: a node that joins one side of a split
+    /// adopts a state that lists the other side's nodes, and counting them it reads that side
+    /// as the minority it is, not as a majority of the nodes it happens to have seen.
+    ///
+    /// A node this one has never seen is Suspect(Disconnected) from now, and Gone after the
+    /// grace unless its transport shows it, so a node that went away before this one started
+    /// (a new coordinator can inherit such nodes, or a late report can bring one back) is
+    /// removed like any other instead of staying listed for good.
+    ///
+    /// A removal still waiting (the node was Alive here, or this node didn't read Majority) no
+    /// longer holds: the node reported after it, and is back in the state; taking it out of
+    /// the view would leave the state listing a node that, lost, never shows as Gone to be
+    /// removed.
     pub fn listed(&mut self, node: ZenohId, now: Now) -> Option<Member> {
         if node == self.own {
             return None;
@@ -468,7 +474,7 @@ impl Membership {
             peer.removed = false;
             if !peer.listed {
                 peer.listed = true;
-                peer.counted = peer.state == MemberState::Alive;
+                peer.counted = peer.state != MemberState::Gone(Reason::Left);
             }
             return None;
         }
@@ -484,7 +490,7 @@ impl Membership {
                 next_probe: None,
                 last_heard: None,
                 away_before: Duration::ZERO,
-                counted: false,
+                counted: true,
                 listed: true,
                 removed: false,
             },
@@ -878,6 +884,12 @@ mod tests {
 
     fn gone(n: u8, reason: Reason) -> (ZenohId, MemberState) {
         (zid(n), MemberState::Gone(reason))
+    }
+
+    /// The quorum read, and the nodes reachable and counted
+    fn read(membership: &Membership) -> (Quorum, usize, usize) {
+        let snapshot = membership.snapshot();
+        (snapshot.quorum, snapshot.reachable, snapshot.last_known)
     }
 
     /// A peer that joined and reported: its transport is up and the cluster's state lists it
@@ -1731,9 +1743,9 @@ mod tests {
         );
         // Listed again (it is in every report and snapshot): reported once
         assert_eq!(membership.listed(zid(2), clock.now), None);
-        // It isn't counted: the quorum is what this node has seen
+        // It counts: the cluster's state lists it
         let snapshot = membership.snapshot();
-        assert_eq!((snapshot.reachable, snapshot.last_known), (2, 2));
+        assert_eq!((snapshot.reachable, snapshot.last_known), (2, 3));
         assert_eq!(run_for(&mut membership, &mut clock, GRACE - TICK), vec![]);
         assert_eq!(
             run_for(&mut membership, &mut clock, TICK),
@@ -1742,19 +1754,39 @@ mod tests {
     }
 
     #[test]
-    fn a_listed_node_counts_once_its_transport_shows_it() {
+    fn a_listed_node_counts_at_once_and_is_reachable_once_its_transport_shows_it() {
         let clock = Clock::new();
         let mut membership = membership(&clock);
         membership.listed(zid(1), clock.now);
+        assert_eq!(read(&membership), (Quorum::Half, 1, 2));
         assert_eq!(
             state(membership.token_put(zid(1), clock.now)),
             Some(alive(1))
         );
-        assert_eq!(membership.snapshot().last_known, 2);
+        assert_eq!(read(&membership), (Quorum::Majority, 2, 2));
         // A report alone doesn't show it: only the transport does
         membership.listed(zid(2), clock.now);
         assert_eq!(membership.heard_from(zid(2), clock.now), None);
-        assert_eq!(membership.snapshot().last_known, 2);
+        assert_eq!(read(&membership), (Quorum::Majority, 2, 3));
+    }
+
+    #[test]
+    fn a_node_that_joins_the_smaller_side_of_a_split_reads_it_as_a_minority() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        // Its side: node 1. The state it adopts also lists nodes 2, 3 and 4, which are on the
+        // other side
+        connected_peer(&mut membership, &clock, 1);
+        for n in 2..=4 {
+            membership.listed(zid(n), clock.now);
+        }
+        assert_eq!(read(&membership), (Quorum::Minority, 2, 5));
+        // Still a minority once they are Gone, until they have been Gone for FORGET_AFTER (as
+        // on that side's other node, which lost them)
+        run_for(&mut membership, &mut clock, GRACE + FORGET_AFTER - TICK);
+        assert_eq!(membership.quorum(), Quorum::Minority);
+        run_for(&mut membership, &mut clock, TICK);
+        assert_eq!(read(&membership), (Quorum::Majority, 2, 2));
     }
 
     #[test]
