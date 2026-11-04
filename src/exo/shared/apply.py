@@ -176,14 +176,24 @@ def apply_node_download_progress(event: NodeDownloadProgress, state: State) -> S
 
 
 def apply_task_created(event: TaskCreated, state: State) -> State:
-    if _is_generation(event.task) and event.task.instance_id not in state.instances:
-        # A request sent to an instance deleted just before: nothing would ever run it, and
-        # the deletion has already ended the instance's requests. The API ends this one when
-        # it sees its task wasn't added.
-        logger.warning(
+    if event.task.instance_id not in state.instances:
+        # A task for an instance deleted just before. A request: nothing would ever run it,
+        # the deletion has already ended the instance's requests, and the API ends this one
+        # when it sees its task wasn't added. A worker's own task (cancelling a request,
+        # stopping a runner): the deletion that removes an instance's tasks has already been
+        # applied, so only the worker's report that it finished would remove it, and a worker
+        # that stops first (its node quitting) never sends that. The worker carries the task
+        # out either way. Every normal stop leaves one of these (the Shutdown the worker plans
+        # because the instance left the state), so only a request is worth a warning: it means
+        # a request raced the deletion of its instance.
+        message = (
             f"Not adding task {event.task_id}: its instance "
             f"{event.task.instance_id} no longer exists"
         )
+        if _is_generation(event.task):
+            logger.warning(message)
+        else:
+            logger.debug(message)
         return state
     new_tasks: Mapping[TaskId, Task] = {**state.tasks, event.task_id: event.task}
     return state.model_copy(update={"tasks": new_tasks})
