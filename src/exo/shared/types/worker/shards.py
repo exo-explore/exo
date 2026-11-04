@@ -82,3 +82,15 @@ class TensorShardMetadata(BaseShardMetadata):
 ShardMetadata: TypeAlias = (
     PipelineShardMetadata | CfgShardMetadata | TensorShardMetadata
 )
+
+
+def whole_model_shard(card: ModelCard) -> PipelineShardMetadata:
+    """All of a model, as one device downloads it."""
+    return PipelineShardMetadata(
+        model_card=card,
+        device_rank=0,
+        world_size=1,
+        start_layer=0,
+        end_layer=card.n_layers,
+        n_layers=card.n_layers,
+    )

@@ -244,7 +244,7 @@ from exo.shared.types.text_generation import (
 )
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
-from exo.shared.types.worker.shards import Sharding
+from exo.shared.types.worker.shards import Sharding, whole_model_shard
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.power_sampler import PowerSampler
@@ -2557,9 +2557,29 @@ class API:
     async def start_download(
         self, payload: StartDownloadParams
     ) -> StartDownloadResponse:
+        if payload.shard_metadata is not None:
+            shard = payload.shard_metadata
+        else:
+            # Only the catalogue: no lookup on Hugging Face, which would add a card for an
+            # unknown id on this node alone
+            card = next(
+                (
+                    card
+                    for card in await model_cards.card_cache.list_all()
+                    if card.model_id == payload.model_id
+                ),
+                None,
+            )
+            if card is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"{payload.model_id} isn't in the model catalogue. Add it as "
+                    "a custom model first.",
+                )
+            shard = whole_model_shard(card)
         command = StartDownload(
             target_node_id=payload.target_node_id,
-            shard_metadata=payload.shard_metadata,
+            shard_metadata=shard,
         )
         await self._send_download(command)
         return StartDownloadResponse(command_id=command.command_id)

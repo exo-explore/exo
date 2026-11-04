@@ -49,6 +49,15 @@ DownloadProgress = (
 )
 
 
+def is_not_on_disk(progress: DownloadProgress) -> bool:
+    """Whether this says only that the model isn't on its node: Pending with no bytes.
+
+    The state leaves these out, so a node lists only the models it has something of. Most
+    of the catalogue is on no node, and these entries were 96% of a cluster's state.
+    """
+    return isinstance(progress, DownloadPending) and progress.downloaded.in_bytes == 0
+
+
 class ModelSafetensorsIndexMetadata(BaseModel):
     total_size: PositiveInt | None = None
 

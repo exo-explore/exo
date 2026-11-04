@@ -360,7 +360,7 @@ async def test_no_file_descriptors_leak_across_cancels(
             await node.start_download(REPO)
             await asyncio.sleep(0.05)
             await node.cancel(REPO)
-            await node.wait_for(REPO, DownloadPending, timeout=5)
+            await node.wait_until_idle(REPO, timeout=5)
     await asyncio.sleep(0.2)
     assert len(os.listdir("/dev/fd")) <= before + 2
 
@@ -456,7 +456,7 @@ async def test_cancel_while_the_hub_is_a_black_hole_is_prompt(
         await node.start_download(REPO)
         await asyncio.sleep(0.3)
         await node.cancel(REPO)
-        await node.wait_for(REPO, DownloadPending, timeout=1)
+        await node.wait_for_unlisted(REPO, timeout=1)
         await node.delete(REPO)
         await asyncio.sleep(0.2)
         assert coordinator_crash(node) is None
@@ -481,7 +481,7 @@ async def test_a_partial_download_in_a_dir_that_filled_up_moves_to_one_with_room
         await node.start_download(REPO)
         await node.wait_for(REPO, DownloadFailed)
         await node.cancel(REPO)
-        await node.wait_for(REPO, DownloadPending)
+        await node.wait_until_idle(REPO)
         node.write_budget = None
         node.free_space[node.models_dir] = 1_000  # still full
         await node.start_download(REPO)
@@ -794,7 +794,7 @@ async def test_delete_during_slow_writes_leaves_nothing_behind(
             await node.start_download(REPO)
             await asyncio.sleep(0.5)
             await node.delete(REPO)
-            await node.wait_for(REPO, DownloadPending, timeout=5)
+            await node.wait_for_unlisted(REPO, timeout=5)
             await asyncio.sleep(1.0)
             assert node.model_dirs(REPO) == [], "files came back after the delete"
             assert len(os.listdir("/dev/fd")) <= before + 2
@@ -821,7 +821,7 @@ async def test_an_unreachable_hub_is_reported_when_resuming_too(
         hub.when_sent(SHARD1, 50_000, reached.set)
         await reached.wait()
         await node.cancel(REPO)
-        await node.wait_for(REPO, DownloadPending)
+        await node.wait_until_idle(REPO)
         await hub.go_down("refuse")
         await node.start_download(REPO)
         await asyncio.sleep(3)  # ~5 production minutes at this timing scale

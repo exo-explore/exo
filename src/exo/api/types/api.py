@@ -3,7 +3,7 @@ from collections.abc import Generator
 from typing import Annotated, Any, Literal, get_args
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.common import CommandId, NodeId
@@ -458,8 +458,17 @@ class ImageListResponse(BaseModel, frozen=True):
 
 
 class StartDownloadParams(FrozenModel):
+    """What to download to a node: a shard, or a model from the catalogue in whole."""
+
     target_node_id: NodeId
-    shard_metadata: ShardMetadata
+    shard_metadata: ShardMetadata | None = None
+    model_id: ModelId | None = None
+
+    @model_validator(mode="after")
+    def _one_of_shard_or_model(self) -> "StartDownloadParams":
+        if (self.shard_metadata is None) == (self.model_id is None):
+            raise ValueError("give exactly one of shard_metadata and model_id")
+        return self
 
 
 class StartDownloadResponse(FrozenModel):

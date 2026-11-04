@@ -3568,6 +3568,21 @@ class AppStore {
     }
   }
 
+  /** Download all of a model from the catalogue to a node. */
+  async startModelDownload(nodeId: string, modelId: string): Promise<void> {
+    const response = await fetch("/download/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetNodeId: nodeId, modelId }),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Failed to start download: ${response.status} - ${errorText}`,
+      );
+    }
+  }
+
   /**
    * Start a download on a specific node
    */
@@ -3909,6 +3924,8 @@ export const resetImageGenerationParams = () =>
 // Download actions
 export const startDownload = (nodeId: string, shardMetadata: object) =>
   appStore.startDownload(nodeId, shardMetadata);
+export const startModelDownload = (nodeId: string, modelId: string) =>
+  appStore.startModelDownload(nodeId, modelId);
 export const cancelDownload = (nodeId: string, modelId: string) =>
   appStore.cancelDownload(nodeId, modelId);
 export const deleteDownload = (nodeId: string, modelId: string) =>

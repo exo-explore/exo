@@ -2050,8 +2050,8 @@
   // With nodeIds (the devices of an instance or a placement), every one of
   // them counts in the total, finished or not started yet; a device that
   // hasn't said how much it needs counts as estimatedNodeBytes (see
-  // totalDownload). Without, only devices downloading it count: every device
-  // reports a pending entry for every model it knows, downloading or not.
+  // totalDownload). Without, only devices downloading it count; a device that
+  // has none of a model doesn't list it at all.
   function collectDownloadStatus(
     modelId: string,
     nodeIds?: string[],
