@@ -83,8 +83,20 @@ _cancel_receivers: dict[int, MpReceiver[TaskId]] = {}
 
 
 def cancels_sent(sup: RunnerSupervisor) -> list[TaskId]:
+    """The cancellations the runner can read now"""
     receiver = _cancel_receivers[id(sup._cancel_sender)]  # pyright: ignore[reportPrivateUsage]
     return receiver.collect()
+
+
+async def cancels_arriving(sup: RunnerSupervisor) -> list[TaskId]:
+    """The cancellations the runner reads once the first has arrived. The channel is a
+    multiprocessing queue: its put only hands the item to a feeder thread, which writes it
+    out a moment later (much later on a loaded machine), so it can't be read the instant the
+    send returns."""
+    with anyio.fail_after(5):
+        while not (cancels := cancels_sent(sup)):
+            await anyio.sleep(0.01)
+    return cancels
 
 
 def generation() -> TextGeneration:
@@ -148,8 +160,7 @@ async def test_cancelling_a_task_the_runner_has_not_picked_up_waits_for_it() -> 
 
             # Once it acknowledges the task, the cancellation follows
             sup.pending.pop(task.task_id).set()
-            await anyio.sleep(0.2)
-            assert cancels_sent(sup) == [task.task_id]
+            assert await cancels_arriving(sup) == [task.task_id]
             sup.shutdown()
 
 
@@ -165,7 +176,7 @@ async def test_cancelling_an_acknowledged_task_is_sent_straight_away() -> None:
             sup.pending.pop(task.task_id).set()
 
             await sup.cancel_task(task.task_id)
-            assert cancels_sent(sup) == [task.task_id]
+            assert await cancels_arriving(sup) == [task.task_id]
             sup.shutdown()
 
 
