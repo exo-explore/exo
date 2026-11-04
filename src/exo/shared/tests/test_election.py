@@ -1,7 +1,7 @@
 import pytest
 from anyio import create_task_group, fail_after, move_on_after
 
-from exo.routing.connection_message import ConnectionMessage
+from exo.routing.membership import MembershipChange
 from exo.shared.election import (
     Election,
     ElectionMessage,
@@ -70,7 +70,7 @@ async def test_single_round_broadcasts_and_updates_seniority_on_self_win() -> No
     # Election results produced by the Election (we'll observe these)
     er_tx, er_rx = channel[ElectionResult]()
     # Connection messages
-    cm_tx, cm_rx = channel[ConnectionMessage]()
+    cm_tx, cm_rx = channel[MembershipChange]()
     # Commands
     co_tx, co_rx = channel[ForwarderCommand]()
 
@@ -79,7 +79,7 @@ async def test_single_round_broadcasts_and_updates_seniority_on_self_win() -> No
         election_message_receiver=em_in_rx,
         election_message_sender=em_out_tx,
         election_result_sender=er_tx,
-        connection_message_receiver=cm_rx,
+        membership_change_receiver=cm_rx,
         command_receiver=co_rx,
         is_candidate=True,
     )
@@ -122,7 +122,7 @@ async def test_peer_with_higher_seniority_wins_and_we_switch_master() -> None:
     em_out_tx, em_out_rx = channel[ElectionMessage]()
     em_in_tx, em_in_rx = channel[ElectionMessage]()
     er_tx, er_rx = channel[ElectionResult]()
-    cm_tx, cm_rx = channel[ConnectionMessage]()
+    cm_tx, cm_rx = channel[MembershipChange]()
     co_tx, co_rx = channel[ForwarderCommand]()
 
     election = Election(
@@ -130,7 +130,7 @@ async def test_peer_with_higher_seniority_wins_and_we_switch_master() -> None:
         election_message_receiver=em_in_rx,
         election_message_sender=em_out_tx,
         election_result_sender=er_tx,
-        connection_message_receiver=cm_rx,
+        membership_change_receiver=cm_rx,
         command_receiver=co_rx,
         is_candidate=True,
     )
@@ -176,7 +176,7 @@ async def test_ignores_older_messages() -> None:
     em_out_tx, em_out_rx = channel[ElectionMessage]()
     em_in_tx, em_in_rx = channel[ElectionMessage]()
     er_tx, _er_rx = channel[ElectionResult]()
-    cm_tx, cm_rx = channel[ConnectionMessage]()
+    cm_tx, cm_rx = channel[MembershipChange]()
     co_tx, co_rx = channel[ForwarderCommand]()
 
     election = Election(
@@ -184,7 +184,7 @@ async def test_ignores_older_messages() -> None:
         election_message_receiver=em_in_rx,
         election_message_sender=em_out_tx,
         election_result_sender=er_tx,
-        connection_message_receiver=cm_rx,
+        membership_change_receiver=cm_rx,
         command_receiver=co_rx,
         is_candidate=True,
     )
@@ -224,7 +224,7 @@ async def test_two_rounds_emit_two_broadcasts_and_increment_clock() -> None:
     em_out_tx, em_out_rx = channel[ElectionMessage]()
     em_in_tx, em_in_rx = channel[ElectionMessage]()
     er_tx, _er_rx = channel[ElectionResult]()
-    cm_tx, cm_rx = channel[ConnectionMessage]()
+    cm_tx, cm_rx = channel[MembershipChange]()
     co_tx, co_rx = channel[ForwarderCommand]()
 
     election = Election(
@@ -232,7 +232,7 @@ async def test_two_rounds_emit_two_broadcasts_and_increment_clock() -> None:
         election_message_receiver=em_in_rx,
         election_message_sender=em_out_tx,
         election_result_sender=er_tx,
-        connection_message_receiver=cm_rx,
+        membership_change_receiver=cm_rx,
         command_receiver=co_rx,
         is_candidate=True,
     )
@@ -271,7 +271,7 @@ async def test_promotion_new_seniority_counts_participants() -> None:
     em_out_tx, em_out_rx = channel[ElectionMessage]()
     em_in_tx, em_in_rx = channel[ElectionMessage]()
     er_tx, er_rx = channel[ElectionResult]()
-    cm_tx, cm_rx = channel[ConnectionMessage]()
+    cm_tx, cm_rx = channel[MembershipChange]()
     co_tx, co_rx = channel[ForwarderCommand]()
 
     election = Election(
@@ -279,7 +279,7 @@ async def test_promotion_new_seniority_counts_participants() -> None:
         election_message_receiver=em_in_rx,
         election_message_sender=em_out_tx,
         election_result_sender=er_tx,
-        connection_message_receiver=cm_rx,
+        membership_change_receiver=cm_rx,
         command_receiver=co_rx,
         is_candidate=True,
     )
@@ -312,7 +312,7 @@ async def test_promotion_new_seniority_counts_participants() -> None:
 
 
 @pytest.mark.anyio
-async def test_connection_message_triggers_new_round_broadcast() -> None:
+async def test_a_node_joining_triggers_new_round_broadcast() -> None:
     """
     A connection message increments the clock and starts a new campaign.
     We should observe a broadcast at the incremented clock.
@@ -320,7 +320,7 @@ async def test_connection_message_triggers_new_round_broadcast() -> None:
     em_out_tx, em_out_rx = channel[ElectionMessage]()
     em_in_tx, em_in_rx = channel[ElectionMessage]()
     er_tx, _er_rx = channel[ElectionResult]()
-    cm_tx, cm_rx = channel[ConnectionMessage]()
+    cm_tx, cm_rx = channel[MembershipChange]()
     co_tx, co_rx = channel[ForwarderCommand]()
 
     election = Election(
@@ -328,7 +328,7 @@ async def test_connection_message_triggers_new_round_broadcast() -> None:
         election_message_receiver=em_in_rx,
         election_message_sender=em_out_tx,
         election_result_sender=er_tx,
-        connection_message_receiver=cm_rx,
+        membership_change_receiver=cm_rx,
         command_receiver=co_rx,
         is_candidate=True,
     )
@@ -337,8 +337,12 @@ async def test_connection_message_triggers_new_round_broadcast() -> None:
         with fail_after(2):
             tg.start_soon(election.run)
 
-            # Send any connection message object; we close quickly to cancel before result creation
-            await cm_tx.send(ConnectionMessage(connected=True))
+            # A node joins; we close quickly to cancel before result creation
+            await cm_tx.send(
+                MembershipChange(
+                    node_id=NodeId("PEER"), previous=None, current="Alive", reason=None
+                )
+            )
 
             # Expect a broadcast for the new round at clock=1
             while True:
@@ -365,7 +369,7 @@ async def test_tie_breaker_prefers_node_with_more_commands_seen() -> None:
     em_out_tx, em_out_rx = channel[ElectionMessage]()
     em_in_tx, em_in_rx = channel[ElectionMessage]()
     er_tx, er_rx = channel[ElectionResult]()
-    cm_tx, cm_rx = channel[ConnectionMessage]()
+    cm_tx, cm_rx = channel[MembershipChange]()
     co_tx, co_rx = channel[ForwarderCommand]()
 
     me = NodeId("ME")
@@ -375,7 +379,7 @@ async def test_tie_breaker_prefers_node_with_more_commands_seen() -> None:
         election_message_receiver=em_in_rx,
         election_message_sender=em_out_tx,
         election_result_sender=er_tx,
-        connection_message_receiver=cm_rx,
+        membership_change_receiver=cm_rx,
         command_receiver=co_rx,
         is_candidate=True,
         seniority=0,
@@ -475,7 +479,7 @@ async def test_a_follower_keeps_its_master_when_the_old_master_returns() -> None
     em_out_tx, _em_out_rx = channel[ElectionMessage]()
     em_in_tx, em_in_rx = channel[ElectionMessage]()
     er_tx, er_rx = channel[ElectionResult]()
-    cm_tx, cm_rx = channel[ConnectionMessage]()
+    cm_tx, cm_rx = channel[MembershipChange]()
     co_tx, co_rx = channel[ForwarderCommand]()
 
     election = Election(
@@ -483,7 +487,7 @@ async def test_a_follower_keeps_its_master_when_the_old_master_returns() -> None
         election_message_receiver=em_in_rx,
         election_message_sender=em_out_tx,
         election_result_sender=er_tx,
-        connection_message_receiver=cm_rx,
+        membership_change_receiver=cm_rx,
         command_receiver=co_rx,
         is_candidate=True,
     )

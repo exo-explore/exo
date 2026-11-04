@@ -13,6 +13,7 @@ from anyio import (
 )
 from exo_rs import (
     FromSwarm,
+    MembershipSnapshot,
     NetworkingHandle,
 )
 from loguru import logger
@@ -23,8 +24,8 @@ from exo.utils.channels import Receiver, Sender, channel
 from exo.utils.pydantic_ext import FrozenModel
 from exo.utils.task_group import TaskGroup
 
-from .connection_message import ConnectionMessage
-from .topics import CONNECTION_MESSAGES, PublishPolicy, TypedTopic
+from .membership import Member
+from .topics import MEMBERSHIP, PublishPolicy, TypedTopic
 
 
 # A significant current limitation of the TopicRouter is that it is not capable
@@ -185,6 +186,14 @@ class Router:
                 for topic in self.topic_routers:
                     await self._networking_unsubscribe(str(topic))
 
+    def members(self) -> MembershipSnapshot:
+        """This node's view of the cluster's membership now, from the networking layer"""
+        return self._net.members()
+
+    def forget(self, node: NodeId) -> None:
+        """The coordinator removed `node`: the networking layer's quorum read stops counting it"""
+        self._net.forget(node)
+
     async def shutdown(self):
         logger.debug("Shutting down Router")
         self._tg.cancel_tasks()
@@ -214,16 +223,14 @@ class Router:
                             continue
                         router = self.topic_routers[topic]
                         await router.publish_bytes(data)
-                    case FromSwarm.Connection():
-                        message = ConnectionMessage.from_update(from_swarm)
-                        logger.trace(
-                            f"Received message on connection_messages with payload {message}"
-                        )
-                        if CONNECTION_MESSAGES.topic in self.topic_routers:
-                            router = self.topic_routers[CONNECTION_MESSAGES.topic]
-                            assert router.topic.model_type == ConnectionMessage
-                            router = cast(TopicRouter[ConnectionMessage], router)
-                            await router.publish(message)
+                    case FromSwarm.Membership():
+                        member = Member.from_swarm(from_swarm)
+                        logger.trace(f"Membership change: {member}")
+                        if MEMBERSHIP.topic in self.topic_routers:
+                            router = self.topic_routers[MEMBERSHIP.topic]
+                            assert router.topic.model_type == Member
+                            router = cast(TopicRouter[Member], router)
+                            await router.publish(member)
                     case _:
                         logger.critical(
                             "failed to exhaustively check FromSwarm messages - logic error"

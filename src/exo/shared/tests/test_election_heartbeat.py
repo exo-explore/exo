@@ -1,6 +1,7 @@
 """A master re-announces itself so nodes that ended up following a different master
 (their election missed its messages) re-run the election instead of staying split."""
 
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -10,7 +11,7 @@ import anyio
 import pytest
 from anyio import create_task_group, fail_after
 
-from exo.routing.connection_message import ConnectionMessage
+from exo.routing.membership import MembershipChange, MemberState
 from exo.shared.election import Election, ElectionMessage, ElectionResult
 from exo.shared.types.commands import ForwarderCommand
 from exo.shared.types.common import NodeId, SessionId
@@ -50,6 +51,7 @@ class Harness:
     inbound: Sender[ElectionMessage]
     outbound: Receiver[ElectionMessage]
     results: Receiver[ElectionResult]
+    membership: Sender[MembershipChange]
 
     async def follow(self, master: ElectionMessage) -> ElectionResult:
         """Run a round that `master` wins."""
@@ -71,21 +73,21 @@ async def running_election() -> AsyncIterator[Harness]:
     em_out_tx, em_out_rx = channel[ElectionMessage]()
     em_in_tx, em_in_rx = channel[ElectionMessage]()
     er_tx, er_rx = channel[ElectionResult]()
-    cm_tx, cm_rx = channel[ConnectionMessage]()
+    cm_tx, cm_rx = channel[MembershipChange]()
     co_tx, co_rx = channel[ForwarderCommand]()
     election = Election(
         node_id=ME,
         election_message_receiver=em_in_rx,
         election_message_sender=em_out_tx,
         election_result_sender=er_tx,
-        connection_message_receiver=cm_rx,
+        membership_change_receiver=cm_rx,
         command_receiver=co_rx,
         is_candidate=True,
     )
     async with create_task_group() as tg:
         with fail_after(5):
             tg.start_soon(election.run)
-            yield Harness(election, em_in_tx, em_out_rx, er_rx)
+            yield Harness(election, em_in_tx, em_out_rx, er_rx, cm_tx)
             em_in_tx.close()
             cm_tx.close()
             co_tx.close()
@@ -302,3 +304,56 @@ async def test_rounds_a_silent_master_keeps_triggering_back_off(
                 )
 
     assert_backs_off(round_started)
+
+
+def resuming(previous: MemberState | None, current: MemberState) -> MembershipChange:
+    """This node's own state changing"""
+    return MembershipChange(node_id=ME, previous=previous, current=current, reason=None)
+
+
+def campaigns(sent: list[ElectionMessage]) -> list[int]:
+    """The rounds this node announced itself in"""
+    return sorted({m.clock for m in sent if not m.heartbeat})
+
+
+async def test_a_node_frozen_past_the_master_silence_doesnt_campaign_while_resuming(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A follower frozen longer than the master's silence timeout (a hung process, a debugger)
+    found the master silent the moment it resumed, and made itself master though its links were
+    still closing."""
+    monkeypatch.setattr("exo.shared.election.MASTER_SILENCE_TIMEOUT", 0.3)
+    monkeypatch.setattr("exo.shared.election.STALL_THRESHOLD_SECONDS", 0.2)
+    async with running_election() as h:
+        await h.follow(em(clock=1, seniority=5, node_id="MASTER"))
+        await anyio.sleep(0.3)
+        h.sent()
+        # Frozen for longer than the silence timeout: the event loop stops
+        time.sleep(0.6)  # noqa: ASYNC251 (blocking on purpose)
+        # The membership notices and says Resuming (a moment after this node resumed)
+        await h.membership.send(resuming("Alive", "Resuming"))
+        await anyio.sleep(0.6)
+        assert campaigns(h.sent()) == [], "no election while Resuming"
+        # The master is back before Resuming ends: nothing to do
+        await h.inbound.send(em(clock=1, seniority=5, node_id="MASTER", heartbeat=True))
+        await h.membership.send(resuming("Resuming", "Alive"))
+        await anyio.sleep(0.2)
+        assert campaigns(h.sent()) == []
+
+
+async def test_a_master_still_silent_when_resuming_ends_is_replaced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("exo.shared.election.MASTER_SILENCE_TIMEOUT", 0.3)
+    monkeypatch.setattr("exo.shared.election.STALL_THRESHOLD_SECONDS", 0.2)
+    async with running_election() as h:
+        await h.follow(em(clock=1, seniority=5, node_id="MASTER"))
+        await anyio.sleep(0.3)
+        time.sleep(0.6)  # noqa: ASYNC251 (blocking on purpose)
+        await h.membership.send(resuming("Alive", "Resuming"))
+        await anyio.sleep(0.4)
+        h.sent()
+        # Resuming ends and the master is still silent: the silence timeout applies again
+        await h.membership.send(resuming("Resuming", "Alive"))
+        await anyio.sleep(0.4)
+        assert campaigns(h.sent()) != []

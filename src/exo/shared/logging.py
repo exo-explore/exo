@@ -4,6 +4,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TextIO
 
+import exo_rs
 import zstandard
 from hypercorn import Config
 from hypercorn.logging import Logger as HypercornLogger
@@ -105,6 +106,9 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
             enqueue=True,
         )
     if log_file:
+        # A Rust panic goes straight into the file too: it can end the process before a queued
+        # record reaches it
+        exo_rs.write_panics_to(str(log_file))
         logger.add(
             log_file,
             format="[ {time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} ] {message}",
@@ -119,6 +123,8 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
 
 def logger_cleanup():
     """Flush all queues before shutting down so any in-flight logs are written to disk"""
+    # Rust's records queued for Python's logging first (for at most a couple of seconds)
+    exo_rs.flush_logs()
     logger.complete()
 
 

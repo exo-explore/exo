@@ -16,6 +16,10 @@ use tokio::{
 };
 use zenoh::config::ZenohId;
 
+// The stall guard uses the membership's stall rule and hold-off, so the two agree on when this
+// node was stopped (a sleep included) and on how long it holds off afterwards
+use crate::membership::{HOLD_OFF, Now, TICK, stall};
+
 const GROUP: Ipv6Addr = Ipv6Addr::new(0xff12, 0, 0, 0, 0, 0, 0xe0a1, 0xde89);
 const MAGIC: [u8; 3] = *b"EXO";
 /// Replies to any of our last few Hellos are accepted. A reply can arrive after the next
@@ -26,14 +30,6 @@ const RECENT_NONCES: usize = 8;
 const BLOCKED_WARNING_INTERVAL: Duration = Duration::from_secs(60);
 /// How often to repeat that an exo with another version or namespace is on the network.
 const OTHER_CLUSTER_NOTICE_INTERVAL: Duration = Duration::from_secs(10 * 60);
-/// A pause this long (the process was suspended, the machine slept, or the runtime was
-/// starved) may have let peers expire their sessions with us while we still hold ours.
-const STALL_THRESHOLD: Duration = Duration::from_secs(5);
-/// After such a pause we neither answer nor dial peers for this long (zenoh's lease is 10s),
-/// so the stale sessions are closed before new links are made. zenoh adds a new link to a
-/// peer's existing session instead of starting a new one, and when the peer had already
-/// dropped that session it never receives our declarations again: a one-way split.
-const STALL_HOLD_OFF: Duration = Duration::from_secs(12);
 
 pub struct Discovery {
     sock: Arc<UdpSocket>,
@@ -135,7 +131,7 @@ impl Discovery {
             zid,
             tick: {
                 // After a stall, announce once rather than in a burst of missed ticks
-                let mut tick = interval(Duration::from_secs(1));
+                let mut tick = interval(TICK);
                 tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
                 tick
             },
@@ -152,12 +148,11 @@ impl Discovery {
             tokio::select! {
                 // The tick first: after a stall it tells us so before any queued message is handled
                 biased;
-                scheduled = self.tick.tick() => {
-                    let late = scheduled.elapsed();
-                    if self.stall_guard.on_tick(late, Instant::now()) {
+                _ = self.tick.tick() => {
+                    if let Some(late) = self.stall_guard.on_tick(Now::read()) {
                         warn!(
                             "this node was unresponsive for {late:.0?}; ignoring peers for \
-                             {STALL_HOLD_OFF:?} so stale sessions close before reconnecting"
+                             {HOLD_OFF:?} so stale sessions close before reconnecting"
                         );
                     }
                     self.announce().await?;
@@ -322,20 +317,24 @@ impl Discovery {
     }
 }
 
-/// Ignores peers for a while after this process stalled (see `STALL_HOLD_OFF`).
+/// Ignores peers for a while after this process stalled (see `HOLD_OFF`).
 #[derive(Debug, Default)]
 struct StallGuard {
+    /// The previous tick
+    last_tick: Option<Now>,
     held_off_until: Option<Instant>,
 }
 
 impl StallGuard {
-    /// Called on every tick with how late it fired. Returns whether that was a stall.
-    fn on_tick(&mut self, late: Duration, now: Instant) -> bool {
-        if late < STALL_THRESHOLD {
-            return false;
-        }
-        self.held_off_until = Some(now + STALL_HOLD_OFF);
-        true
+    /// Called on every tick. When it was late enough to be a stall (the membership's rule, a
+    /// sleep included), holds off and returns how late it was.
+    fn on_tick(&mut self, now: Now) -> Option<Duration> {
+        let late = self
+            .last_tick
+            .replace(now)
+            .and_then(|before| stall(before, now))?;
+        self.held_off_until = Some(now.awake + HOLD_OFF);
+        Some(late)
     }
 
     fn holding_off(&mut self, now: Instant) -> bool {
@@ -491,32 +490,65 @@ impl_alloc!(WhatsUp);
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_late_tick_holds_off_peers_for_a_while() {
-        let mut guard = StallGuard::default();
-        let start = Instant::now();
-        assert!(!guard.on_tick(Duration::from_millis(1500), start));
-        assert!(!guard.holding_off(start));
-
-        assert!(guard.on_tick(Duration::from_secs(30), start));
-        assert!(guard.holding_off(start));
-        assert!(guard.holding_off(start + STALL_HOLD_OFF.saturating_sub(Duration::from_millis(1))));
-        assert!(!guard.holding_off(start + STALL_HOLD_OFF));
-        assert!(!guard.holding_off(start + STALL_HOLD_OFF * 2));
+    /// Ticks at `start`, then once more `by` later on the awake clock and `with_sleep` later on
+    /// the clock that counts sleep; returns whether the second was a stall
+    fn second_tick_stalls(
+        guard: &mut StallGuard,
+        start: Now,
+        by: Duration,
+        with_sleep: Duration,
+    ) -> bool {
+        assert_eq!(guard.on_tick(start), None, "the first tick is never late");
+        let later = Now {
+            awake: start.awake + by,
+            with_sleep: start.with_sleep + with_sleep,
+            wall: start.wall + with_sleep,
+        };
+        guard.on_tick(later).is_some()
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn a_stall_shows_up_as_a_late_tick() {
-        let mut tick = interval(Duration::from_secs(1));
-        tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        tick.tick().await;
-        // Nothing polls the interval for 30s, as when the process is suspended
-        tokio::time::advance(Duration::from_secs(30)).await;
-        let late = tick.tick().await.elapsed();
-        assert!(late >= STALL_THRESHOLD, "{late:?}");
-        // The next tick is on time again
-        let next_late = tick.tick().await.elapsed();
-        assert!(next_late < STALL_THRESHOLD, "{next_late:?}");
+    #[test]
+    fn a_late_tick_holds_off_peers_for_a_while() {
+        let start = Now::read();
+        let mut guard = StallGuard::default();
+        let on_time = Duration::from_millis(1500);
+        assert!(!second_tick_stalls(&mut guard, start, on_time, on_time));
+        assert!(!guard.holding_off(start.awake));
+
+        let mut guard = StallGuard::default();
+        let frozen = Duration::from_secs(30);
+        assert!(second_tick_stalls(&mut guard, start, frozen, frozen));
+        let resumed = start.awake + frozen;
+        assert!(guard.holding_off(resumed));
+        assert!(guard.holding_off(resumed + HOLD_OFF.saturating_sub(Duration::from_millis(1))));
+        assert!(!guard.holding_off(resumed + HOLD_OFF));
+        assert!(!guard.holding_off(resumed + HOLD_OFF * 2));
+    }
+
+    #[test]
+    fn a_sleep_holds_off_peers_too() {
+        // The machine slept a minute: the awake clock moved on by one tick only. Discovery
+        // used to read that clock alone, so it didn't hold off after a real sleep.
+        let mut guard = StallGuard::default();
+        assert!(second_tick_stalls(
+            &mut guard,
+            Now::read(),
+            TICK,
+            Duration::from_secs(60)
+        ));
+    }
+
+    #[test]
+    fn a_wall_clock_set_doesnt_hold_off() {
+        let start = Now::read();
+        let mut guard = StallGuard::default();
+        assert_eq!(guard.on_tick(start), None);
+        let later = Now {
+            awake: start.awake + TICK,
+            with_sleep: start.with_sleep + TICK,
+            wall: start.wall + Duration::from_secs(3600),
+        };
+        assert_eq!(guard.on_tick(later), None);
     }
 
     #[test]

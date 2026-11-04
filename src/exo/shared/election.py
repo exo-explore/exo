@@ -1,6 +1,6 @@
 import math
 from collections import Counter
-from typing import Self
+from typing import Literal, Self, final
 
 import anyio
 from anyio import (
@@ -10,7 +10,7 @@ from anyio import (
 )
 from loguru import logger
 
-from exo.routing.connection_message import ConnectionMessage
+from exo.routing.membership import STALL_THRESHOLD, MembershipChange
 from exo.shared.types.commands import ForwarderCommand
 from exo.shared.types.common import NodeId, SessionId
 from exo.utils.channels import Receiver, Sender
@@ -30,6 +30,9 @@ MASTER_SILENCE_TIMEOUT = 30.0
 # doesn't hear it back, and every election pauses the whole cluster for a moment.
 RETRY_MIN_DELAY = 15.0
 RETRY_MAX_DELAY = 300.0
+# A silence check this late means this node itself was stopped (the membership's own rule): the
+# master's silence then says nothing about the master
+STALL_THRESHOLD_SECONDS = STALL_THRESHOLD.total_seconds()
 
 
 class ElectionMessage(FrozenModel):
@@ -88,6 +91,69 @@ def choose_master(candidates: list[ElectionMessage]) -> ElectionMessage:
     return max(candidates)
 
 
+def connection_change(
+    change: MembershipChange,
+) -> Literal["connected", "disconnected"] | None:
+    """What a membership change means for elections: what they knew as a connection change.
+
+    Before membership had states, a node joining counted as "connected" and a node leaving as
+    "disconnected", and either starts an election round. Now a node that becomes Alive (it
+    joined, rejoined, or is reachable again) is "connected" and one that leaves Alive (for
+    Suspect, or Gone when it left) is "disconnected". Everything else starts nothing: a
+    Suspect node becoming Gone, and this node resuming after a stall or being back from it.
+    """
+    if change.became_alive:
+        return "connected"
+    if change.left_alive:
+        return "disconnected"
+    return None
+
+
+@final
+class ResumingHold:
+    """Holds back a peer's loss, for elections, while this node is Resuming.
+
+    After this node was stopped (frozen or asleep) its links to the other nodes close one by one
+    while discovery holds off, so it sees peers it can't reach yet as lost: losing them says
+    little about them. A round started then may find nobody and make this node master. So while
+    it is Resuming a peer leaving Alive starts nothing: the loss is put off, and dropped if the
+    peer is back before Resuming ends. When Resuming ends, a peer still lost starts the round it
+    would have started (once, for all of them), as its grace starts only then.
+    """
+
+    def __init__(self, node_id: NodeId):
+        self._node_id = node_id
+        self._resuming = False
+        self._put_off: set[NodeId] = set()
+
+    @property
+    def resuming(self) -> bool:
+        """Whether this node is Resuming, as its membership last said"""
+        return self._resuming
+
+    def starts_a_round(self, change: MembershipChange) -> bool:
+        """Whether `change` starts an election round now"""
+        if change.node_id == self._node_id:
+            if change.current == "Resuming":
+                self._resuming = True
+                return False
+            if change.previous == "Resuming":
+                self._resuming = False
+                still_lost = bool(self._put_off)
+                self._put_off.clear()
+                return still_lost
+        kind = connection_change(change)
+        if self._resuming:
+            if kind == "disconnected":
+                self._put_off.add(change.node_id)
+                return False
+            if kind == "connected" and change.node_id in self._put_off:
+                # Back before Resuming ended: its loss never counted
+                self._put_off.discard(change.node_id)
+                return False
+        return kind is not None
+
+
 class ElectionResult(FrozenModel):
     session_id: SessionId
     won_clock: int
@@ -102,7 +168,7 @@ class Election:
         election_message_receiver: Receiver[ElectionMessage],
         election_message_sender: Sender[ElectionMessage],
         election_result_sender: Sender[ElectionResult],
-        connection_message_receiver: Receiver[ConnectionMessage],
+        membership_change_receiver: Receiver[MembershipChange],
         command_receiver: Receiver[ForwarderCommand],
         is_candidate: bool = True,
         seniority: int = 0,
@@ -123,7 +189,8 @@ class Election:
         self._em_sender = election_message_sender
         self._em_receiver = election_message_receiver
         self._er_sender = election_result_sender
-        self._cm_receiver = connection_message_receiver
+        self._membership_changes = membership_change_receiver
+        self._resuming_hold = ResumingHold(node_id)
         self._co_receiver = command_receiver
 
         # The latest word from the master we follow: its winning message, then its heartbeats
@@ -185,7 +252,14 @@ class Election:
 
     async def _heartbeat(self) -> None:
         while True:
+            started = anyio.current_time()
             await anyio.sleep(HEARTBEAT_INTERVAL)
+            # This node was stopped (a frozen process): the membership will say Resuming in a
+            # moment, but this check can run first
+            stopped = (
+                anyio.current_time() - started - HEARTBEAT_INTERVAL
+                >= STALL_THRESHOLD_SECONDS
+            )
             if self._campaign_cancel_scope is not None:
                 continue
             if self.current_session.master_node_id == self.node_id:
@@ -193,8 +267,15 @@ class Election:
                     self._election_status().model_copy(update={"heartbeat": True})
                 )
             elif (
-                silence := anyio.current_time() - self._master_last_heard
-            ) > MASTER_SILENCE_TIMEOUT and self._may_retry():
+                (silence := anyio.current_time() - self._master_last_heard)
+                > MASTER_SILENCE_TIMEOUT
+                # While this node is Resuming its links close one by one and the master can't
+                # reach it yet: the silence says nothing about the master. Once Resuming ends, a
+                # master still silent is replaced as before.
+                and not stopped
+                and not self._resuming_hold.resuming
+                and self._may_retry()
+            ):
                 logger.warning(
                     f"No heartbeat from master {self.current_session.master_node_id} "
                     f"for {silence:.0f}s; starting a new election"
@@ -298,11 +379,18 @@ class Election:
                 self._candidates.append(message)
 
     async def _connection_receiver(self) -> None:
-        with self._cm_receiver as connection_messages:
-            async for first in connection_messages:
+        hold = self._resuming_hold
+        with self._membership_changes as changes:
+            async for first in changes:
+                if not hold.starts_a_round(first):
+                    continue
                 # Delay after connection message for time to symmetrically setup
                 await anyio.sleep(0.2)
-                rest = connection_messages.collect()
+                rest = [
+                    change
+                    for change in changes.collect()
+                    if hold.starts_a_round(change)
+                ]
 
                 logger.debug(
                     f"Connection messages received: {first} followed by {rest}"

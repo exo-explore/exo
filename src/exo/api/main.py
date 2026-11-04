@@ -152,6 +152,7 @@ from exo.master.placement import (
 )
 from exo.master.placement import place_instance as get_instance_placements
 from exo.routing.event_router import NodeEventReceiver
+from exo.routing.membership import Membership, MembershipView
 from exo.shared.apply import apply
 from exo.shared.constants import (
     ENABLE_DISAGGREGATION,
@@ -376,6 +377,7 @@ class API:
         download_command_sender: Sender[ForwarderDownloadCommand],
         # This lets us pause the API if an election is running
         election_receiver: Receiver[ElectionMessage],
+        membership: Membership,
     ) -> None:
         self.state = State()
         self._recent_events = RecentEvents()
@@ -384,6 +386,7 @@ class API:
         self.download_command_sender = download_command_sender
         self.event_receiver = event_receiver
         self.election_receiver = election_receiver
+        self.membership = membership
         self.node_id: NodeId = node_id
         self.last_completed_election: int = 0
         self.port = port
@@ -540,6 +543,7 @@ class API:
         self.app.get("/ollama/api/version")(self.ollama_version)
 
         self.app.get("/state")(self.get_state)
+        self.app.get("/membership")(self.get_membership)
         self.app.get("/state/{path:path}")(self.get_state)
         self.app.get("/events")(self.get_events)
         self.app.post("/download/start")(self.start_download)
@@ -552,6 +556,11 @@ class API:
         self.app.get("/v1/traces/{task_id}/raw")(self.get_trace_raw)
         self.app.get("/onboarding")(self.get_onboarding)
         self.app.post("/onboarding")(self.complete_onboarding)
+
+    def get_membership(self) -> MembershipView:
+        """This node's own view of which nodes it can reach now (not the cluster's state: two
+        nodes may disagree for a moment)"""
+        return self.membership.view()
 
     def get_state(self, path: str = ""):
         if path == "":

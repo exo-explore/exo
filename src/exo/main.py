@@ -26,6 +26,7 @@ from exo.download.coordinator import DownloadCoordinator
 from exo.download.transfer import DownloadSettings
 from exo.master.main import Master
 from exo.routing.event_router import EventRouter
+from exo.routing.membership import Membership
 from exo.routing.router import Router, get_node_zid
 from exo.shared.constants import (
     EXO_DEFAULT_MODELS_DIR,
@@ -72,6 +73,7 @@ LEAVE_FLUSH = 0.25
 class Node:
     router: Router
     event_router: EventRouter
+    membership: Membership
     download_coordinator: DownloadCoordinator | None
     worker: Worker | None
     election: Election  # Every node participates in election, as we do want a node to become master even if it isn't a master candidate if no master candidates are present.
@@ -105,7 +107,7 @@ class Node:
         await router.register_topic(topics.STATE_SNAPSHOTS)
         await router.register_topic(topics.COMMANDS)
         await router.register_topic(topics.ELECTION_MESSAGES)
-        await router.register_topic(topics.CONNECTION_MESSAGES)
+        await router.register_topic(topics.MEMBERSHIP)
         await router.register_topic(topics.DOWNLOAD_COMMANDS)
         event_router = EventRouter(
             session_id,
@@ -113,6 +115,13 @@ class Node:
             external_outbound=router.sender(topics.LOCAL_EVENTS),
             external_inbound=router.receiver(topics.GLOBAL_EVENTS),
             snapshot_inbound=router.receiver(topics.STATE_SNAPSHOTS),
+        )
+
+        membership = Membership(
+            node_id,
+            member_receiver=router.receiver(topics.MEMBERSHIP),
+            networking=router,
+            cluster_events=event_router.receiver(),
         )
 
         logger.info(f"Starting node {node_id}")
@@ -141,6 +150,7 @@ class Node:
                 command_sender=router.sender(topics.COMMANDS),
                 download_command_sender=router.sender(topics.DOWNLOAD_COMMANDS),
                 election_receiver=router.receiver(topics.ELECTION_MESSAGES),
+                membership=membership,
             )
         else:
             api = None
@@ -177,7 +187,7 @@ class Node:
             # but ultimately it seems not worth the complexity
             election_message_sender=router.sender(topics.ELECTION_MESSAGES),
             election_message_receiver=router.receiver(topics.ELECTION_MESSAGES),
-            connection_message_receiver=router.receiver(topics.CONNECTION_MESSAGES),
+            membership_change_receiver=membership.changes(),
             command_receiver=router.receiver(topics.COMMANDS),
             election_result_sender=er_send,
         )
@@ -185,6 +195,7 @@ class Node:
         return cls(
             router,
             event_router,
+            membership,
             download_coordinator,
             worker,
             election,
@@ -205,6 +216,7 @@ class Node:
             signal.signal(signal.SIGTERM, lambda _, __: self.shutdown())
             tg.start_soon(self.router.run)
             tg.start_soon(self.event_router.run)
+            tg.start_soon(self.membership.run)
             tg.start_soon(self.election.run)
             if self.download_coordinator:
                 tg.start_soon(self.download_coordinator.run)

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
 
-from exo.routing.connection_message import ConnectionMessage
+from exo.routing.membership import Member
 from exo.shared.election import ElectionMessage
 from exo.shared.types.commands import ForwarderCommand, ForwarderDownloadCommand
 from exo.shared.types.events import (
@@ -48,9 +48,8 @@ COMMANDS = TypedTopic("commands", PublishPolicy.Always, ForwarderCommand)
 ELECTION_MESSAGES = TypedTopic(
     "election_messages", PublishPolicy.Always, ElectionMessage, high_priority=True
 )
-CONNECTION_MESSAGES = TypedTopic(
-    "connection_messages", PublishPolicy.Never, ConnectionMessage
-)
+# Each change of a node's state, as this node's networking sees it (see exo.routing.membership)
+MEMBERSHIP = TypedTopic("membership", PublishPolicy.Never, Member)
 DOWNLOAD_COMMANDS = TypedTopic(
     "download_commands", PublishPolicy.Always, ForwarderDownloadCommand
 )

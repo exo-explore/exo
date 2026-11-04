@@ -33,6 +33,7 @@ delegate = "0.13"
 
 # Utility dependencies
 nix = "0.31"
+libc = "0.2"
 
 # Async dependencies
 tokio = "1.46"
