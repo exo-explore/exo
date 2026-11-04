@@ -544,8 +544,6 @@ mod tests {
     use futures_lite::StreamExt as _;
     use zenoh::config::{Locator, ZenohId};
     use zenoh::sample::SampleKind;
-    use zenoh_plugin_storage_manager::StoragesPlugin;
-    use zenoh_plugin_trait::PluginsManager;
 
     use super::{FromSwarm, Swarm};
     use crate::membership::{GRACE, LEASE, MemberState, PROBE_TIMEOUT, REPROBE_INTERVAL, TICK};
@@ -1031,10 +1029,7 @@ mod tests {
             .expect("runtime")
             .block_on(async move {
                 let cfg = crate::cfg(&zid, port).expect("config");
-                let mut plugins = PluginsManager::static_plugins_only();
-                plugins.declare_static_plugin::<StoragesPlugin, _>("storage_manager", true);
                 let mut runtime = zenoh::internal::runtime::RuntimeBuilder::new(cfg)
-                    .plugins_manager(plugins)
                     .build()
                     .await
                     .expect("zenoh runtime");
