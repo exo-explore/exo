@@ -153,3 +153,44 @@ def test_rotation_keeps_at_most_5_archives(log_dir: Path):
         assert not old.exists()
     for recent in all_archives[2:]:
         assert recent.exists()
+
+
+def test_stale_close_does_not_remove_successor_active_log(log_dir: Path):
+    """A stale close must not rotate the active file a successor recreated.
+
+    Regression test for the file-ownership race: an old owner closing after
+    a successor process has recreated events.bin at the same path used to
+    archive and unlink the successor's active log, breaking event replay.
+    """
+    stale = DiskEventLog(log_dir)
+    stale.append(TestEvent())
+
+    successor = DiskEventLog(log_dir)
+    successor_event = TestEvent()
+    successor.append(successor_event)
+
+    archives_before = _archives(log_dir)
+    stale.close()
+
+    assert (log_dir / "events.bin").exists()
+    assert _archives(log_dir) == archives_before
+    restored = list(successor.read_all())
+    assert len(restored) == 1
+    assert restored[0].event_id == successor_event.event_id
+
+    successor.close()
+
+
+def test_stale_close_of_empty_log_does_not_unlink_successor(log_dir: Path):
+    """The empty-log unlink branch must also respect file ownership."""
+    stale = DiskEventLog(log_dir)
+
+    successor = DiskEventLog(log_dir)
+    successor.append(TestEvent())
+
+    stale.close()
+
+    assert (log_dir / "events.bin").exists()
+    assert len(list(successor.read_all())) == 1
+
+    successor.close()
