@@ -24,7 +24,13 @@ from typing import Final, Literal, final
 from exo import __version__
 from exo.utils.pydantic_ext import FrozenModel
 
-WIRE_VERSION: Final = 1
+# Bumped by hand for a change in how nodes behave towards each other that their schema doesn't
+# show (each version's schema hash is in wire_versions.txt):
+# - 2: an instance's runners restart in place by a new rule. A node replaces its runner only
+#   once the other nodes' runners that had joined it are going, and reports its own as going
+#   until then; a node of version 1 never reports a runner it stops, so the two wait on each
+#   other for good.
+WIRE_VERSION: Final = 2
 
 # The cluster name when none is given. Not the package version: the wire version and the build
 # decide which nodes can talk, and one name for every version lets a node name a device that
