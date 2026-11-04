@@ -1,0 +1,46 @@
+name: cluster-nightly
+
+# Every exo.testkit cluster scenario, the slow ones included: real exo nodes on one machine
+# with a stub engine instead of MLX, so a plain install without MLX is enough.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cluster-nightly
+  cancel-in-progress: false
+
+jobs:
+  cluster:
+    name: Cluster scenarios (${{ matrix.runner }})
+    # Scheduled runs belong to this repository only, never to its forks
+    if: github.repository == 'exo-explore/exo'
+    runs-on: ${{ matrix.runner }}
+    # About 5 min to build exo_rs, and 15-20 min for every scenario on a quiet runner
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-26, ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Rust toolchain (exo_rs is built from source; edition 2024 needs 1.85+)
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Install exo without MLX
+        run: uv sync --python 3.13 --locked
+
+      - name: Run every cluster scenario
+        timeout-minutes: 60
+        run: uv run --locked pytest src/exo/testkit -m "" -rxXf
