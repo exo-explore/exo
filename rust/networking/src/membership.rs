@@ -6,6 +6,7 @@
 //! ```text
 //!                 token put | connection opened
 //!   (unknown) ------------------------------------------------------> Alive
+//!   (unknown) -- the cluster's state lists it -----------------------> Suspect(Disconnected)
 //!   Alive -- token deleted, no connection | probe unanswered -------> Suspect(Disconnected)
 //!   Alive -- transport up, no report from exo on it for WEDGE_TIMEOUT -> Suspect(Wedged)
 //!   Alive | Suspect -- it announced that it is leaving --------------> Gone(Left), forgotten
@@ -13,12 +14,13 @@
 //!   Suspect(Wedged) -- a report -------------------------------------> Alive
 //!   Suspect -- Suspect for GRACE ------------------------------------> Gone(same reason)
 //!   Gone(Disconnected | Left) -- token put | connection opened ------> Alive (a rejoin)
+//!   Gone(Disconnected) -- probe answered (asked as it reports) ------> Alive
 //!   Gone(Wedged) -- a report ----------------------------------------> Alive
 //! ```
 //!
-//! A loss is undone by the kind of signal that showed it: a lost transport by the transport,
-//! a wedged exo by a report from it. Each change is reported once, whichever input shows it
-//! first.
+//! A loss is undone by the kind of signal that showed it: a lost transport by the transport
+//! (or an answer when the node is asked), a wedged exo by a report from it. Each change is
+//! reported once, whichever input shows it first.
 //!
 //! exo tells it what only exo knows: that exo on a node reported ([`Membership::heard_from`]),
 //! that the cluster's state lists a node ([`Membership::listed`]), and that the coordinator
@@ -407,8 +409,7 @@ impl Membership {
         let change = if answered {
             // Reachable (perhaps through another node): the probe undoes a lost transport,
             // nothing else
-            (peer.state == MemberState::Suspect(Reason::Disconnected))
-                .then(|| self.set(node, MemberState::Alive, now))
+            transport_lost(peer.state).then(|| self.set(node, MemberState::Alive, now))
         } else if reopened && peer.connected {
             // Its connection opened again while it was asked
             None
@@ -440,15 +441,23 @@ impl Membership {
             .then(|| self.set(node, MemberState::Gone(Reason::Left), now))
     }
 
-    /// exo on the node reported (its periodic node info). Only a report undoes a wedge.
+    /// exo on the node reported (its periodic node info). Only a report undoes a wedge. A node
+    /// whose transport is lost here is asked whether it is still there: its reports reach this
+    /// node through the coordinator, and it may be reachable again (through another node) with
+    /// no new token or connection to show it. An answer makes it Alive.
     pub fn heard_from(&mut self, node: ZenohId, now: Now) -> Option<Member> {
         let peer = self.peers.get_mut(&node)?;
         peer.last_heard = Some(now.awake);
-        matches!(
-            peer.state,
-            MemberState::Suspect(Reason::Wedged) | MemberState::Gone(Reason::Wedged)
-        )
-        .then(|| self.set(node, MemberState::Alive, now))
+        match peer.state {
+            MemberState::Suspect(Reason::Wedged) | MemberState::Gone(Reason::Wedged) => {
+                Some(self.set(node, MemberState::Alive, now))
+            }
+            state if transport_lost(state) => {
+                self.ask(node);
+                None
+            }
+            _ => None,
+        }
     }
 
     /// The cluster's state lists the node: it reported to the coordinator, or a snapshot of the
@@ -457,10 +466,13 @@ impl Membership {
     /// adopts a state that lists the other side's nodes, and counting them it reads that side
     /// as the minority it is, not as a majority of the nodes it happens to have seen.
     ///
-    /// A node this one has never seen is Suspect(Disconnected) from now, and Gone after the
-    /// grace unless its transport shows it, so a node that went away before this one started
-    /// (a new coordinator can inherit such nodes, or a late report can bring one back) is
-    /// removed like any other instead of staying listed for good.
+    /// A node this one has never seen (or has removed) is Suspect(Disconnected) from now, and
+    /// is asked whether it is there, like a node listed but lost here: an answer makes it
+    /// Alive. Unanswered, it is Gone after the grace, so a node that went away before this one
+    /// started (a new coordinator can inherit such nodes) is removed like any other instead of
+    /// staying listed for good. A node removed while its transport stayed up (wedged, then
+    /// back) shows no new token or connection, and only the answer brings it back. Exo on it
+    /// is expected to report from then on: its wedge timeout is armed.
     ///
     /// A removal still waiting (the node was Alive here, or this node didn't read Majority) no
     /// longer holds: the node reported after it, and is back in the state; taking it out of
@@ -476,6 +488,9 @@ impl Membership {
                 peer.listed = true;
                 peer.counted = peer.state != MemberState::Gone(Reason::Left);
             }
+            if transport_lost(peer.state) {
+                self.ask(node);
+            }
             return None;
         }
         self.peers.insert(
@@ -488,13 +503,14 @@ impl Membership {
                 probe_again: false,
                 opened_while_probing: false,
                 next_probe: None,
-                last_heard: None,
+                last_heard: Some(now.awake),
                 away_before: Duration::ZERO,
                 counted: true,
                 listed: true,
                 removed: false,
             },
         );
+        self.ask(node);
         Some(self.member(node))
     }
 
@@ -777,6 +793,15 @@ impl Membership {
     }
 }
 
+/// Whether the node is Suspect or Gone because its transport was lost here: a probe's answer,
+/// like a new token or connection, brings it back
+const fn transport_lost(state: MemberState) -> bool {
+    matches!(
+        state,
+        MemberState::Suspect(Reason::Disconnected) | MemberState::Gone(Reason::Disconnected)
+    )
+}
+
 /// The quorum read: how `reachable` nodes compare to half of `last_known`
 pub fn quorum(reachable: usize, last_known: usize) -> Quorum {
     match reachable.saturating_mul(2).cmp(&last_known) {
@@ -890,6 +915,36 @@ mod tests {
     fn read(membership: &Membership) -> (Quorum, usize, usize) {
         let snapshot = membership.snapshot();
         (snapshot.quorum, snapshot.reachable, snapshot.last_known)
+    }
+
+    /// The node's state in the view, if it is in it
+    fn state_of(membership: &Membership, n: u8) -> Option<MemberState> {
+        membership
+            .snapshot()
+            .members
+            .into_iter()
+            .find(|member| member.node == zid(n))
+            .map(|member| member.state)
+    }
+
+    /// Ticks for `duration`, with exo on each of `reporting` reporting before every tick
+    fn run_reporting(
+        membership: &mut Membership,
+        clock: &mut Clock,
+        duration: Duration,
+        reporting: &[u8],
+    ) -> Vec<(ZenohId, MemberState)> {
+        let mut changes = Vec::new();
+        let mut waited = Duration::ZERO;
+        while waited < duration {
+            waited += TICK;
+            for &n in reporting {
+                changes.extend(state(membership.heard_from(zid(n), clock.now)));
+            }
+            changes.extend(states(membership.tick(clock.advance(TICK))));
+            changes.extend(answer_probes(membership, clock.now, true));
+        }
+        changes
     }
 
     /// A peer that joined and reported: its transport is up and the cluster's state lists it
@@ -1371,10 +1426,17 @@ mod tests {
         membership.probe_finished(zid(1), false, clock.now);
         run_for(&mut membership, &mut clock, GRACE);
 
-        // A probe answer doesn't bring back a Gone node: only the transport does
-        assert_eq!(membership.probe_finished(zid(1), true, clock.now), None);
         assert_eq!(
             state(membership.connection_opened(zid(1), clock.now)),
+            Some(alive(1))
+        );
+
+        // An answer brings it back too (it is asked when it reports or is listed while Gone,
+        // where nothing else would show it)
+        lose(&mut membership, clock.now, 1);
+        run_for(&mut membership, &mut clock, GRACE);
+        assert_eq!(
+            state(membership.probe_finished(zid(1), true, clock.now)),
             Some(alive(1))
         );
 
@@ -1741,6 +1803,8 @@ mod tests {
             state(membership.listed(zid(2), clock.now)),
             Some(suspect(2, Reason::Disconnected))
         );
+        // It is asked whether it is there, and doesn't answer
+        assert_eq!(answer_probes(&mut membership, clock.now, false), vec![]);
         // Listed again (it is in every report and snapshot): reported once
         assert_eq!(membership.listed(zid(2), clock.now), None);
         // It counts: the cluster's state lists it
@@ -1764,10 +1828,15 @@ mod tests {
             Some(alive(1))
         );
         assert_eq!(read(&membership), (Quorum::Majority, 2, 2));
-        // A report alone doesn't show it: only the transport does
+        // A report alone doesn't show it: it is asked, and only an answer or the transport does
         membership.listed(zid(2), clock.now);
         assert_eq!(membership.heard_from(zid(2), clock.now), None);
         assert_eq!(read(&membership), (Quorum::Majority, 2, 3));
+        assert_eq!(
+            answer_probes(&mut membership, clock.now, true),
+            vec![alive(2)]
+        );
+        assert_eq!(membership.snapshot().reachable, 3);
     }
 
     #[test]
@@ -1775,11 +1844,12 @@ mod tests {
         let mut clock = Clock::new();
         let mut membership = membership(&clock);
         // Its side: node 1. The state it adopts also lists nodes 2, 3 and 4, which are on the
-        // other side
+        // other side and don't answer
         connected_peer(&mut membership, &clock, 1);
         for n in 2..=4 {
             membership.listed(zid(n), clock.now);
         }
+        assert_eq!(answer_probes(&mut membership, clock.now, false), vec![]);
         assert_eq!(read(&membership), (Quorum::Minority, 2, 5));
         // Still a minority once they are Gone, until they have been Gone for FORGET_AFTER (as
         // on that side's other node, which lost them)
@@ -1787,6 +1857,89 @@ mod tests {
         assert_eq!(membership.quorum(), Quorum::Minority);
         run_for(&mut membership, &mut clock, TICK);
         assert_eq!(read(&membership), (Quorum::Majority, 2, 2));
+    }
+
+    #[test]
+    fn a_wedged_node_removed_while_its_transport_stayed_up_is_back_once_it_reports() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        connected_peer(&mut membership, &clock, 2);
+        membership.heard_from(zid(2), clock.now);
+        // exo on node 2 stops reporting, its transport up: Wedged, then Gone (node 1 reports)
+        run_reporting(&mut membership, &mut clock, WEDGE_TIMEOUT + GRACE, &[1]);
+        assert_eq!(
+            state_of(&membership, 2),
+            Some(MemberState::Gone(Reason::Wedged))
+        );
+        // The coordinator removes it, and this node reads Majority: it leaves the view
+        membership.forget(zid(2));
+        assert_eq!(state_of(&membership, 2), None);
+        // exo on it recovers and reports. Its token and connection never changed, so nothing
+        // else shows it: it is listed again, and asked
+        assert_eq!(
+            state(membership.listed(zid(2), clock.now)),
+            Some(suspect(2, Reason::Disconnected))
+        );
+        assert_eq!(membership.heard_from(zid(2), clock.now), None);
+        assert_eq!(
+            answer_probes(&mut membership, clock.now, true),
+            vec![alive(2)]
+        );
+        assert_eq!(counted(&membership, 2), Some(true));
+        // Reporting, it stays Alive: it isn't Gone, and removed, again every grace
+        assert_eq!(
+            run_reporting(
+                &mut membership,
+                &mut clock,
+                2 * (WEDGE_TIMEOUT + GRACE),
+                &[1, 2]
+            ),
+            vec![]
+        );
+    }
+
+    #[test]
+    fn a_gone_node_that_keeps_reporting_is_asked_and_back_once_it_answers() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        connected_peer(&mut membership, &clock, 2);
+        // Its link to this node is lost, and no new token or connection shows it again
+        lose(&mut membership, clock.now, 1);
+        run_for(&mut membership, &mut clock, GRACE);
+        assert_eq!(
+            state_of(&membership, 1),
+            Some(MemberState::Gone(Reason::Disconnected))
+        );
+        // Its reports reach this node through the coordinator: it is asked, and answers
+        assert_eq!(membership.heard_from(zid(1), clock.now), None);
+        assert_eq!(
+            answer_probes(&mut membership, clock.now, true),
+            vec![alive(1)]
+        );
+    }
+
+    #[test]
+    fn a_listed_node_that_answers_but_never_reports_is_wedged() {
+        let mut clock = Clock::new();
+        let mut membership = membership(&clock);
+        connected_peer(&mut membership, &clock, 1);
+        // A snapshot lists node 2, which this node hasn't seen: it answers, so it is Alive, and
+        // exo on it is expected to report
+        membership.listed(zid(2), clock.now);
+        assert_eq!(
+            answer_probes(&mut membership, clock.now, true),
+            vec![alive(2)]
+        );
+        assert_eq!(
+            run_answering(&mut membership, &mut clock, WEDGE_TIMEOUT - TICK, true),
+            vec![]
+        );
+        assert_eq!(
+            run_answering(&mut membership, &mut clock, TICK, true),
+            vec![suspect(2, Reason::Wedged)]
+        );
     }
 
     #[test]
