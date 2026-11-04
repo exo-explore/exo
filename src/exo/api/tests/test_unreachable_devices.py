@@ -1,10 +1,10 @@
 # pyright: reportPrivateUsage=false, reportAny=false
 """Every API checks, on its own node's membership view, that it can reach the devices a request
 needs. A request whose model's instances all have a device it can't reach now ends at once
-("A device serving this model can't be reached right now."), and so does a request running on
-an instance whose device leaves Alive: their output can't arrive, and waiting would last until
-the device is back or removed after the grace period (or, on a node cut off from most of the
-cluster, until the network is back)."""
+("A device serving this model can't be reached right now. Try again in a moment."), and so does a
+request running on an instance whose device leaves Alive: their output can't arrive, and waiting
+would last until the device is back or removed after the grace period (or, on a node cut off from
+most of the cluster, until the network is back)."""
 
 import json
 

@@ -44,7 +44,11 @@ DEVICE_LEFT = "A device serving this model left the cluster before the reply fin
 # A request whose model's instances all have a device this node can't reach now (Suspect or Gone
 # in its membership view), or that was running on one when the device became unreachable. It
 # ends at once rather than wait for output that can't arrive, or for the device to be removed.
-DEVICE_UNREACHABLE = "A device serving this model can't be reached right now."
+# The device may be back in a moment: it is unreachable from when it stops answering, well before
+# it is known to be gone.
+DEVICE_UNREACHABLE = (
+    "A device serving this model can't be reached right now. Try again in a moment."
+)
 MODEL_STOPPED = "The model was stopped before the reply finished."
 # A request sent to an instance that was deleted (the model was stopped, or a node was lost)
 # just before the request could start

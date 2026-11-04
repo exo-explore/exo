@@ -284,7 +284,9 @@ CLUSTER_COMMAND_TIMEOUT = (
     MASTER_SILENCE_TIMEOUT + HEARTBEAT_INTERVAL + 2 * DEFAULT_ELECTION_TIMEOUT + 5.0
 )
 # A launch onto a device this node can't reach now: its model couldn't load there
-LAUNCH_UNREACHABLE_MESSAGE = "A device this launch needs can't be reached right now."
+LAUNCH_UNREACHABLE_MESSAGE = (
+    "A device this launch needs can't be reached right now. Try again in a moment."
+)
 _NOT_APPLIED_MESSAGE = (
     "The cluster didn't confirm this change in time; the device coordinating it may have "
     "been lost. Check the cluster's state and try again."
