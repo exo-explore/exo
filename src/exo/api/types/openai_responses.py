@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from exo.shared.types.common import ModelId
 from exo.shared.types.text_generation import ReasoningEffort
+from exo.utils.extra_fields_warner import WarnExtraModel
 
 # Type aliases
 ResponseStatus = Literal["completed", "failed", "in_progress", "incomplete"]
@@ -307,7 +308,7 @@ class Reasoning(BaseModel, frozen=True):
     summary: Literal["auto", "concise", "detailed"] | None = None
 
 
-class ResponsesRequest(BaseModel, frozen=True):
+class ResponsesRequest(WarnExtraModel, frozen=True):
     """Request body for OpenAI Responses API.
 
     This is the API wire type for the Responses endpoint. The canonical
