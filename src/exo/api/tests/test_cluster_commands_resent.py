@@ -19,6 +19,7 @@ from exo.api.types import (
     PlaceInstanceParams,
 )
 from exo.master.tests.conftest import create_node_memory, create_node_network
+from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask, card_cache
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
@@ -88,6 +89,10 @@ async def running_api() -> AsyncIterator[
     api.state = single_node_state()
     api.paused = False
     api._system_id = SystemId()  # pyright: ignore[reportPrivateUsage]
+    # Reaching every node the state lists
+    api.membership = FakeMembership(
+        NodeId("api-node"), *api.state.topology.list_nodes()
+    )
     api.command_sender, commands = channel[ForwarderCommand]()
     events, api.event_receiver = channel[NodeEvents]()
     api._recent_events = RecentEvents()  # pyright: ignore[reportPrivateUsage]

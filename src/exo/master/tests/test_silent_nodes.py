@@ -8,7 +8,12 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from exo.master.main import Master
-from exo.routing.membership import LossReason, MemberState, Quorum
+from exo.routing.membership import (
+    LossReason,
+    MemberState,
+    Quorum,
+    reachable_topology,
+)
 from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
@@ -364,7 +369,7 @@ async def test_a_model_is_not_placed_on_a_node_it_cant_reach() -> None:
     master, _ = master_with(listed(MASTER, PEER_A, PEER_B, PEER_C), membership=view)
     await view.lose(PEER_B)
 
-    reachable = master._reachable_topology()  # pyright: ignore[reportPrivateUsage]
+    reachable = reachable_topology(master.membership, master.state.topology)
 
     assert set(reachable.list_nodes()) == {MASTER, PEER_A}
     assert set(master.state.topology.list_nodes()) == {MASTER, PEER_A, PEER_B, PEER_C}

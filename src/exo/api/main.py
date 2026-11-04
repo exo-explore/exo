@@ -157,6 +157,7 @@ from exo.routing.membership import (
     MembershipReader,
     MembershipView,
     instance_is_reachable,
+    reachable_topology,
 )
 from exo.routing.wire import WIRE_VERSION, DeviceOnOtherVersion, build_id
 from exo.shared.apply import apply
@@ -282,6 +283,8 @@ CLUSTER_COMMAND_RESEND_INTERVAL = 5.0
 CLUSTER_COMMAND_TIMEOUT = (
     MASTER_SILENCE_TIMEOUT + HEARTBEAT_INTERVAL + 2 * DEFAULT_ELECTION_TIMEOUT + 5.0
 )
+# A launch onto a device this node can't reach now: its model couldn't load there
+LAUNCH_UNREACHABLE_MESSAGE = "A device this launch needs can't be reached right now."
 _NOT_APPLIED_MESSAGE = (
     "The cluster didn't confirm this change in time; the device coordinating it may have "
     "been lost. Check the cluster's state and try again."
@@ -336,14 +339,13 @@ def _require_disaggregation_enabled() -> None:
 @final
 class ModelUnreachableError(HTTPException):
     """A 503 for a request whose model's instances all have a device this node can't reach
-    now: sent, it would wait for output that can't arrive"""
+    now: sent, it would wait for output that can't arrive. Also for a launch onto such a
+    device, whose model couldn't load there."""
 
     code: GenerationErrorCode = "device_unreachable"
 
-    def __init__(self) -> None:
-        super().__init__(
-            status_code=HTTPStatus.SERVICE_UNAVAILABLE, detail=DEVICE_UNREACHABLE
-        )
+    def __init__(self, message: str = DEVICE_UNREACHABLE) -> None:
+        super().__init__(status_code=HTTPStatus.SERVICE_UNAVAILABLE, detail=message)
 
 
 @final
@@ -649,6 +651,10 @@ class API:
     ) -> CreateInstanceResponse:
         instance = payload.instance
         model_card = await ModelCard.load(instance.shard_assignments.model_id)
+        # Sent, it would be refused (the master doesn't launch onto a node it can't reach),
+        # and the API would wait for it to show until CLUSTER_COMMAND_TIMEOUT
+        if not instance_is_reachable(self.membership, instance):
+            raise ModelUnreachableError(LAUNCH_UNREACHABLE_MESSAGE)
         # Each node has to hold its own shard: memory free elsewhere is no use to it
         if (shortfall := instance_beyond_memory(instance, self.state)) is not None:
             raise HTTPException(status_code=400, detail=shortfall)
@@ -684,7 +690,8 @@ class API:
                 node_memory=self.state.node_memory,
                 node_network=self.state.node_network,
                 node_backends=self.state.node_backends,
-                topology=self.state.topology,
+                # Not on a node this node can't reach now: the model couldn't load there
+                topology=reachable_topology(self.membership, self.state.topology),
                 current_instances=self.state.instances,
                 download_status=self.state.downloads,
                 node_rdma_ctl=self.state.node_rdma_ctl,
@@ -714,8 +721,10 @@ class API:
         seen: set[tuple[ModelId, Sharding, InstanceMeta, int]] = set()
         previews: list[PlacementPreview] = []
         required_nodes = set(node_ids) if node_ids else None
+        # Not on a node this node can't reach now: the model couldn't load there
+        topology = reachable_topology(self.membership, self.state.topology)
 
-        if len(list(self.state.topology.list_nodes())) == 0:
+        if len(list(topology.list_nodes())) == 0:
             return PlacementPreviewResponse(previews=[])
 
         try:
@@ -730,9 +739,7 @@ class API:
                 instance_combinations.extend(
                     [
                         (sharding, instance_meta, i)
-                        for i in range(
-                            1, len(list(self.state.topology.list_nodes())) + 1
-                        )
+                        for i in range(1, len(list(topology.list_nodes())) + 1)
                     ]
                 )
         # TODO: PDD
@@ -750,7 +757,7 @@ class API:
                     node_memory=self.state.node_memory,
                     node_network=self.state.node_network,
                     node_backends=self.state.node_backends,
-                    topology=self.state.topology,
+                    topology=topology,
                     current_instances=self.state.instances,
                     required_nodes=required_nodes,
                     download_status=self.state.downloads,

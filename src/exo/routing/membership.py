@@ -12,6 +12,7 @@ state lists a node, and that the coordinator removed a node (NodeTimedOut, which
 quitting node's departure arrives), so that the quorum read stops counting it.
 """
 
+import copy
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Final, Literal, Protocol, final
@@ -21,6 +22,7 @@ from anyio import BrokenResourceError, ClosedResourceError, create_task_group
 from loguru import logger
 
 from exo.routing.event_router import NodeEventReceiver
+from exo.shared.topology import Topology
 from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
     IndexedEvent,
@@ -172,6 +174,21 @@ def instance_is_reachable(reachability: Reachability, instance: Instance) -> boo
         reachability.is_reachable(node)
         for node in instance.shard_assignments.node_to_runner
     )
+
+
+def reachable_topology(reachability: Reachability, topology: Topology) -> Topology:
+    """The topology without the nodes this node can't reach now, as its membership sees them:
+    a model isn't placed on a node that can't serve it (one Suspect, or one Gone that an even
+    split keeps listed). The topology given is left as it is."""
+    unreachable = [
+        node for node in topology.list_nodes() if not reachability.is_reachable(node)
+    ]
+    if not unreachable:
+        return topology
+    reachable = copy.deepcopy(topology)
+    for node in unreachable:
+        reachable.remove_node(node)
+    return reachable
 
 
 def listed_nodes(state: State) -> set[NodeId]:

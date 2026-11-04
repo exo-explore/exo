@@ -1,4 +1,3 @@
-import copy
 from collections import deque
 from collections.abc import Set as AbstractSet
 from datetime import datetime, timezone
@@ -25,13 +24,13 @@ from exo.routing.membership import (
     MembershipView,
     instance_is_reachable,
     listed_nodes,
+    reachable_topology,
 )
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_TRACING_ENABLED
 from exo.shared.model_readiness import instance_is_ready, instance_readiness
 from exo.shared.models.model_cards import ModelId
 from exo.shared.request_errors import DEVICE_UNREACHABLE, INSTANCE_GONE_BEFORE_START
-from exo.shared.topology import Topology
 from exo.shared.types.chunks import ErrorChunk, ImageChunk
 from exo.shared.types.commands import (
     AddCustomModelCard,
@@ -451,7 +450,9 @@ class Master:
                         case PlaceInstance():
                             placement = place_instance(
                                 command,
-                                self._reachable_topology(),
+                                reachable_topology(
+                                    self.membership, self.state.topology
+                                ),
                                 self.state.instances,
                                 self.state.node_memory,
                                 self.state.node_network,
@@ -686,22 +687,6 @@ class Master:
         # Delete the instances it was part of now, not at the next check
         if self._node_removed is not None:
             self._node_removed.set()
-
-    def _reachable_topology(self) -> Topology:
-        """The topology without the nodes this node can't reach now, as its membership sees
-        them: a model isn't placed on a node that can't serve it (one Suspect, or one Gone
-        that an even split keeps listed)"""
-        unreachable = [
-            node
-            for node in self.state.topology.list_nodes()
-            if not self.membership.is_reachable(node)
-        ]
-        if not unreachable:
-            return self.state.topology
-        topology = copy.deepcopy(self.state.topology)
-        for node in unreachable:
-            topology.remove_node(node)
-        return topology
 
     def _note_held_back(
         self, listed: AbstractSet[NodeId], view: MembershipView

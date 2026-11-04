@@ -168,6 +168,8 @@ def an_api(state: State) -> tuple[API, Receiver[ForwarderCommand]]:
     api.state = state
     api.paused = False
     api._system_id = SystemId()
+    # Reaching every node the state lists
+    api.membership = FakeMembership(NodeId("api-node"), *state.topology.list_nodes())
     api.command_sender, commands = channel[ForwarderCommand]()
     api._recent_events = RecentEvents()
     api._text_generation_queues = {}
