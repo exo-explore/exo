@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from exo.routing.wire import DeviceOnOtherVersion
 from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.memory import Memory
@@ -455,6 +456,16 @@ class ImageListItem(BaseModel, frozen=True):
 
 class ImageListResponse(BaseModel, frozen=True):
     data: list[ImageListItem]
+
+
+class DevicesOnOtherVersionsResponse(FrozenModel):
+    """Devices this node hears on the network, under its cluster name, that can't join the
+    cluster because they run another version of exo"""
+
+    # This node's
+    wire_version: int
+    build_id: str
+    devices: list[DeviceOnOtherVersion]
 
 
 class StartDownloadParams(FrozenModel):

@@ -134,6 +134,11 @@ impl Swarm {
         self.members.clone()
     }
 
+    /// The devices discovery hears under this cluster's name that can't join it
+    pub fn other_versions(&self) -> crate::wire::OtherVersions {
+        self.session.other_versions.clone()
+    }
+
     pub fn into_stream(self) -> Pin<Box<dyn Stream<Item = FromSwarm> + Send>> {
         let Swarm {
             session,
@@ -498,12 +503,24 @@ async fn on_message(
 pub async fn create_swarm(
     identity: &str,
     namespace: &str,
+    wire_version: u16,
+    build_id: &str,
+    pre_gate_namespace: Option<&str>,
     from_client: mpsc::Receiver<ToSwarm>,
     listen_port: u16,
     discovery_service_port: u16,
 ) -> Result<Swarm> {
     let cfg = crate::cfg(identity, listen_port)?;
-    let session = crate::open(cfg, namespace, listen_port, discovery_service_port).await?;
+    let session = crate::open(
+        cfg,
+        namespace,
+        wire_version,
+        build_id,
+        pre_gate_namespace,
+        listen_port,
+        discovery_service_port,
+    )
+    .await?;
     Ok(Swarm::new(session, from_client))
 }
 
@@ -1058,6 +1075,7 @@ mod tests {
                 });
                 let session = crate::Session {
                     z,
+                    other_versions: crate::wire::OtherVersions::default(),
                     _jh: Arc::new(crate::AbortOnDrop(dialer)),
                 };
                 let (_to_swarm, from_client) = tokio::sync::mpsc::channel(16);

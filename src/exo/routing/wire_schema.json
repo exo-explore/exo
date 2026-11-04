@@ -1,0 +1,5623 @@
+{
+  "$defs": {
+    "AddCustomModelCard": {
+      "additionalProperties": false,
+      "properties": {
+        "AddCustomModelCard": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "model_card": {
+              "$ref": "#/$defs/ModelCard"
+            }
+          },
+          "required": [
+            "model_card"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "AddCustomModelCard"
+      ],
+      "type": "object"
+    },
+    "AdvancedImageParams": {
+      "properties": {
+        "guidance": {
+          "anyOf": [
+            {
+              "maximum": 20.0,
+              "minimum": 1.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "negative_prompt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "num_inference_steps": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "num_sync_steps": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object",
+      "x-extra": "ignore",
+      "x-strict": false
+    },
+    "Backend": {
+      "enum": [
+        "MlxMetal",
+        "MlxCpu",
+        "MlxCuda",
+        "Vllm"
+      ],
+      "type": "string"
+    },
+    "BoundInstance": {
+      "additionalProperties": false,
+      "properties": {
+        "bound_node_id": {
+          "type": "string"
+        },
+        "bound_runner_id": {
+          "type": "string"
+        },
+        "instance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxRingInstance"
+            },
+            {
+              "$ref": "#/$defs/MlxJacclInstance"
+            }
+          ]
+        }
+      },
+      "required": [
+        "bound_node_id",
+        "bound_runner_id",
+        "instance"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "CancelDownload": {
+      "additionalProperties": false,
+      "properties": {
+        "CancelDownload": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "model_id": {
+              "type": "string"
+            },
+            "target_node_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "model_id",
+            "target_node_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "CancelDownload"
+      ],
+      "type": "object"
+    },
+    "CancelTask": {
+      "additionalProperties": false,
+      "properties": {
+        "CancelTask": {
+          "additionalProperties": false,
+          "properties": {
+            "cancelled_task_id": {
+              "type": "string"
+            },
+            "instance_id": {
+              "type": "string"
+            },
+            "runner_id": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "task_status": {
+              "$ref": "#/$defs/TaskStatus"
+            }
+          },
+          "required": [
+            "cancelled_task_id",
+            "instance_id",
+            "runner_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "CancelTask"
+      ],
+      "type": "object"
+    },
+    "CfgShardMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "CfgShardMetadata": {
+          "additionalProperties": false,
+          "properties": {
+            "cfg_rank": {
+              "type": "integer"
+            },
+            "cfg_world_size": {
+              "type": "integer"
+            },
+            "device_rank": {
+              "type": "integer"
+            },
+            "end_layer": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "immediate_exception": {
+              "type": "boolean"
+            },
+            "model_card": {
+              "$ref": "#/$defs/ModelCard"
+            },
+            "n_layers": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pipeline_rank": {
+              "type": "integer"
+            },
+            "pipeline_world_size": {
+              "type": "integer"
+            },
+            "should_timeout": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "start_layer": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "world_size": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cfg_rank",
+            "device_rank",
+            "end_layer",
+            "model_card",
+            "n_layers",
+            "pipeline_rank",
+            "pipeline_world_size",
+            "start_layer",
+            "world_size"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "CfgShardMetadata"
+      ],
+      "type": "object"
+    },
+    "ChatTemplateValue": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/ChatTemplateValue"
+          },
+          "type": "object"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/ChatTemplateValue"
+          },
+          "type": "array"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "enum": [
+            "user",
+            "assistant",
+            "system",
+            "developer",
+            "tool"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "boolean"
+        }
+      ]
+    },
+    "ChunkGenerated": {
+      "additionalProperties": false,
+      "properties": {
+        "ChunkGenerated": {
+          "additionalProperties": false,
+          "properties": {
+            "chunk": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/PrefillProgressChunk"
+                },
+                {
+                  "$ref": "#/$defs/TokenChunk"
+                },
+                {
+                  "$ref": "#/$defs/ImageChunk"
+                },
+                {
+                  "$ref": "#/$defs/ToolCallChunk"
+                },
+                {
+                  "$ref": "#/$defs/ErrorChunk"
+                }
+              ]
+            },
+            "command_id": {
+              "type": "string"
+            },
+            "event_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "chunk",
+            "command_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "ChunkGenerated"
+      ],
+      "type": "object"
+    },
+    "CompletionTokensDetails": {
+      "properties": {
+        "accepted_prediction_tokens": {
+          "type": "integer"
+        },
+        "audio_tokens": {
+          "type": "integer"
+        },
+        "reasoning_tokens": {
+          "type": "integer"
+        },
+        "rejected_prediction_tokens": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "x-extra": "ignore",
+      "x-strict": false
+    },
+    "ComponentInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "can_shard": {
+          "type": "boolean"
+        },
+        "component_name": {
+          "type": "string"
+        },
+        "component_path": {
+          "type": "string"
+        },
+        "n_layers": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "safetensors_index_filename": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "storage_size": {
+          "$ref": "#/$defs/Memory"
+        }
+      },
+      "required": [
+        "can_shard",
+        "component_name",
+        "component_path",
+        "storage_size"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "ConnectToGroup": {
+      "additionalProperties": false,
+      "properties": {
+        "ConnectToGroup": {
+          "additionalProperties": false,
+          "properties": {
+            "instance_id": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "task_status": {
+              "$ref": "#/$defs/TaskStatus"
+            }
+          },
+          "required": [
+            "instance_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "ConnectToGroup"
+      ],
+      "type": "object"
+    },
+    "Connection": {
+      "additionalProperties": false,
+      "properties": {
+        "edge": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RDMAConnection"
+            },
+            {
+              "$ref": "#/$defs/SocketConnection"
+            }
+          ]
+        },
+        "sink": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "edge",
+        "sink",
+        "source"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "CreateInstance": {
+      "additionalProperties": false,
+      "properties": {
+        "CreateInstance": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "instance": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/MlxRingInstance"
+                },
+                {
+                  "$ref": "#/$defs/MlxJacclInstance"
+                }
+              ]
+            }
+          },
+          "required": [
+            "instance"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "CreateInstance"
+      ],
+      "type": "object"
+    },
+    "CreateRunner": {
+      "additionalProperties": false,
+      "properties": {
+        "CreateRunner": {
+          "additionalProperties": false,
+          "properties": {
+            "bound_instance": {
+              "$ref": "#/$defs/BoundInstance"
+            },
+            "instance_id": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "task_status": {
+              "$ref": "#/$defs/TaskStatus"
+            }
+          },
+          "required": [
+            "bound_instance",
+            "instance_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "CreateRunner"
+      ],
+      "type": "object"
+    },
+    "CustomModelCardAdded": {
+      "additionalProperties": false,
+      "properties": {
+        "CustomModelCardAdded": {
+          "additionalProperties": false,
+          "properties": {
+            "event_id": {
+              "type": "string"
+            },
+            "model_card": {
+              "$ref": "#/$defs/ModelCard"
+            }
+          },
+          "required": [
+            "model_card"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "CustomModelCardAdded"
+      ],
+      "type": "object"
+    },
+    "CustomModelCardDeleted": {
+      "additionalProperties": false,
+      "properties": {
+        "CustomModelCardDeleted": {
+          "additionalProperties": false,
+          "properties": {
+            "event_id": {
+              "type": "string"
+            },
+            "model_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "model_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "CustomModelCardDeleted"
+      ],
+      "type": "object"
+    },
+    "DeleteCustomModelCard": {
+      "additionalProperties": false,
+      "properties": {
+        "DeleteCustomModelCard": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "model_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "model_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "DeleteCustomModelCard"
+      ],
+      "type": "object"
+    },
+    "DeleteDownload": {
+      "additionalProperties": false,
+      "properties": {
+        "DeleteDownload": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "model_id": {
+              "type": "string"
+            },
+            "target_node_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "model_id",
+            "target_node_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "DeleteDownload"
+      ],
+      "type": "object"
+    },
+    "DeleteInstance": {
+      "additionalProperties": false,
+      "properties": {
+        "DeleteInstance": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "instance_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "instance_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "DeleteInstance"
+      ],
+      "type": "object"
+    },
+    "DeleteInstanceLink": {
+      "additionalProperties": false,
+      "properties": {
+        "DeleteInstanceLink": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "link_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "link_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "DeleteInstanceLink"
+      ],
+      "type": "object"
+    },
+    "DiskUsage": {
+      "additionalProperties": false,
+      "properties": {
+        "available": {
+          "$ref": "#/$defs/Memory"
+        },
+        "total": {
+          "$ref": "#/$defs/Memory"
+        }
+      },
+      "required": [
+        "available",
+        "total"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "DownloadCompleted": {
+      "additionalProperties": false,
+      "properties": {
+        "DownloadCompleted": {
+          "additionalProperties": false,
+          "properties": {
+            "model_directory": {
+              "type": "string"
+            },
+            "node_id": {
+              "type": "string"
+            },
+            "read_only": {
+              "type": "boolean"
+            },
+            "shard_metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PipelineShardMetadata"
+                },
+                {
+                  "$ref": "#/$defs/CfgShardMetadata"
+                },
+                {
+                  "$ref": "#/$defs/TensorShardMetadata"
+                }
+              ]
+            },
+            "total": {
+              "$ref": "#/$defs/Memory"
+            }
+          },
+          "required": [
+            "node_id",
+            "shard_metadata",
+            "total"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "DownloadCompleted"
+      ],
+      "type": "object"
+    },
+    "DownloadFailed": {
+      "additionalProperties": false,
+      "properties": {
+        "DownloadFailed": {
+          "additionalProperties": false,
+          "properties": {
+            "error_message": {
+              "type": "string"
+            },
+            "model_directory": {
+              "type": "string"
+            },
+            "node_id": {
+              "type": "string"
+            },
+            "shard_metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PipelineShardMetadata"
+                },
+                {
+                  "$ref": "#/$defs/CfgShardMetadata"
+                },
+                {
+                  "$ref": "#/$defs/TensorShardMetadata"
+                }
+              ]
+            }
+          },
+          "required": [
+            "error_message",
+            "node_id",
+            "shard_metadata"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "DownloadFailed"
+      ],
+      "type": "object"
+    },
+    "DownloadModel": {
+      "additionalProperties": false,
+      "properties": {
+        "DownloadModel": {
+          "additionalProperties": false,
+          "properties": {
+            "instance_id": {
+              "type": "string"
+            },
+            "shard_metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PipelineShardMetadata"
+                },
+                {
+                  "$ref": "#/$defs/CfgShardMetadata"
+                },
+                {
+                  "$ref": "#/$defs/TensorShardMetadata"
+                }
+              ]
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "task_status": {
+              "$ref": "#/$defs/TaskStatus"
+            }
+          },
+          "required": [
+            "instance_id",
+            "shard_metadata"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "DownloadModel"
+      ],
+      "type": "object"
+    },
+    "DownloadOngoing": {
+      "additionalProperties": false,
+      "properties": {
+        "DownloadOngoing": {
+          "additionalProperties": false,
+          "properties": {
+            "download_progress": {
+              "$ref": "#/$defs/DownloadProgressData"
+            },
+            "model_directory": {
+              "type": "string"
+            },
+            "node_id": {
+              "type": "string"
+            },
+            "shard_metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PipelineShardMetadata"
+                },
+                {
+                  "$ref": "#/$defs/CfgShardMetadata"
+                },
+                {
+                  "$ref": "#/$defs/TensorShardMetadata"
+                }
+              ]
+            }
+          },
+          "required": [
+            "download_progress",
+            "node_id",
+            "shard_metadata"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "DownloadOngoing"
+      ],
+      "type": "object"
+    },
+    "DownloadPending": {
+      "additionalProperties": false,
+      "properties": {
+        "DownloadPending": {
+          "additionalProperties": false,
+          "properties": {
+            "downloaded": {
+              "$ref": "#/$defs/Memory"
+            },
+            "model_directory": {
+              "type": "string"
+            },
+            "node_id": {
+              "type": "string"
+            },
+            "shard_metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PipelineShardMetadata"
+                },
+                {
+                  "$ref": "#/$defs/CfgShardMetadata"
+                },
+                {
+                  "$ref": "#/$defs/TensorShardMetadata"
+                }
+              ]
+            },
+            "total": {
+              "$ref": "#/$defs/Memory"
+            }
+          },
+          "required": [
+            "node_id",
+            "shard_metadata"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "DownloadPending"
+      ],
+      "type": "object"
+    },
+    "DownloadProgressData": {
+      "additionalProperties": false,
+      "properties": {
+        "completed_files": {
+          "type": "integer"
+        },
+        "downloaded": {
+          "$ref": "#/$defs/Memory"
+        },
+        "downloaded_this_session": {
+          "$ref": "#/$defs/Memory"
+        },
+        "eta_ms": {
+          "type": "integer"
+        },
+        "files": {
+          "additionalProperties": {
+            "$ref": "#/$defs/DownloadProgressData"
+          },
+          "type": "object"
+        },
+        "speed": {
+          "type": "number"
+        },
+        "total": {
+          "$ref": "#/$defs/Memory"
+        },
+        "total_files": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "completed_files",
+        "downloaded",
+        "downloaded_this_session",
+        "eta_ms",
+        "files",
+        "speed",
+        "total",
+        "total_files"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "ElectionMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "clock": {
+          "type": "integer"
+        },
+        "commands_seen": {
+          "type": "integer"
+        },
+        "following": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "heartbeat": {
+          "type": "boolean"
+        },
+        "proposed_session": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "seniority": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "clock",
+        "commands_seen",
+        "proposed_session",
+        "seniority"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "ErrorChunk": {
+      "additionalProperties": false,
+      "properties": {
+        "ErrorChunk": {
+          "additionalProperties": false,
+          "properties": {
+            "diagnostics": {
+              "items": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RunnerMetalGpuTimeout"
+                  },
+                  {
+                    "$ref": "#/$defs/RunnerMetalOutOfMemory"
+                  },
+                  {
+                    "$ref": "#/$defs/RunnerRingTransportError"
+                  },
+                  {
+                    "$ref": "#/$defs/RunnerRingSocketReceivingError"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            "error_message": {
+              "type": "string"
+            },
+            "finish_reason": {
+              "const": "error",
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "error_message",
+            "model"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "ErrorChunk"
+      ],
+      "type": "object"
+    },
+    "ForwarderCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TestCommand"
+            },
+            {
+              "$ref": "#/$defs/RequestEventLog"
+            },
+            {
+              "$ref": "#/$defs/exo__shared__types__commands__TextGeneration"
+            },
+            {
+              "$ref": "#/$defs/exo__shared__types__commands__ImageGeneration"
+            },
+            {
+              "$ref": "#/$defs/exo__shared__types__commands__ImageEdits"
+            },
+            {
+              "$ref": "#/$defs/PlaceInstance"
+            },
+            {
+              "$ref": "#/$defs/CreateInstance"
+            },
+            {
+              "$ref": "#/$defs/DeleteInstance"
+            },
+            {
+              "$ref": "#/$defs/TaskCancelled"
+            },
+            {
+              "$ref": "#/$defs/TaskFinished"
+            },
+            {
+              "$ref": "#/$defs/SendInputChunk"
+            },
+            {
+              "$ref": "#/$defs/AddCustomModelCard"
+            },
+            {
+              "$ref": "#/$defs/DeleteCustomModelCard"
+            },
+            {
+              "$ref": "#/$defs/SetInstanceLink"
+            },
+            {
+              "$ref": "#/$defs/DeleteInstanceLink"
+            }
+          ]
+        },
+        "origin": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "command",
+        "origin"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "ForwarderDownloadCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StartDownload"
+            },
+            {
+              "$ref": "#/$defs/DeleteDownload"
+            },
+            {
+              "$ref": "#/$defs/CancelDownload"
+            }
+          ]
+        },
+        "origin": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "command",
+        "origin"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "GenerationStats": {
+      "properties": {
+        "generation_tokens": {
+          "type": "integer"
+        },
+        "generation_tps": {
+          "type": "number"
+        },
+        "peak_memory_usage": {
+          "$ref": "#/$defs/Memory"
+        },
+        "prefix_cache_hit": {
+          "enum": [
+            "none",
+            "partial",
+            "exact"
+          ],
+          "type": "string"
+        },
+        "prompt_tokens": {
+          "type": "integer"
+        },
+        "prompt_tps": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "generation_tokens",
+        "generation_tps",
+        "peak_memory_usage",
+        "prompt_tokens",
+        "prompt_tps"
+      ],
+      "type": "object",
+      "x-extra": "ignore",
+      "x-strict": false
+    },
+    "GlobalForwarderEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/TestEvent"
+            },
+            {
+              "$ref": "#/$defs/TaskCreated"
+            },
+            {
+              "$ref": "#/$defs/TaskStatusUpdated"
+            },
+            {
+              "$ref": "#/$defs/TaskFailed"
+            },
+            {
+              "$ref": "#/$defs/TaskDeleted"
+            },
+            {
+              "$ref": "#/$defs/TaskAcknowledged"
+            },
+            {
+              "$ref": "#/$defs/InstanceCreated"
+            },
+            {
+              "$ref": "#/$defs/InstanceDeleted"
+            },
+            {
+              "$ref": "#/$defs/RunnerStatusUpdated"
+            },
+            {
+              "$ref": "#/$defs/NodeTimedOut"
+            },
+            {
+              "$ref": "#/$defs/NodeGatheredInfo"
+            },
+            {
+              "$ref": "#/$defs/NodeDownloadProgress"
+            },
+            {
+              "$ref": "#/$defs/ChunkGenerated"
+            },
+            {
+              "$ref": "#/$defs/InputChunkReceived"
+            },
+            {
+              "$ref": "#/$defs/TopologyEdgeCreated"
+            },
+            {
+              "$ref": "#/$defs/TopologyEdgeDeleted"
+            },
+            {
+              "$ref": "#/$defs/TracesCollected"
+            },
+            {
+              "$ref": "#/$defs/TracesMerged"
+            },
+            {
+              "$ref": "#/$defs/CustomModelCardAdded"
+            },
+            {
+              "$ref": "#/$defs/CustomModelCardDeleted"
+            },
+            {
+              "$ref": "#/$defs/InstanceLinkCreated"
+            },
+            {
+              "$ref": "#/$defs/InstanceLinkDeleted"
+            }
+          ]
+        },
+        "origin": {
+          "type": "string"
+        },
+        "origin_idx": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "event",
+        "origin",
+        "origin_idx",
+        "session"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "Host": {
+      "additionalProperties": false,
+      "properties": {
+        "ip": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ip",
+        "port"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "ImageChunk": {
+      "additionalProperties": false,
+      "properties": {
+        "ImageChunk": {
+          "additionalProperties": false,
+          "properties": {
+            "chunk_index": {
+              "type": "integer"
+            },
+            "data": {
+              "type": "string"
+            },
+            "error_message": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "finish_reason": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "stop",
+                    "length",
+                    "tool_calls",
+                    "content_filter",
+                    "function_call",
+                    "error"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "format": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "png",
+                    "jpeg",
+                    "webp"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "image_index": {
+              "type": "integer"
+            },
+            "is_partial": {
+              "type": "boolean"
+            },
+            "model": {
+              "type": "string"
+            },
+            "partial_index": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "stats": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ImageGenerationStats"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "total_chunks": {
+              "type": "integer"
+            },
+            "total_partials": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "chunk_index",
+            "data",
+            "image_index",
+            "model",
+            "total_chunks"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "ImageChunk"
+      ],
+      "type": "object"
+    },
+    "ImageEditsTaskParams": {
+      "properties": {
+        "advanced_params": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AdvancedImageParams"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bench": {
+          "type": "boolean"
+        },
+        "image_data": {
+          "type": "string"
+        },
+        "image_strength": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "n": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "output_format": {
+          "enum": [
+            "png",
+            "jpeg",
+            "webp"
+          ],
+          "type": "string"
+        },
+        "partial_images": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "enum": [
+                "high",
+                "medium",
+                "low"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "response_format": {
+          "anyOf": [
+            {
+              "enum": [
+                "url",
+                "b64_json"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "size": {
+          "enum": [
+            "auto",
+            "512x512",
+            "768x768",
+            "1024x768",
+            "768x1024",
+            "1024x1024",
+            "1024x1536",
+            "1536x1024"
+          ],
+          "type": "string"
+        },
+        "stream": {
+          "type": "boolean"
+        },
+        "total_input_chunks": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "model",
+        "prompt"
+      ],
+      "type": "object",
+      "x-extra": "ignore",
+      "x-strict": false
+    },
+    "ImageGenerationStats": {
+      "properties": {
+        "image_height": {
+          "type": "integer"
+        },
+        "image_width": {
+          "type": "integer"
+        },
+        "num_images": {
+          "type": "integer"
+        },
+        "num_inference_steps": {
+          "type": "integer"
+        },
+        "peak_memory_usage": {
+          "$ref": "#/$defs/Memory"
+        },
+        "seconds_per_step": {
+          "type": "number"
+        },
+        "total_generation_time": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "image_height",
+        "image_width",
+        "num_images",
+        "num_inference_steps",
+        "peak_memory_usage",
+        "seconds_per_step",
+        "total_generation_time"
+      ],
+      "type": "object",
+      "x-extra": "ignore",
+      "x-strict": false
+    },
+    "ImageGenerationTaskParams": {
+      "properties": {
+        "advanced_params": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AdvancedImageParams"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bench": {
+          "type": "boolean"
+        },
+        "model": {
+          "type": "string"
+        },
+        "moderation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "n": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "output_compression": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "output_format": {
+          "enum": [
+            "png",
+            "jpeg",
+            "webp"
+          ],
+          "type": "string"
+        },
+        "partial_images": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "enum": [
+                "high",
+                "medium",
+                "low"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "response_format": {
+          "anyOf": [
+            {
+              "enum": [
+                "url",
+                "b64_json"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "size": {
+          "enum": [
+            "auto",
+            "512x512",
+            "768x768",
+            "1024x768",
+            "768x1024",
+            "1024x1024",
+            "1024x1536",
+            "1536x1024"
+          ],
+          "type": "string"
+        },
+        "stream": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "style": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "user": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "model",
+        "prompt"
+      ],
+      "type": "object",
+      "x-extra": "ignore",
+      "x-strict": false
+    },
+    "InputChunkReceived": {
+      "additionalProperties": false,
+      "properties": {
+        "InputChunkReceived": {
+          "additionalProperties": false,
+          "properties": {
+            "chunk": {
+              "$ref": "#/$defs/InputImageChunk"
+            },
+            "command_id": {
+              "type": "string"
+            },
+            "event_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "chunk",
+            "command_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "InputChunkReceived"
+      ],
+      "type": "object"
+    },
+    "InputImageChunk": {
+      "additionalProperties": false,
+      "properties": {
+        "InputImageChunk": {
+          "additionalProperties": false,
+          "properties": {
+            "chunk_index": {
+              "type": "integer"
+            },
+            "command_id": {
+              "type": "string"
+            },
+            "data": {
+              "type": "string"
+            },
+            "image_index": {
+              "type": "integer"
+            },
+            "model": {
+              "type": "string"
+            },
+            "total_chunks": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "chunk_index",
+            "command_id",
+            "data",
+            "model",
+            "total_chunks"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "InputImageChunk"
+      ],
+      "type": "object"
+    },
+    "InputMessage": {
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "user",
+            "assistant",
+            "system",
+            "developer",
+            "tool"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "role"
+      ],
+      "type": "object",
+      "x-extra": "ignore",
+      "x-strict": false
+    },
+    "InstanceCreated": {
+      "additionalProperties": false,
+      "properties": {
+        "InstanceCreated": {
+          "additionalProperties": false,
+          "properties": {
+            "event_id": {
+              "type": "string"
+            },
+            "instance": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/MlxRingInstance"
+                },
+                {
+                  "$ref": "#/$defs/MlxJacclInstance"
+                }
+              ]
+            }
+          },
+          "required": [
+            "instance"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "InstanceCreated"
+      ],
+      "type": "object"
+    },
+    "InstanceDeleted": {
+      "additionalProperties": false,
+      "properties": {
+        "InstanceDeleted": {
+          "additionalProperties": false,
+          "properties": {
+            "event_id": {
+              "type": "string"
+            },
+            "instance_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "instance_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "InstanceDeleted"
+      ],
+      "type": "object"
+    },
+    "InstanceLink": {
+      "additionalProperties": false,
+      "properties": {
+        "decode_instances": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "link_id": {
+          "type": "string"
+        },
+        "prefill_instances": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "decode_instances",
+        "link_id",
+        "prefill_instances"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "InstanceLinkCreated": {
+      "additionalProperties": false,
+      "properties": {
+        "InstanceLinkCreated": {
+          "additionalProperties": false,
+          "properties": {
+            "event_id": {
+              "type": "string"
+            },
+            "link": {
+              "$ref": "#/$defs/InstanceLink"
+            }
+          },
+          "required": [
+            "link"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "InstanceLinkCreated"
+      ],
+      "type": "object"
+    },
+    "InstanceLinkDeleted": {
+      "additionalProperties": false,
+      "properties": {
+        "InstanceLinkDeleted": {
+          "additionalProperties": false,
+          "properties": {
+            "event_id": {
+              "type": "string"
+            },
+            "link_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "link_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "InstanceLinkDeleted"
+      ],
+      "type": "object"
+    },
+    "InstanceMeta": {
+      "enum": [
+        "MlxRing",
+        "MlxJaccl"
+      ],
+      "type": "string"
+    },
+    "LoadModel": {
+      "additionalProperties": false,
+      "properties": {
+        "LoadModel": {
+          "additionalProperties": false,
+          "properties": {
+            "instance_id": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "task_status": {
+              "$ref": "#/$defs/TaskStatus"
+            }
+          },
+          "required": [
+            "instance_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "LoadModel"
+      ],
+      "type": "object"
+    },
+    "LocalForwarderEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/TestEvent"
+            },
+            {
+              "$ref": "#/$defs/TaskCreated"
+            },
+            {
+              "$ref": "#/$defs/TaskStatusUpdated"
+            },
+            {
+              "$ref": "#/$defs/TaskFailed"
+            },
+            {
+              "$ref": "#/$defs/TaskDeleted"
+            },
+            {
+              "$ref": "#/$defs/TaskAcknowledged"
+            },
+            {
+              "$ref": "#/$defs/InstanceCreated"
+            },
+            {
+              "$ref": "#/$defs/InstanceDeleted"
+            },
+            {
+              "$ref": "#/$defs/RunnerStatusUpdated"
+            },
+            {
+              "$ref": "#/$defs/NodeTimedOut"
+            },
+            {
+              "$ref": "#/$defs/NodeGatheredInfo"
+            },
+            {
+              "$ref": "#/$defs/NodeDownloadProgress"
+            },
+            {
+              "$ref": "#/$defs/ChunkGenerated"
+            },
+            {
+              "$ref": "#/$defs/InputChunkReceived"
+            },
+            {
+              "$ref": "#/$defs/TopologyEdgeCreated"
+            },
+            {
+              "$ref": "#/$defs/TopologyEdgeDeleted"
+            },
+            {
+              "$ref": "#/$defs/TracesCollected"
+            },
+            {
+              "$ref": "#/$defs/TracesMerged"
+            },
+            {
+              "$ref": "#/$defs/CustomModelCardAdded"
+            },
+            {
+              "$ref": "#/$defs/CustomModelCardDeleted"
+            },
+            {
+              "$ref": "#/$defs/InstanceLinkCreated"
+            },
+            {
+              "$ref": "#/$defs/InstanceLinkDeleted"
+            }
+          ]
+        },
+        "origin": {
+          "type": "string"
+        },
+        "origin_idx": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "event",
+        "origin",
+        "origin_idx",
+        "session"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "MacThunderboltConnections": {
+      "additionalProperties": false,
+      "properties": {
+        "MacThunderboltConnections": {
+          "additionalProperties": false,
+          "properties": {
+            "conns": {
+              "items": {
+                "$ref": "#/$defs/ThunderboltConnection"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "conns"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "MacThunderboltConnections"
+      ],
+      "type": "object"
+    },
+    "MacThunderboltIdentifiers": {
+      "additionalProperties": false,
+      "properties": {
+        "MacThunderboltIdentifiers": {
+          "additionalProperties": false,
+          "properties": {
+            "idents": {
+              "items": {
+                "$ref": "#/$defs/ThunderboltIdentifier"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "idents"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "MacThunderboltIdentifiers"
+      ],
+      "type": "object"
+    },
+    "MacmonMetrics": {
+      "additionalProperties": false,
+      "properties": {
+        "MacmonMetrics": {
+          "additionalProperties": false,
+          "properties": {
+            "memory": {
+              "$ref": "#/$defs/MemoryUsage"
+            },
+            "system_profile": {
+              "$ref": "#/$defs/SystemPerformanceProfile"
+            }
+          },
+          "required": [
+            "memory",
+            "system_profile"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "MacmonMetrics"
+      ],
+      "type": "object"
+    },
+    "Memory": {
+      "additionalProperties": false,
+      "properties": {
+        "in_bytes": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "MemoryUsage": {
+      "additionalProperties": false,
+      "properties": {
+        "gpu_working_set": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Memory"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ram_available": {
+          "$ref": "#/$defs/Memory"
+        },
+        "ram_total": {
+          "$ref": "#/$defs/Memory"
+        },
+        "swap_available": {
+          "$ref": "#/$defs/Memory"
+        },
+        "swap_total": {
+          "$ref": "#/$defs/Memory"
+        }
+      },
+      "required": [
+        "ram_available",
+        "ram_total",
+        "swap_available",
+        "swap_total"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "MiscData": {
+      "additionalProperties": false,
+      "properties": {
+        "MiscData": {
+          "additionalProperties": false,
+          "properties": {
+            "friendly_name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "friendly_name"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "MiscData"
+      ],
+      "type": "object"
+    },
+    "MlxJacclInstance": {
+      "additionalProperties": false,
+      "properties": {
+        "MlxJacclInstance": {
+          "additionalProperties": false,
+          "properties": {
+            "instance_id": {
+              "type": "string"
+            },
+            "jaccl_coordinators": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "jaccl_devices": {
+              "items": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "shard_assignments": {
+              "$ref": "#/$defs/ShardAssignments"
+            }
+          },
+          "required": [
+            "instance_id",
+            "jaccl_coordinators",
+            "jaccl_devices",
+            "shard_assignments"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "MlxJacclInstance"
+      ],
+      "type": "object"
+    },
+    "MlxRingInstance": {
+      "additionalProperties": false,
+      "properties": {
+        "MlxRingInstance": {
+          "additionalProperties": false,
+          "properties": {
+            "ephemeral_port": {
+              "type": "integer"
+            },
+            "hosts_by_node": {
+              "additionalProperties": {
+                "items": {
+                  "$ref": "#/$defs/Host"
+                },
+                "type": "array"
+              },
+              "type": "object"
+            },
+            "instance_id": {
+              "type": "string"
+            },
+            "shard_assignments": {
+              "$ref": "#/$defs/ShardAssignments"
+            }
+          },
+          "required": [
+            "ephemeral_port",
+            "hosts_by_node",
+            "instance_id",
+            "shard_assignments"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "MlxRingInstance"
+      ],
+      "type": "object"
+    },
+    "ModelCard": {
+      "additionalProperties": false,
+      "properties": {
+        "backends": {
+          "items": {
+            "$ref": "#/$defs/Backend"
+          },
+          "type": "array"
+        },
+        "base_model": {
+          "type": "string"
+        },
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "components": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ComponentInfo"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "context_length": {
+          "type": "integer"
+        },
+        "family": {
+          "type": "string"
+        },
+        "hidden_size": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "is_custom": {
+          "type": "boolean"
+        },
+        "memory_size": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Memory"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_id": {
+          "type": "string"
+        },
+        "model_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "n_layers": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "num_key_value_heads": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "quantization": {
+          "type": "string"
+        },
+        "reasoning_dialect": {
+          "enum": [
+            "none",
+            "post_last_user",
+            "suffix",
+            "channel",
+            "tool_conditional"
+          ],
+          "type": "string"
+        },
+        "sampling_defaults": {
+          "$ref": "#/$defs/SamplingDefaults"
+        },
+        "storage_size": {
+          "$ref": "#/$defs/Memory"
+        },
+        "supports_tensor": {
+          "type": "boolean"
+        },
+        "tasks": {
+          "items": {
+            "$ref": "#/$defs/ModelTask"
+          },
+          "type": "array"
+        },
+        "trust_remote_code": {
+          "type": "boolean"
+        },
+        "uses_cfg": {
+          "type": "boolean"
+        },
+        "vision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VisionCardConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "backends",
+        "hidden_size",
+        "model_id",
+        "n_layers",
+        "storage_size",
+        "supports_tensor",
+        "tasks"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "ModelTask": {
+      "enum": [
+        "TextGeneration",
+        "TextToImage",
+        "ImageToImage"
+      ],
+      "type": "string"
+    },
+    "Multiaddr": {
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "address_type": {
+          "readOnly": true,
+          "type": "string"
+        },
+        "ip_address": {
+          "readOnly": true,
+          "type": "string"
+        },
+        "port": {
+          "readOnly": true,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "address",
+        "address_type",
+        "ip_address",
+        "port"
+      ],
+      "type": "object",
+      "x-extra": "ignore",
+      "x-strict": false
+    },
+    "NetworkInterfaceInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "interface_type": {
+          "enum": [
+            "wifi",
+            "ethernet",
+            "maybe_ethernet",
+            "thunderbolt",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "ip_address": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ip_address",
+        "name"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "NodeBackends": {
+      "additionalProperties": false,
+      "properties": {
+        "NodeBackends": {
+          "additionalProperties": false,
+          "properties": {
+            "backends": {
+              "items": {
+                "$ref": "#/$defs/Backend"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "backends"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "NodeBackends"
+      ],
+      "type": "object"
+    },
+    "NodeConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "NodeConfig": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "NodeConfig"
+      ],
+      "type": "object"
+    },
+    "NodeDiskUsage": {
+      "additionalProperties": false,
+      "properties": {
+        "NodeDiskUsage": {
+          "additionalProperties": false,
+          "properties": {
+            "disk_usage": {
+              "$ref": "#/$defs/DiskUsage"
+            }
+          },
+          "required": [
+            "disk_usage"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "NodeDiskUsage"
+      ],
+      "type": "object"
+    },
+    "NodeDownloadProgress": {
+      "additionalProperties": false,
+      "properties": {
+        "NodeDownloadProgress": {
+          "additionalProperties": false,
+          "properties": {
+            "download_progress": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DownloadPending"
+                },
+                {
+                  "$ref": "#/$defs/DownloadCompleted"
+                },
+                {
+                  "$ref": "#/$defs/DownloadFailed"
+                },
+                {
+                  "$ref": "#/$defs/DownloadOngoing"
+                }
+              ]
+            },
+            "event_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "download_progress"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "NodeDownloadProgress"
+      ],
+      "type": "object"
+    },
+    "NodeGatheredInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "NodeGatheredInfo": {
+          "additionalProperties": false,
+          "properties": {
+            "event_id": {
+              "type": "string"
+            },
+            "info": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/MacmonMetrics"
+                },
+                {
+                  "$ref": "#/$defs/MemoryUsage"
+                },
+                {
+                  "$ref": "#/$defs/NodeNetworkInterfaces"
+                },
+                {
+                  "$ref": "#/$defs/MacThunderboltIdentifiers"
+                },
+                {
+                  "$ref": "#/$defs/MacThunderboltConnections"
+                },
+                {
+                  "$ref": "#/$defs/RdmaCtlStatus"
+                },
+                {
+                  "$ref": "#/$defs/ThunderboltBridgeInfo"
+                },
+                {
+                  "$ref": "#/$defs/NodeConfig"
+                },
+                {
+                  "$ref": "#/$defs/MiscData"
+                },
+                {
+                  "$ref": "#/$defs/StaticNodeInformation"
+                },
+                {
+                  "$ref": "#/$defs/NodeDiskUsage"
+                },
+                {
+                  "$ref": "#/$defs/NodeBackends"
+                }
+              ]
+            },
+            "node_id": {
+              "type": "string"
+            },
+            "when": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "info",
+            "node_id",
+            "when"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "NodeGatheredInfo"
+      ],
+      "type": "object"
+    },
+    "NodeIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "chip_id": {
+          "type": "string"
+        },
+        "friendly_name": {
+          "type": "string"
+        },
+        "model_id": {
+          "type": "string"
+        },
+        "os_build_version": {
+          "type": "string"
+        },
+        "os_version": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "NodeNetworkInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "interfaces": {
+          "items": {
+            "$ref": "#/$defs/NetworkInterfaceInfo"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "NodeNetworkInterfaces": {
+      "additionalProperties": false,
+      "properties": {
+        "NodeNetworkInterfaces": {
+          "additionalProperties": false,
+          "properties": {
+            "ifaces": {
+              "items": {
+                "$ref": "#/$defs/NetworkInterfaceInfo"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "ifaces"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "NodeNetworkInterfaces"
+      ],
+      "type": "object"
+    },
+    "NodeRdmaCtlStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "NodeThunderboltInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "interfaces": {
+          "items": {
+            "$ref": "#/$defs/ThunderboltIdentifier"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "NodeTimedOut": {
+      "additionalProperties": false,
+      "properties": {
+        "NodeTimedOut": {
+          "additionalProperties": false,
+          "properties": {
+            "event_id": {
+              "type": "string"
+            },
+            "node_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "node_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "NodeTimedOut"
+      ],
+      "type": "object"
+    },
+    "PipelineShardMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "PipelineShardMetadata": {
+          "additionalProperties": false,
+          "properties": {
+            "device_rank": {
+              "type": "integer"
+            },
+            "end_layer": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "immediate_exception": {
+              "type": "boolean"
+            },
+            "model_card": {
+              "$ref": "#/$defs/ModelCard"
+            },
+            "n_layers": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "should_timeout": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "start_layer": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "world_size": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "device_rank",
+            "end_layer",
+            "model_card",
+            "n_layers",
+            "start_layer",
+            "world_size"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "PipelineShardMetadata"
+      ],
+      "type": "object"
+    },
+    "PlaceInstance": {
+      "additionalProperties": false,
+      "properties": {
+        "PlaceInstance": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "instance_meta": {
+              "$ref": "#/$defs/InstanceMeta"
+            },
+            "min_nodes": {
+              "type": "integer"
+            },
+            "model_card": {
+              "$ref": "#/$defs/ModelCard"
+            },
+            "sharding": {
+              "$ref": "#/$defs/Sharding"
+            }
+          },
+          "required": [
+            "instance_meta",
+            "min_nodes",
+            "model_card",
+            "sharding"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "PlaceInstance"
+      ],
+      "type": "object"
+    },
+    "PrefillProgressChunk": {
+      "additionalProperties": false,
+      "properties": {
+        "PrefillProgressChunk": {
+          "additionalProperties": false,
+          "properties": {
+            "model": {
+              "type": "string"
+            },
+            "processed_tokens": {
+              "type": "integer"
+            },
+            "total_tokens": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "model",
+            "processed_tokens",
+            "total_tokens"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "PrefillProgressChunk"
+      ],
+      "type": "object"
+    },
+    "PromptTokensDetails": {
+      "properties": {
+        "audio_tokens": {
+          "type": "integer"
+        },
+        "cached_tokens": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "x-extra": "ignore",
+      "x-strict": false
+    },
+    "RDMAConnection": {
+      "additionalProperties": false,
+      "properties": {
+        "sink_rdma_iface": {
+          "type": "string"
+        },
+        "source_rdma_iface": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sink_rdma_iface",
+        "source_rdma_iface"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "RdmaCtlStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "RdmaCtlStatus": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enabled"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "RdmaCtlStatus"
+      ],
+      "type": "object"
+    },
+    "RequestEventLog": {
+      "additionalProperties": false,
+      "properties": {
+        "RequestEventLog": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "since_idx": {
+              "type": "integer"
+            },
+            "snapshot": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "since_idx"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "RequestEventLog"
+      ],
+      "type": "object"
+    },
+    "RunnerConnected": {
+      "additionalProperties": false,
+      "properties": {
+        "RunnerConnected": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "RunnerConnected"
+      ],
+      "type": "object"
+    },
+    "RunnerConnecting": {
+      "additionalProperties": false,
+      "properties": {
+        "RunnerConnecting": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "RunnerConnecting"
+      ],
+      "type": "object"
+    },
+    "RunnerFailed": {
+      "additionalProperties": false,
+      "properties": {
+        "RunnerFailed": {
+          "additionalProperties": false,
+          "properties": {
+            "diagnostics": {
+              "items": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/RunnerMetalGpuTimeout"
+                  },
+                  {
+                    "$ref": "#/$defs/RunnerMetalOutOfMemory"
+                  },
+                  {
+                    "$ref": "#/$defs/RunnerRingTransportError"
+                  },
+                  {
+                    "$ref": "#/$defs/RunnerRingSocketReceivingError"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            "error_message": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "diagnostics"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "RunnerFailed"
+      ],
+      "type": "object"
+    },
+    "RunnerIdle": {
+      "additionalProperties": false,
+      "properties": {
+        "RunnerIdle": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "RunnerIdle"
+      ],
+      "type": "object"
+    },
+    "RunnerLoaded": {
+      "additionalProperties": false,
+      "properties": {
+        "RunnerLoaded": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "RunnerLoaded"
+      ],
+      "type": "object"
+    },
+    "RunnerLoading": {
+      "additionalProperties": false,
+      "properties": {
+        "RunnerLoading": {
+          "additionalProperties": false,
+          "properties": {
+            "layers_loaded": {
+              "type": "integer"
+            },
+            "total_layers": {
+              "type": "integer"
+            }
+          },
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "RunnerLoading"
+      ],
+      "type": "object"
+    },
+    "RunnerMetalGpuTimeout": {
+      "additionalProperties": false,
+      "properties": {
+        "RunnerMetalGpuTimeout": {
+          "additionalProperties": false,
+          "properties": {
+            "evidence": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "RunnerMetalGpuTimeout"
+      ],
+      "type": "object"
+    },
+    "RunnerMetalOutOfMemory": {
+      "additionalProperties": false,
+      "properties": {
+        "RunnerMetalOutOfMemory": {
+          "additionalProperties": false,
+          "properties": {
+            "evidence": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "RunnerMetalOutOfMemory"
+      ],
+      "type": "object"
+    },
+    "RunnerReady": {
+      "additionalProperties": false,
+      "properties": {
+        "RunnerReady": {
+          "additionalProperties": false,
+          "properties": {
+            "prefill_server_port": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "RunnerReady"
+      ],
+      "type": "object"
+    },
+    "RunnerRingSocketReceivingError": {
+      "additionalProperties": false,
+      "properties": {
+        "RunnerRingSocketReceivingError": {
+          "additionalProperties": false,
+          "properties": {
+            "error_description": {
+              "type": "string"
+            },
+            "error_name": {
+              "type": "string"
+            },
+            "error_number": {
+              "type": "integer"
+            },
+            "evidence": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "error_description",
+            "error_name",
+            "error_number",
+            "message"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "RunnerRingSocketReceivingError"
+      ],
+      "type": "object"
+    },
+    "RunnerRingTransportError": {
+      "additionalProperties": false,
+      "properties": {
+        "RunnerRingTransportError": {
+          "additionalProperties": false,
+          "properties": {
+            "evidence": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "RunnerRingTransportError"
+      ],
+      "type": "object"
+    },
+    "RunnerRunning": {
+      "additionalProperties": false,
+      "properties": {
+        "RunnerRunning": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "RunnerRunning"
+      ],
+      "type": "object"
+    },
+    "RunnerShutdown": {
+      "additionalProperties": false,
+      "properties": {
+        "RunnerShutdown": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "RunnerShutdown"
+      ],
+      "type": "object"
+    },
+    "RunnerShuttingDown": {
+      "additionalProperties": false,
+      "properties": {
+        "RunnerShuttingDown": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "RunnerShuttingDown"
+      ],
+      "type": "object"
+    },
+    "RunnerStatusUpdated": {
+      "additionalProperties": false,
+      "properties": {
+        "RunnerStatusUpdated": {
+          "additionalProperties": false,
+          "properties": {
+            "event_id": {
+              "type": "string"
+            },
+            "runner_id": {
+              "type": "string"
+            },
+            "runner_status": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RunnerIdle"
+                },
+                {
+                  "$ref": "#/$defs/RunnerConnecting"
+                },
+                {
+                  "$ref": "#/$defs/RunnerConnected"
+                },
+                {
+                  "$ref": "#/$defs/RunnerLoading"
+                },
+                {
+                  "$ref": "#/$defs/RunnerLoaded"
+                },
+                {
+                  "$ref": "#/$defs/RunnerWarmingUp"
+                },
+                {
+                  "$ref": "#/$defs/RunnerReady"
+                },
+                {
+                  "$ref": "#/$defs/RunnerRunning"
+                },
+                {
+                  "$ref": "#/$defs/RunnerShuttingDown"
+                },
+                {
+                  "$ref": "#/$defs/RunnerShutdown"
+                },
+                {
+                  "$ref": "#/$defs/RunnerFailed"
+                }
+              ]
+            }
+          },
+          "required": [
+            "runner_id",
+            "runner_status"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "RunnerStatusUpdated"
+      ],
+      "type": "object"
+    },
+    "RunnerWarmingUp": {
+      "additionalProperties": false,
+      "properties": {
+        "RunnerWarmingUp": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "RunnerWarmingUp"
+      ],
+      "type": "object"
+    },
+    "SamplingDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "frequency_penalty": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "min_p": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "non_thinking": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SamplingValues"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "presence_penalty": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repetition_penalty": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thinking": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SamplingValues"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "top_k": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "top_p": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "SamplingValues": {
+      "additionalProperties": false,
+      "properties": {
+        "frequency_penalty": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "min_p": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "presence_penalty": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repetition_penalty": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "top_k": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "top_p": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "SendInputChunk": {
+      "additionalProperties": false,
+      "properties": {
+        "SendInputChunk": {
+          "additionalProperties": false,
+          "properties": {
+            "chunk": {
+              "$ref": "#/$defs/InputImageChunk"
+            },
+            "command_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "chunk"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "SendInputChunk"
+      ],
+      "type": "object"
+    },
+    "SessionId": {
+      "additionalProperties": false,
+      "properties": {
+        "election_clock": {
+          "type": "integer"
+        },
+        "master_node_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "election_clock",
+        "master_node_id"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "SetInstanceLink": {
+      "additionalProperties": false,
+      "properties": {
+        "SetInstanceLink": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "decode_instances": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "link_id": {
+              "type": "string"
+            },
+            "prefill_instances": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "decode_instances",
+            "link_id",
+            "prefill_instances"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "SetInstanceLink"
+      ],
+      "type": "object"
+    },
+    "ShardAssignments": {
+      "additionalProperties": false,
+      "properties": {
+        "model_id": {
+          "type": "string"
+        },
+        "node_to_runner": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "runner_to_shard": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PipelineShardMetadata"
+              },
+              {
+                "$ref": "#/$defs/CfgShardMetadata"
+              },
+              {
+                "$ref": "#/$defs/TensorShardMetadata"
+              }
+            ]
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "model_id",
+        "node_to_runner",
+        "runner_to_shard"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "Sharding": {
+      "enum": [
+        "Tensor",
+        "Pipeline"
+      ],
+      "type": "string"
+    },
+    "Shutdown": {
+      "additionalProperties": false,
+      "properties": {
+        "Shutdown": {
+          "additionalProperties": false,
+          "properties": {
+            "instance_id": {
+              "type": "string"
+            },
+            "runner_id": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "task_status": {
+              "$ref": "#/$defs/TaskStatus"
+            }
+          },
+          "required": [
+            "instance_id",
+            "runner_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "Shutdown"
+      ],
+      "type": "object"
+    },
+    "SocketConnection": {
+      "additionalProperties": false,
+      "properties": {
+        "sink_multiaddr": {
+          "$ref": "#/$defs/Multiaddr"
+        }
+      },
+      "required": [
+        "sink_multiaddr"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "StartDownload": {
+      "additionalProperties": false,
+      "properties": {
+        "StartDownload": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "shard_metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PipelineShardMetadata"
+                },
+                {
+                  "$ref": "#/$defs/CfgShardMetadata"
+                },
+                {
+                  "$ref": "#/$defs/TensorShardMetadata"
+                }
+              ]
+            },
+            "target_node_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "shard_metadata",
+            "target_node_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "StartDownload"
+      ],
+      "type": "object"
+    },
+    "StartWarmup": {
+      "additionalProperties": false,
+      "properties": {
+        "StartWarmup": {
+          "additionalProperties": false,
+          "properties": {
+            "instance_id": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "task_status": {
+              "$ref": "#/$defs/TaskStatus"
+            }
+          },
+          "required": [
+            "instance_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "StartWarmup"
+      ],
+      "type": "object"
+    },
+    "State": {
+      "additionalProperties": false,
+      "properties": {
+        "custom_model_cards": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ModelCard"
+          },
+          "type": "object"
+        },
+        "downloads": {
+          "additionalProperties": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DownloadPending"
+                },
+                {
+                  "$ref": "#/$defs/DownloadCompleted"
+                },
+                {
+                  "$ref": "#/$defs/DownloadFailed"
+                },
+                {
+                  "$ref": "#/$defs/DownloadOngoing"
+                }
+              ]
+            },
+            "type": "array"
+          },
+          "type": "object"
+        },
+        "instance_links": {
+          "additionalProperties": {
+            "$ref": "#/$defs/InstanceLink"
+          },
+          "type": "object"
+        },
+        "instances": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/MlxRingInstance"
+              },
+              {
+                "$ref": "#/$defs/MlxJacclInstance"
+              }
+            ]
+          },
+          "type": "object"
+        },
+        "last_event_applied_idx": {
+          "minimum": -1,
+          "type": "integer"
+        },
+        "last_seen": {
+          "additionalProperties": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "node_backends": {
+          "additionalProperties": {
+            "items": {
+              "$ref": "#/$defs/Backend"
+            },
+            "type": "array"
+          },
+          "type": "object"
+        },
+        "node_disk": {
+          "additionalProperties": {
+            "$ref": "#/$defs/DiskUsage"
+          },
+          "type": "object"
+        },
+        "node_identities": {
+          "additionalProperties": {
+            "$ref": "#/$defs/NodeIdentity"
+          },
+          "type": "object"
+        },
+        "node_memory": {
+          "additionalProperties": {
+            "$ref": "#/$defs/MemoryUsage"
+          },
+          "type": "object"
+        },
+        "node_network": {
+          "additionalProperties": {
+            "$ref": "#/$defs/NodeNetworkInfo"
+          },
+          "type": "object"
+        },
+        "node_rdma_ctl": {
+          "additionalProperties": {
+            "$ref": "#/$defs/NodeRdmaCtlStatus"
+          },
+          "type": "object"
+        },
+        "node_system": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SystemPerformanceProfile"
+          },
+          "type": "object"
+        },
+        "node_thunderbolt": {
+          "additionalProperties": {
+            "$ref": "#/$defs/NodeThunderboltInfo"
+          },
+          "type": "object"
+        },
+        "node_thunderbolt_bridge": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ThunderboltBridgeStatus"
+          },
+          "type": "object"
+        },
+        "prefill_server_ports": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "runners": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RunnerIdle"
+              },
+              {
+                "$ref": "#/$defs/RunnerConnecting"
+              },
+              {
+                "$ref": "#/$defs/RunnerConnected"
+              },
+              {
+                "$ref": "#/$defs/RunnerLoading"
+              },
+              {
+                "$ref": "#/$defs/RunnerLoaded"
+              },
+              {
+                "$ref": "#/$defs/RunnerWarmingUp"
+              },
+              {
+                "$ref": "#/$defs/RunnerReady"
+              },
+              {
+                "$ref": "#/$defs/RunnerRunning"
+              },
+              {
+                "$ref": "#/$defs/RunnerShuttingDown"
+              },
+              {
+                "$ref": "#/$defs/RunnerShutdown"
+              },
+              {
+                "$ref": "#/$defs/RunnerFailed"
+              }
+            ]
+          },
+          "type": "object"
+        },
+        "tasks": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CreateRunner"
+              },
+              {
+                "$ref": "#/$defs/DownloadModel"
+              },
+              {
+                "$ref": "#/$defs/ConnectToGroup"
+              },
+              {
+                "$ref": "#/$defs/LoadModel"
+              },
+              {
+                "$ref": "#/$defs/StartWarmup"
+              },
+              {
+                "$ref": "#/$defs/exo__shared__types__tasks__TextGeneration"
+              },
+              {
+                "$ref": "#/$defs/CancelTask"
+              },
+              {
+                "$ref": "#/$defs/exo__shared__types__tasks__ImageGeneration"
+              },
+              {
+                "$ref": "#/$defs/exo__shared__types__tasks__ImageEdits"
+              },
+              {
+                "$ref": "#/$defs/Shutdown"
+              }
+            ]
+          },
+          "type": "object"
+        },
+        "thunderbolt_bridge_cycles": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "topology": {
+          "$ref": "#/$defs/TopologySnapshot"
+        }
+      },
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "StateSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "requester": {
+          "type": "string"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "state": {
+          "$ref": "#/$defs/State"
+        }
+      },
+      "required": [
+        "requester",
+        "session",
+        "state"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "StaticNodeInformation": {
+      "additionalProperties": false,
+      "properties": {
+        "StaticNodeInformation": {
+          "additionalProperties": false,
+          "properties": {
+            "chip": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "os_build_version": {
+              "type": "string"
+            },
+            "os_version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "chip",
+            "model",
+            "os_build_version",
+            "os_version"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "StaticNodeInformation"
+      ],
+      "type": "object"
+    },
+    "SystemPerformanceProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "ecpu_usage": {
+          "type": "number"
+        },
+        "gpu_usage": {
+          "type": "number"
+        },
+        "pcpu_usage": {
+          "type": "number"
+        },
+        "sys_power": {
+          "type": "number"
+        },
+        "temp": {
+          "type": "number"
+        }
+      },
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "TaskAcknowledged": {
+      "additionalProperties": false,
+      "properties": {
+        "TaskAcknowledged": {
+          "additionalProperties": false,
+          "properties": {
+            "event_id": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "task_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "TaskAcknowledged"
+      ],
+      "type": "object"
+    },
+    "TaskCancelled": {
+      "additionalProperties": false,
+      "properties": {
+        "TaskCancelled": {
+          "additionalProperties": false,
+          "properties": {
+            "cancelled_command_id": {
+              "type": "string"
+            },
+            "command_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cancelled_command_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "TaskCancelled"
+      ],
+      "type": "object"
+    },
+    "TaskCreated": {
+      "additionalProperties": false,
+      "properties": {
+        "TaskCreated": {
+          "additionalProperties": false,
+          "properties": {
+            "event_id": {
+              "type": "string"
+            },
+            "task": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CreateRunner"
+                },
+                {
+                  "$ref": "#/$defs/DownloadModel"
+                },
+                {
+                  "$ref": "#/$defs/ConnectToGroup"
+                },
+                {
+                  "$ref": "#/$defs/LoadModel"
+                },
+                {
+                  "$ref": "#/$defs/StartWarmup"
+                },
+                {
+                  "$ref": "#/$defs/exo__shared__types__tasks__TextGeneration"
+                },
+                {
+                  "$ref": "#/$defs/CancelTask"
+                },
+                {
+                  "$ref": "#/$defs/exo__shared__types__tasks__ImageGeneration"
+                },
+                {
+                  "$ref": "#/$defs/exo__shared__types__tasks__ImageEdits"
+                },
+                {
+                  "$ref": "#/$defs/Shutdown"
+                }
+              ]
+            },
+            "task_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "task",
+            "task_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "TaskCreated"
+      ],
+      "type": "object"
+    },
+    "TaskDeleted": {
+      "additionalProperties": false,
+      "properties": {
+        "TaskDeleted": {
+          "additionalProperties": false,
+          "properties": {
+            "event_id": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "task_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "TaskDeleted"
+      ],
+      "type": "object"
+    },
+    "TaskFailed": {
+      "additionalProperties": false,
+      "properties": {
+        "TaskFailed": {
+          "additionalProperties": false,
+          "properties": {
+            "error_message": {
+              "type": "string"
+            },
+            "error_type": {
+              "type": "string"
+            },
+            "event_id": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "error_message",
+            "error_type",
+            "task_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "TaskFailed"
+      ],
+      "type": "object"
+    },
+    "TaskFinished": {
+      "additionalProperties": false,
+      "properties": {
+        "TaskFinished": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "finished_command_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "finished_command_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "TaskFinished"
+      ],
+      "type": "object"
+    },
+    "TaskStatus": {
+      "enum": [
+        "Pending",
+        "Running",
+        "Complete",
+        "TimedOut",
+        "Failed",
+        "Cancelled"
+      ],
+      "type": "string"
+    },
+    "TaskStatusUpdated": {
+      "additionalProperties": false,
+      "properties": {
+        "TaskStatusUpdated": {
+          "additionalProperties": false,
+          "properties": {
+            "event_id": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "task_status": {
+              "$ref": "#/$defs/TaskStatus"
+            }
+          },
+          "required": [
+            "task_id",
+            "task_status"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "TaskStatusUpdated"
+      ],
+      "type": "object"
+    },
+    "TensorShardMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "TensorShardMetadata": {
+          "additionalProperties": false,
+          "properties": {
+            "device_rank": {
+              "type": "integer"
+            },
+            "end_layer": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "immediate_exception": {
+              "type": "boolean"
+            },
+            "model_card": {
+              "$ref": "#/$defs/ModelCard"
+            },
+            "n_layers": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "should_timeout": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "start_layer": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "world_size": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "device_rank",
+            "end_layer",
+            "model_card",
+            "n_layers",
+            "start_layer",
+            "world_size"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "TensorShardMetadata"
+      ],
+      "type": "object"
+    },
+    "TestCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "TestCommand": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            }
+          },
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "TestCommand"
+      ],
+      "type": "object"
+    },
+    "TestEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "TestEvent": {
+          "additionalProperties": false,
+          "properties": {
+            "event_id": {
+              "type": "string"
+            }
+          },
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "TestEvent"
+      ],
+      "type": "object"
+    },
+    "TextGenerationTaskParams": {
+      "properties": {
+        "bench": {
+          "type": "boolean"
+        },
+        "chat_template_messages": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/ChatTemplateValue"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enable_thinking": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "frequency_penalty": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "image_hashes": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "images": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "input": {
+          "items": {
+            "$ref": "#/$defs/InputMessage"
+          },
+          "type": "array"
+        },
+        "instructions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "logprobs": {
+          "type": "boolean"
+        },
+        "max_output_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "min_p": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "prefill_endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "presence_penalty": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reasoning_effort": {
+          "anyOf": [
+            {
+              "enum": [
+                "none",
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repetition_context_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repetition_penalty": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stream": {
+          "type": "boolean"
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tools": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "top_k": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "top_logprobs": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "top_p": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "use_prefix_cache": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "input",
+        "model"
+      ],
+      "type": "object",
+      "x-extra": "ignore",
+      "x-strict": false
+    },
+    "ThunderboltBridgeInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "ThunderboltBridgeInfo": {
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "$ref": "#/$defs/ThunderboltBridgeStatus"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "ThunderboltBridgeInfo"
+      ],
+      "type": "object"
+    },
+    "ThunderboltBridgeStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "exists": {
+          "type": "boolean"
+        },
+        "service_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "enabled",
+        "exists"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "ThunderboltConnection": {
+      "additionalProperties": false,
+      "properties": {
+        "sink_uuid": {
+          "type": "string"
+        },
+        "source_uuid": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sink_uuid",
+        "source_uuid"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "ThunderboltIdentifier": {
+      "additionalProperties": false,
+      "properties": {
+        "domain_uuid": {
+          "type": "string"
+        },
+        "link_speed": {
+          "type": "string"
+        },
+        "rdma_interface": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "domain_uuid",
+        "rdma_interface"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "TokenChunk": {
+      "additionalProperties": false,
+      "properties": {
+        "TokenChunk": {
+          "additionalProperties": false,
+          "properties": {
+            "finish_reason": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "stop",
+                    "length",
+                    "content_filter"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "is_thinking": {
+              "type": "boolean"
+            },
+            "logprob": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "model": {
+              "type": "string"
+            },
+            "stats": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/GenerationStats"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "text": {
+              "type": "string"
+            },
+            "token_id": {
+              "type": "integer"
+            },
+            "top_logprobs": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/TopLogprobItem"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "usage": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Usage"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "model",
+            "text",
+            "token_id",
+            "usage"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "TokenChunk"
+      ],
+      "type": "object"
+    },
+    "ToolCallChunk": {
+      "additionalProperties": false,
+      "properties": {
+        "ToolCallChunk": {
+          "additionalProperties": false,
+          "properties": {
+            "finish_reason": {
+              "const": "tool_calls",
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "stats": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/GenerationStats"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tool_calls": {
+              "items": {
+                "$ref": "#/$defs/ToolCallItem"
+              },
+              "type": "array"
+            },
+            "usage": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Usage"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "model",
+            "tool_calls",
+            "usage"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "ToolCallChunk"
+      ],
+      "type": "object"
+    },
+    "ToolCallItem": {
+      "properties": {
+        "arguments": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "arguments",
+        "name"
+      ],
+      "type": "object",
+      "x-extra": "ignore",
+      "x-strict": false
+    },
+    "TopLogprobItem": {
+      "properties": {
+        "bytes": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "logprob": {
+          "type": "number"
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "logprob",
+        "token"
+      ],
+      "type": "object",
+      "x-extra": "ignore",
+      "x-strict": false
+    },
+    "TopologyEdgeCreated": {
+      "additionalProperties": false,
+      "properties": {
+        "TopologyEdgeCreated": {
+          "additionalProperties": false,
+          "properties": {
+            "conn": {
+              "$ref": "#/$defs/Connection"
+            },
+            "event_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "conn"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "TopologyEdgeCreated"
+      ],
+      "type": "object"
+    },
+    "TopologyEdgeDeleted": {
+      "additionalProperties": false,
+      "properties": {
+        "TopologyEdgeDeleted": {
+          "additionalProperties": false,
+          "properties": {
+            "conn": {
+              "$ref": "#/$defs/Connection"
+            },
+            "event_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "conn"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "TopologyEdgeDeleted"
+      ],
+      "type": "object"
+    },
+    "TopologySnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "connections": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "items": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/SocketConnection"
+                  },
+                  {
+                    "$ref": "#/$defs/RDMAConnection"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            "type": "object"
+          },
+          "type": "object"
+        },
+        "nodes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "connections",
+        "nodes"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": false
+    },
+    "TraceEventData": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "type": "string"
+        },
+        "duration_us": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "rank": {
+          "type": "integer"
+        },
+        "start_us": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "category",
+        "duration_us",
+        "name",
+        "rank",
+        "start_us"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "TracesCollected": {
+      "additionalProperties": false,
+      "properties": {
+        "TracesCollected": {
+          "additionalProperties": false,
+          "properties": {
+            "event_id": {
+              "type": "string"
+            },
+            "rank": {
+              "type": "integer"
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "traces": {
+              "items": {
+                "$ref": "#/$defs/TraceEventData"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "rank",
+            "task_id",
+            "traces"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "TracesCollected"
+      ],
+      "type": "object"
+    },
+    "TracesMerged": {
+      "additionalProperties": false,
+      "properties": {
+        "TracesMerged": {
+          "additionalProperties": false,
+          "properties": {
+            "event_id": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "traces": {
+              "items": {
+                "$ref": "#/$defs/TraceEventData"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "task_id",
+            "traces"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "TracesMerged"
+      ],
+      "type": "object"
+    },
+    "Usage": {
+      "properties": {
+        "completion_tokens": {
+          "type": "integer"
+        },
+        "completion_tokens_details": {
+          "$ref": "#/$defs/CompletionTokensDetails"
+        },
+        "prompt_tokens": {
+          "type": "integer"
+        },
+        "prompt_tokens_details": {
+          "$ref": "#/$defs/PromptTokensDetails"
+        },
+        "total_tokens": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "completion_tokens",
+        "completion_tokens_details",
+        "prompt_tokens",
+        "prompt_tokens_details",
+        "total_tokens"
+      ],
+      "type": "object",
+      "x-extra": "ignore",
+      "x-strict": false
+    },
+    "VisionCardConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "image_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "image_token_id": {
+          "type": "integer"
+        },
+        "model_type": {
+          "type": "string"
+        },
+        "processor_repo": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "weights_repo": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "image_token_id",
+        "model_type"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "exo__shared__types__commands__ImageEdits": {
+      "additionalProperties": false,
+      "properties": {
+        "ImageEdits": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "task_params": {
+              "$ref": "#/$defs/ImageEditsTaskParams"
+            }
+          },
+          "required": [
+            "task_params"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "ImageEdits"
+      ],
+      "type": "object"
+    },
+    "exo__shared__types__commands__ImageGeneration": {
+      "additionalProperties": false,
+      "properties": {
+        "ImageGeneration": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "task_params": {
+              "$ref": "#/$defs/ImageGenerationTaskParams"
+            }
+          },
+          "required": [
+            "task_params"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "ImageGeneration"
+      ],
+      "type": "object"
+    },
+    "exo__shared__types__commands__TextGeneration": {
+      "additionalProperties": false,
+      "properties": {
+        "TextGeneration": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "task_params": {
+              "$ref": "#/$defs/TextGenerationTaskParams"
+            }
+          },
+          "required": [
+            "task_params"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "TextGeneration"
+      ],
+      "type": "object"
+    },
+    "exo__shared__types__tasks__ImageEdits": {
+      "additionalProperties": false,
+      "properties": {
+        "ImageEdits": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "error_message": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "instance_id": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "task_params": {
+              "$ref": "#/$defs/ImageEditsTaskParams"
+            },
+            "task_status": {
+              "$ref": "#/$defs/TaskStatus"
+            }
+          },
+          "required": [
+            "command_id",
+            "instance_id",
+            "task_params"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "ImageEdits"
+      ],
+      "type": "object"
+    },
+    "exo__shared__types__tasks__ImageGeneration": {
+      "additionalProperties": false,
+      "properties": {
+        "ImageGeneration": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "error_message": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "instance_id": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "task_params": {
+              "$ref": "#/$defs/ImageGenerationTaskParams"
+            },
+            "task_status": {
+              "$ref": "#/$defs/TaskStatus"
+            }
+          },
+          "required": [
+            "command_id",
+            "instance_id",
+            "task_params"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "ImageGeneration"
+      ],
+      "type": "object"
+    },
+    "exo__shared__types__tasks__TextGeneration": {
+      "additionalProperties": false,
+      "properties": {
+        "TextGeneration": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "error_message": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "instance_id": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "task_params": {
+              "$ref": "#/$defs/TextGenerationTaskParams"
+            },
+            "task_status": {
+              "$ref": "#/$defs/TaskStatus"
+            }
+          },
+          "required": [
+            "command_id",
+            "instance_id",
+            "task_params"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "TextGeneration"
+      ],
+      "type": "object"
+    }
+  },
+  "code": {
+    "exo.api.types.api:ImageEditsTaskParams.normalize_size": "9b6db2dee07d",
+    "exo.api.types.api:ImageGenerationTaskParams.normalize_size": "9b6db2dee07d",
+    "exo.shared.models.model_cards:ModelCard._autodetect_vision": "759d25385472",
+    "exo.shared.models.model_cards:ModelCard._fill_vision_weights_repo": "68dd5228e75e",
+    "exo.shared.models.model_cards:ModelCard._validate_backends": "87c07e18f7f7",
+    "exo.shared.models.model_cards:ModelCard._validate_tasks": "fc33c3b44d5f",
+    "exo.shared.types.common:Host.check_port": "4db15c33a779",
+    "exo.shared.types.multiaddr:Multiaddr.validate_format": "011b71833cf5",
+    "exo.shared.types.state:State._deserialize_topology": "c9f3d40bf65b",
+    "exo.shared.types.state:State._encode_topology": "76ab97afa6ac",
+    "exo.shared.types.text_generation:ChatTemplateValue.<locals>.<lambda>": "f8b5b40c1afa",
+    "exo.shared.types.worker.instances:BoundInstance.validate_shard_exists": "5a77bba6657e",
+    "exo.shared.types.worker.runners:ShardAssignments.validate_runners_exist": "f8222d577d10",
+    "exo.utils.pydantic_ext:TaggedModel._serialize": "a081cb7cdd55",
+    "exo.utils.pydantic_ext:TaggedModel._validate": "e148573669ab",
+    "exo.utils.pydantic_ext:_tag": "dc5fef405f2a"
+  },
+  "collectives": {
+    "mx_all_gather_tasks": "227f6a37d1dd"
+  },
+  "encoding": {
+    "TypedTopic.deserialize": "0254c7a5e262",
+    "TypedTopic.serialize": "cac27d43eb31"
+  },
+  "topics": {
+    "commands": "#/$defs/ForwarderCommand",
+    "download_commands": "#/$defs/ForwarderDownloadCommand",
+    "election_messages": "#/$defs/ElectionMessage",
+    "global_events": "#/$defs/GlobalForwarderEvent",
+    "local_events": "#/$defs/LocalForwarderEvent",
+    "state_snapshots": "#/$defs/StateSnapshot"
+  },
+  "zenoh": "1.9.0 aa219b84e55dfbbf55ebd827b492626a470b8ac8"
+}

@@ -7,7 +7,7 @@ import random
 import shutil
 import socket
 import time
-from collections.abc import AsyncGenerator, Iterable
+from collections.abc import AsyncGenerator, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import partial
@@ -91,6 +91,7 @@ from exo.api.types import (
     DeleteInstanceResponse,
     DeleteTracesRequest,
     DeleteTracesResponse,
+    DevicesOnOtherVersionsResponse,
     ErrorInfo,
     ErrorResponse,
     FinishReason,
@@ -153,6 +154,7 @@ from exo.master.placement import (
 from exo.master.placement import place_instance as get_instance_placements
 from exo.routing.event_router import NodeEventReceiver
 from exo.routing.membership import Membership, MembershipView
+from exo.routing.wire import WIRE_VERSION, DeviceOnOtherVersion, build_id
 from exo.shared.apply import apply
 from exo.shared.constants import (
     ENABLE_DISAGGREGATION,
@@ -393,6 +395,8 @@ class API:
         # This lets us pause the API if an election is running
         election_receiver: Receiver[ElectionMessage],
         membership: Membership,
+        # What discovery hears of devices that can't join: they run another version
+        devices_on_other_versions: Callable[[], list[DeviceOnOtherVersion]],
     ) -> None:
         self.state = State()
         self._recent_events = RecentEvents()
@@ -402,6 +406,7 @@ class API:
         self.event_receiver = event_receiver
         self.election_receiver = election_receiver
         self.membership = membership
+        self._devices_on_other_versions = devices_on_other_versions
         self.node_id: NodeId = node_id
         self.last_completed_election: int = 0
         self.port = port
@@ -517,6 +522,9 @@ class API:
         self.app.put("/v1/instance-links/{link_id}")(self.update_instance_link)
         self.app.delete("/v1/instance-links/{link_id}")(self.delete_instance_link)
         self.app.get("/v1/feature-flags")(self.get_feature_flags)
+        self.app.get("/v1/devices-on-other-versions")(
+            self.get_devices_on_other_versions
+        )
         self.app.get("/models")(self.get_models)
         self.app.get("/v1/models")(self.get_models)
         self.app.post("/models/add")(self.add_custom_model)
@@ -861,6 +869,15 @@ class API:
             message="Command received.",
             command_id=command.command_id,
             instance_id=instance_id,
+        )
+
+    async def get_devices_on_other_versions(self) -> DevicesOnOtherVersionsResponse:
+        """Devices on the network under this cluster's name that can't join it, because they
+        run another version of exo. This node's view: what its discovery heard."""
+        return DevicesOnOtherVersionsResponse(
+            wire_version=WIRE_VERSION,
+            build_id=build_id(),
+            devices=self._devices_on_other_versions(),
         )
 
     async def get_feature_flags(self) -> dict[str, bool]:

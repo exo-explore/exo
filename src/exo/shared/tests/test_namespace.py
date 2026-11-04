@@ -2,12 +2,21 @@ import sys
 
 import pytest
 
-from exo import __version__
+import exo.main
 from exo.main import Args, default_namespace
+from exo.routing.wire import DEFAULT_CLUSTER_NAME
 
 
-def test_defaults_to_version() -> None:
-    assert default_namespace({}) == __version__
+def test_the_default_is_one_name_for_every_package_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The wire version and the MLX release decide which nodes can talk, not the package
+    # version, which never changes the bytes nodes send
+    defaults: set[str] = set()
+    for version in ("0.3.70", "0.4.0"):
+        monkeypatch.setattr(exo.main, "__version__", version)
+        defaults.add(default_namespace({}))
+    assert defaults == {DEFAULT_CLUSTER_NAME}
 
 
 def test_zenoh_namespace_env() -> None:
@@ -23,8 +32,8 @@ def test_zenoh_namespace_wins_over_legacy() -> None:
     assert default_namespace(environ) == "new"
 
 
-def test_empty_env_falls_back_to_version() -> None:
-    assert default_namespace({"EXO_ZENOH_NAMESPACE": ""}) == __version__
+def test_empty_env_falls_back_to_the_default() -> None:
+    assert default_namespace({"EXO_ZENOH_NAMESPACE": ""}) == DEFAULT_CLUSTER_NAME
 
 
 def test_args_parse_uses_env(monkeypatch: pytest.MonkeyPatch) -> None:

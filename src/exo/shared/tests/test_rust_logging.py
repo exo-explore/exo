@@ -23,7 +23,9 @@ _RECORDS = textwrap.dedent(
         port = 20000 + random.randrange(30000)
         zid = os.urandom(16).hex().lstrip("0")
         try:
-            return exo_rs.NetworkingHandle.new(zid, f"log-{os.getpid()}", port, port + 1)
+            return exo_rs.NetworkingHandle.new(
+                zid, f"log-{os.getpid()}", 1, "test", None, port, port + 1
+            )
         except Exception as error:
             print(f"no networking: {error}", flush=True)
             sys.exit(77)
@@ -114,7 +116,9 @@ def test_a_rust_panic_is_written_into_the_log_file_at_once(tmp_path: Path) -> No
         exo_rs.write_panics_to(sys.argv[1])
         try:
             # A port of 0 isn't supported yet: a panic in Rust
-            exo_rs.NetworkingHandle.new(os.urandom(16).hex().lstrip("0"), "panic", 0, 1)
+            exo_rs.NetworkingHandle.new(
+                os.urandom(16).hex().lstrip("0"), "panic", 1, "test", None, 0, 1
+            )
         except BaseException as error:
             print(type(error).__name__)
         """

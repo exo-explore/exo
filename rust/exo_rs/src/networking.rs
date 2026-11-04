@@ -1,6 +1,6 @@
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::ext::{ByteArrayExt as _, FutureExt, PyErrExt as _};
 use crate::ext::{ResultExt as _, TokioMpscSenderExt as _};
@@ -10,6 +10,7 @@ use networking::membership::{
     WEDGE_TIMEOUT,
 };
 use networking::swarm::{FromExo, FromSwarm, Members, Swarm, ToSwarm, create_swarm};
+use networking::wire::{OtherVersions, PeerVersion};
 use networking::{Session, is_valid_zid};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -27,6 +28,7 @@ pub struct PyNetworkingHandle {
     pub to_swarm: mpsc::Sender<ToSwarm>,
     pub swarm: Arc<Mutex<Pin<Box<dyn Stream<Item = FromSwarm> + Send>>>>,
     members: Members,
+    pub other_versions: OtherVersions,
 }
 
 /// A node's state as this node sees it
@@ -238,11 +240,13 @@ impl From<FromSwarm> for PyFromSwarm {
 impl PyNetworkingHandle {
     pub fn from_session(session: Session) -> Self {
         let (to_swarm, from_client) = mpsc::channel(1024);
+        let other_versions = session.other_versions.clone();
         let swarm = Swarm::new(session, from_client);
         PyNetworkingHandle {
             members: swarm.members(),
             swarm: Arc::new(Mutex::new(swarm.into_stream())),
             to_swarm,
+            other_versions,
         }
     }
 }
@@ -256,14 +260,26 @@ impl PyNetworkingHandle {
 
     // ---- Lifecycle management methods ----
 
+    /// Starts this node's networking. It connects only to nodes with the same `namespace`,
+    /// `wire_version` and `build_id`. Exos from before wire versions are recognised under
+    /// `namespace`, and under `pre_gate_namespace` if given.
     #[staticmethod]
+    #[pyo3(signature = (identity, namespace, wire_version, build_id, pre_gate_namespace, listen_port, discovery_service_port))]
     pub fn new(
         py: Python<'_>,
         identity: &str,
         namespace: &str,
+        wire_version: u32,
+        build_id: &str,
+        pre_gate_namespace: Option<&str>,
         listen_port: u16,
         discovery_service_port: u16,
     ) -> PyResult<PyNetworkingHandle> {
+        let wire_version = u16::try_from(wire_version).map_err(|_| {
+            PyValueError::new_err(format!(
+                "wire version {wire_version} doesn't fit discovery's 16 bits"
+            ))
+        })?;
         // todo: zenoh self assigned peers
         if listen_port == 0 {
             todo!("cannot listen on port 0 yet");
@@ -285,6 +301,9 @@ impl PyNetworkingHandle {
                 pyo3_async_runtimes::tokio::get_runtime().block_on(create_swarm(
                     identity,
                     namespace,
+                    wire_version,
+                    build_id,
+                    pre_gate_namespace,
                     from_client,
                     listen_port,
                     discovery_service_port,
@@ -292,10 +311,12 @@ impl PyNetworkingHandle {
             })
             .pyerr()?;
 
+        let other_versions = swarm.other_versions();
         Ok(PyNetworkingHandle {
             members: swarm.members(),
             swarm: Arc::new(Mutex::new(swarm.into_stream())),
             to_swarm,
+            other_versions,
         })
     }
 
@@ -312,6 +333,32 @@ impl PyNetworkingHandle {
         if let Ok(zid) = node.parse() {
             self.members.tell(FromExo::Removed(zid));
         }
+    }
+
+    /// The devices discovery hears in this namespace that can't join, one per device:
+    /// `(addresses, reason, wire_version)`. The reason is "older_exo" (from before wire
+    /// versions), "wire_version" (another wire version, given), or "build" (this wire version
+    /// but another build). A device is listed until its Hellos have stopped for 30 s.
+    pub fn devices_on_other_versions(
+        &self,
+        py: Python<'_>,
+    ) -> Vec<(Vec<String>, String, Option<u16>)> {
+        // Read without the GIL, like `members`: discovery's task may hold the lock for a moment
+        py.detach(|| self.other_versions.current(Instant::now()))
+            .into_iter()
+            .map(|device| {
+                let (reason, wire_version) = match device.version {
+                    PeerVersion::Unversioned => ("older_exo", None),
+                    PeerVersion::Wire(version) => ("wire_version", Some(version)),
+                    PeerVersion::Build => ("build", None),
+                };
+                (
+                    device.addresses.iter().map(ToString::to_string).collect(),
+                    reason.to_owned(),
+                    wire_version,
+                )
+            })
+            .collect()
     }
 
     #[gen_stub(override_return_type(
