@@ -84,6 +84,8 @@ EXO_PID_FILE = EXO_CACHE_HOME / "exo.pid"
 # Identity (config)
 EXO_NODE_ZID = EXO_CACHE_HOME / "node_zid"
 EXO_CONFIG_FILE = EXO_CONFIG_HOME / "config.toml"
+# The models users launched and stopped, as this node knows them (exo.shared.deployment_store)
+EXO_DEPLOYMENTS_FILE = EXO_DATA_HOME / "deployments.json"
 
 # libp2p topics for event forwarding
 LIBP2P_LOCAL_EVENTS_TOPIC = "worker_events"

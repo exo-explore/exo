@@ -1,0 +1,62 @@
+{
+ "format": 1,
+ "deployments": [
+  {
+   "deploymentId": "2f1c9e0a-6b1d-4c55-9a3e-1d2f6a7b8c90",
+   "spec": {
+    "modelId": "mlx-community/Llama-3.2-1B-Instruct-4bit",
+    "sharding": "Pipeline",
+    "instanceMeta": "MlxRing",
+    "minNodes": 2,
+    "pinnedNodes": []
+   },
+   "modelCard": {
+    "modelId": "mlx-community/Llama-3.2-1B-Instruct-4bit",
+    "storageSize": {
+     "inBytes": 729808896
+    },
+    "memorySize": null,
+    "nLayers": 16,
+    "hiddenSize": 2048,
+    "supportsTensor": true,
+    "numKeyValueHeads": null,
+    "tasks": [
+     "TextGeneration"
+    ],
+    "components": null,
+    "family": "",
+    "modelType": null,
+    "quantization": "",
+    "baseModel": "",
+    "capabilities": [],
+    "backends": [
+     "MlxMetal"
+    ],
+    "reasoningDialect": "none",
+    "contextLength": 0,
+    "usesCfg": false,
+    "trustRemoteCode": true,
+    "isCustom": false,
+    "vision": null,
+    "samplingDefaults": {
+     "temperature": null,
+     "topP": null,
+     "topK": null,
+     "minP": null,
+     "repetitionPenalty": null,
+     "presencePenalty": null,
+     "frequencyPenalty": null,
+     "thinking": null,
+     "nonThinking": null
+    }
+   },
+   "revision": 1,
+   "lastNodes": [
+    "12D3KooWExampleNodeA"
+   ]
+  }
+ ],
+ "removed": {
+  "7c3d1b2a-0e4f-4a6b-8c9d-0e1f2a3b4c5d": "2026-11-03T11:00:00+00:00"
+ }
+}

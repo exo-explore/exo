@@ -2,6 +2,7 @@
 the API's state, so a request that waits for its change to show (POST /instance, say) returns."""
 
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 
 import anyio
 
@@ -64,6 +65,12 @@ async def sent_while_applying[T](
                                     deployment_id: deployment
                                     for deployment_id, deployment in api.state.deployments.items()
                                     if deployment_id != command.deployment_id
+                                },
+                                "removed_deployments": {
+                                    **api.state.removed_deployments,
+                                    command.deployment_id: datetime.now(
+                                        tz=timezone.utc
+                                    ).isoformat(),
                                 },
                             }
                         )

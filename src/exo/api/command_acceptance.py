@@ -38,13 +38,18 @@ def command_applied(command: ClusterCommand, state: State) -> bool:
     """Whether the state shows the command's effect."""
     match command:
         case CreateDeployment(deployment_id=deployment_id, instance=instance):
-            # Or its placement runs already, for a launch of it posted at the same time
+            # Or stopped already (a launch is never applied again after its stop), or its
+            # placement runs already, for a launch of it posted at the same time
             return (
                 deployment_id in state.deployments
+                or deployment_id in state.removed_deployments
                 or instance.instance_id in state.instances
             )
         case DeleteDeployment(deployment_id=deployment_id):
-            return deployment_id not in state.deployments
+            # Its tombstone, not its absence: a new master that never saw the launch lacks
+            # the deployment too, and the stop must still reach it, or a node that has the
+            # deployment brings it back
+            return deployment_id in state.removed_deployments
         case ResumeDeployment(deployment_id=deployment_id, revision=revision):
             deployment = state.deployments.get(deployment_id)
             return deployment is None or deployment.revision > revision
@@ -66,6 +71,19 @@ def command_applied(command: ClusterCommand, state: State) -> bool:
             return model_card.model_id in state.custom_model_cards
         case DeleteCustomModelCard(model_id=model_id):
             return model_id not in state.custom_model_cards
+
+
+def command_in_effect(command: ClusterCommand, state: State) -> bool:
+    """Whether the state still shows the command's effect: a launch stopped since was
+    applied, but is no longer in effect, so it is no longer its request's to restore."""
+    match command:
+        case CreateDeployment(deployment_id=deployment_id, instance=instance):
+            return (
+                deployment_id in state.deployments
+                or instance.instance_id in state.instances
+            )
+        case _:
+            return command_applied(command, state)
 
 
 def command_already_applied(command: ClusterCommand, state: State) -> bool:

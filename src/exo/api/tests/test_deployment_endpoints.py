@@ -2,6 +2,8 @@
 """The instance endpoints launch and stop deployments, with the same requests and answers as
 before: POST /instance, POST /place_instance and DELETE /instance/{id}."""
 
+from datetime import datetime
+
 import anyio
 import pytest
 from fastapi import HTTPException
@@ -201,6 +203,11 @@ async def test_a_request_for_a_model_being_placed_again_gets_503_with_retry_afte
     ("waiting", "says"),
     [
         (
+            Waiting(kind="DeviceAway", until="2026-11-03T12:04:30+00:00"),
+            "it waits up to 5 min for the device it ran on to come back, before it is "
+            "loaded on the devices here",
+        ),
+        (
             Waiting(kind="DeviceAway"),
             "it waits for a device it must run on to come back",
         ),
@@ -214,7 +221,7 @@ async def test_a_request_for_a_model_being_placed_again_gets_503_with_retry_afte
             "it doesn't fit in the free memory of the devices that have its files",
         ),
     ],
-    ids=["pinned_device_away", "no_files", "not_enough", "does_not_fit"],
+    ids=["device_away", "pinned_device_away", "no_files", "not_enough", "does_not_fit"],
 )
 def test_a_request_for_a_waiting_model_is_told_why_it_waits(
     waiting: Waiting, says: str
@@ -222,7 +229,9 @@ def test_a_request_for_a_waiting_model_is_told_why_it_waits(
     instance = instance_on_one_node()
     deployment = deployment_of(instance).model_copy(update={"waiting": waiting})
 
-    not_ready = deployment_readiness(deployment)
+    not_ready = deployment_readiness(
+        deployment, datetime.fromisoformat("2026-11-03T12:00:00+00:00")
+    )
 
     assert not_ready.status == says
 

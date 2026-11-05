@@ -139,7 +139,7 @@ async def stopped(api: API, events: Sender[NodeEvents], instance: Instance) -> N
         api,
         events,
         InstanceDeleted(instance_id=instance.instance_id, reason="UserStopped", at=NOW),
-        DeploymentRemoved(deployment_id=instance.deployment_id),
+        DeploymentRemoved(deployment_id=instance.deployment_id, at=NOW),
     )
 
 

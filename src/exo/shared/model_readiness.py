@@ -8,9 +8,11 @@ with what the model is doing and a Retry-After, as OpenAI-compatible servers do 
 loads. One whose model failed to start gets its 503 at once.
 """
 
+import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import final
 
 from exo.shared.request_errors import MODEL_NOT_READY, user_facing_detail
@@ -91,7 +93,7 @@ def model_readiness(state: State, model_id: ModelId) -> NotReady | None:
         return None
     placed = {instance.deployment_id for instance in state.instances.values()}
     statuses += [
-        deployment_readiness(deployment)
+        deployment_readiness(deployment, datetime.now(tz=timezone.utc))
         for deployment_id, deployment in state.deployments.items()
         if deployment.spec.model_id == model_id and deployment_id not in placed
     ]
@@ -115,7 +117,7 @@ def is_launched(state: State, model_id: ModelId) -> bool:
     )
 
 
-def deployment_readiness(deployment: Deployment) -> NotReady:
+def deployment_readiness(deployment: Deployment, now: datetime) -> NotReady:
     """What a deployment that has no instance is doing: starting again, waiting, or paused."""
     if deployment.hold is not None:
         reason = deployment.hold.message or "it was paused"
@@ -126,16 +128,29 @@ def deployment_readiness(deployment: Deployment) -> NotReady:
             failed=True,
         )
     if deployment.waiting is not None:
-        return _waiting(deployment.waiting)
+        return _waiting(deployment.waiting, now)
     # Nothing to wait for: the master places it at its next round
     return NotReady(
         status="it is being placed again", retry_after_seconds=_RETRY_LOADING_SECONDS
     )
 
 
-def _waiting(waiting: Waiting) -> NotReady:
+def _waiting(waiting: Waiting, now: datetime) -> NotReady:
     """Why a deployment waits to be placed again, as the master said"""
     match waiting.kind:
+        case "DeviceAway" if waiting.until is not None:
+            left = (datetime.fromisoformat(waiting.until) - now).total_seconds()
+            minutes = max(1, math.ceil(left / 60))
+            return NotReady(
+                status=f"it waits up to {minutes} min for the device it ran on to come "
+                "back, before it is loaded on the devices here",
+                retry_after_seconds=int(
+                    min(
+                        max(left, _RETRY_DOWNLOAD_MIN_SECONDS),
+                        _RETRY_DOWNLOAD_MAX_SECONDS,
+                    )
+                ),
+            )
         case "DeviceAway":
             status = "it waits for a device it must run on to come back"
         case "NoDevicesWithFiles":

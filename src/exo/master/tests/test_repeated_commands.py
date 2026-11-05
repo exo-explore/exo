@@ -171,11 +171,17 @@ async def test_a_launch_on_a_node_the_master_dropped_waits_until_it_is_back() ->
         tg.cancel_scope.cancel()
 
 
-async def test_a_stop_of_a_model_already_gone_is_logged_in_one_line() -> None:
+async def test_a_stop_of_a_model_already_stopped_is_logged_in_one_line() -> None:
     """The API sends a stop again until its node sees the model go, so copies can reach a
-    master that removed it already: nothing to do, and no error with a traceback."""
+    master that stopped it already (its tombstone is in the state): nothing to do, and no
+    error with a traceback."""
     master, events = master_with()
     stop = DeleteDeployment(deployment_id=DeploymentId())
+    master.state = master.state.model_copy(
+        update={
+            "removed_deployments": {stop.deployment_id: "2026-11-05T12:00:00+00:00"}
+        }
+    )
     commands_sender, master.command_receiver = channel[ForwarderCommand]()
     logged: list[str] = []
     sink = logger.add(logged.append, level="DEBUG", format="{level} {message}")
@@ -192,4 +198,4 @@ async def test_a_stop_of_a_model_already_gone_is_logged_in_one_line() -> None:
 
     assert events.collect() == []
     assert not [line for line in logged if "Error in command processor" in line]
-    assert [line for line in logged if "already gone" in line]
+    assert [line for line in logged if "already stopped" in line]

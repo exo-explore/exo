@@ -31,10 +31,12 @@ from exo.routing.router import Router, get_node_zid
 from exo.routing.wire import DEFAULT_CLUSTER_NAME, WIRE_VERSION, build_id
 from exo.shared.constants import (
     EXO_DEFAULT_MODELS_DIR,
+    EXO_DEPLOYMENTS_FILE,
     EXO_EVENT_LOG_DIR,
     EXO_LOG,
     EXO_PID_FILE,
 )
+from exo.shared.deployment_store import DeploymentKeeper
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
@@ -81,6 +83,7 @@ class Node:
     election_result_receiver: Receiver[ElectionResult]
     master: Master | None
     api: API | None
+    deployment_keeper: DeploymentKeeper
 
     node_id: NodeId
     offline: bool
@@ -195,6 +198,16 @@ class Node:
             election_result_sender=er_send,
         )
 
+        # Every node keeps the deployments it has seen, for each new master
+        state_view = worker or api
+        deployment_keeper = DeploymentKeeper(
+            EXO_DEPLOYMENTS_FILE,
+            state=(lambda: state_view.state)
+            if state_view is not None
+            else lambda: None,
+            command_sender=router.sender(topics.COMMANDS),
+        )
+
         return cls(
             router,
             event_router,
@@ -205,6 +218,7 @@ class Node:
             er_recv,
             master,
             api,
+            deployment_keeper,
             node_id,
             args.offline,
             args.api_port,
@@ -229,6 +243,7 @@ class Node:
                 tg.start_soon(self.master.run)
             if self.api:
                 tg.start_soon(self.api.run)
+            tg.start_soon(self.deployment_keeper.run)
             tg.start_soon(self._elect_loop)
 
     def shutdown(self):
@@ -354,6 +369,7 @@ class Node:
                         await self.download_coordinator.reannounce()
                     if self.worker:
                         await self.worker.announce_to_master()
+                    self.deployment_keeper.follow_new_master()
                     if self.api:
                         self.api.follow_new_master(result.won_clock)
                 else:

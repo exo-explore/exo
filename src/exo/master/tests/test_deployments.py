@@ -9,6 +9,7 @@ import pytest
 
 from exo.master.deployments import (
     RDMA_FALLBACK_NOTE,
+    announced,
     nodes_with_files,
     reconcile,
 )
@@ -24,7 +25,9 @@ from exo.master.tests.test_deployments_running_master import (
 )
 from exo.routing.topics import COMMANDS, GLOBAL_EVENTS, STATE_SNAPSHOTS
 from exo.shared.apply import event_apply
+from exo.shared.deployment_store import record_of
 from exo.shared.types.commands import (
+    AnnounceDeployments,
     CreateDeployment,
     DeleteDeployment,
     ForwarderCommand,
@@ -34,6 +37,7 @@ from exo.shared.types.common import DeploymentId, NodeId, SessionId, SystemId
 from exo.shared.types.deployments import (
     CRASH_LOOP_WINDOW,
     Deployment,
+    DeploymentRecord,
     DeploymentSpec,
     Hold,
     Waiting,
@@ -176,6 +180,25 @@ def test_a_pinned_node_that_is_away_makes_it_wait() -> None:
 
 def test_nothing_is_placed_while_the_masters_node_is_resuming() -> None:
     assert decide(three_node_loss(), settled=False) == []
+
+
+def test_a_merged_launch_waits_until_its_time_or_its_nodes() -> None:
+    """A launch the master learned of from a node waits for the node it last ran on."""
+    until = (NOW + WAIT).isoformat()
+    state = lost(cluster(deployed(instance_on(LEAVES)), STAYS, LEAVES))
+    deployment = only(state).model_copy(update={"not_before": until})
+    waits = state.model_copy(
+        update={"deployments": {deployment.deployment_id: deployment}}
+    )
+    away = without(waits, LEAVES)
+
+    assert created(decide(away)) == []
+    assert statuses(decide(away)) == [Waiting(kind="DeviceAway", until=until)]
+    # Its time has come: it goes on the node that is left
+    later = NOW + WAIT + timedelta(seconds=1)
+    assert created(decide(away, now=later)) == [frozenset({STAYS})]
+    # Or its node is back: it goes back there at once
+    assert created(decide(waits)) == [frozenset({LEAVES})]
 
 
 def test_it_goes_back_on_its_own_nodes_when_they_are_all_here() -> None:
@@ -428,12 +451,16 @@ def test_placing_it_clears_the_wait_and_resuming_clears_everything() -> None:
 def test_a_deployment_is_created_once_and_removed_by_its_id() -> None:
     state = cluster(deployed(instance_on(STAYS)), STAYS)
     deployment = only(state)
-    changed = deployment.model_copy(update={"revision": 7})
+    # The same revision again, from another node: nothing changes
+    again = deployment.model_copy(update={"hold": Hold(kind="CrashLoop")})
 
-    assert only(event_apply(DeploymentCreated(deployment=changed), state)) == deployment
+    assert only(event_apply(DeploymentCreated(deployment=again), state)) == deployment
     assert (
         event_apply(
-            DeploymentRemoved(deployment_id=deployment.deployment_id), state
+            DeploymentRemoved(
+                deployment_id=deployment.deployment_id, at=NOW.isoformat()
+            ),
+            state,
         ).deployments
         == {}
     )
@@ -458,16 +485,17 @@ def test_every_deployment_event_and_command_crosses_the_network() -> None:
         revision=3,
         hold=Hold(kind="CrashLoop", message="lost"),
         last_nodes=[STAYS, LEAVES],
+        not_before=NOW.isoformat(),
         lost_at=NOW.isoformat(),
         losses=[NOW.isoformat()],
-        waiting=Waiting(kind="NotEnoughDevices", needed=2, have=1),
+        waiting=Waiting(kind="DeviceAway", until=NOW.isoformat()),
         note="a note",
     )
     master = NodeId("master")
     session = SessionId(master_node_id=master, election_clock=1)
     events: list[Event] = [
         DeploymentCreated(deployment=deployment),
-        DeploymentRemoved(deployment_id=deployment_id),
+        DeploymentRemoved(deployment_id=deployment_id, at=NOW.isoformat()),
         DeploymentHeld(deployment_id=deployment_id, hold=Hold(kind="StartFailed")),
         DeploymentResumed(deployment_id=deployment_id, at=NOW.isoformat(), unpin=True),
         DeploymentStatus(
@@ -493,13 +521,226 @@ def test_every_deployment_event_and_command_crosses_the_network() -> None:
         ),
         DeleteDeployment(deployment_id=deployment_id),
         ResumeDeployment(deployment_id=deployment_id, revision=3),
+        AnnounceDeployments(
+            deployments=[record_of(deployment)],
+            removed={DeploymentId(): NOW.isoformat()},
+            restored=[deployment_id],
+        ),
     ):
         forwarded = ForwarderCommand(origin=SystemId(), command=command)
         assert COMMANDS.deserialize(COMMANDS.serialize(forwarded)) == forwarded
     snapshot = StateSnapshot(
         session=session,
         requester=SystemId(),
-        state=State(deployments={deployment_id: deployment}),
+        state=State(
+            deployments={deployment_id: deployment},
+            removed_deployments={DeploymentId(): NOW.isoformat()},
+        ),
     )
     received = STATE_SNAPSHOTS.deserialize(STATE_SNAPSHOTS.serialize(snapshot))
     assert received.state.deployments == snapshot.state.deployments
+    assert received.state.removed_deployments == snapshot.state.removed_deployments
+
+
+# What a node tells a new master
+
+
+# How long a launch learned from a node waits for the nodes it last ran on
+WAIT = timedelta(seconds=15)
+
+
+def _announced(state: State, announcement: AnnounceDeployments) -> list[Event]:
+    return announced(state, announcement, NOW, WAIT)
+
+
+def _record(deployment: Deployment) -> DeploymentRecord:
+    return record_of(deployment)
+
+
+def _announce(
+    records: list[DeploymentRecord],
+    removed: dict[DeploymentId, str] | None = None,
+    restored: list[DeploymentId] | None = None,
+    running: list[DeploymentId] | None = None,
+) -> AnnounceDeployments:
+    return AnnounceDeployments(
+        deployments=records,
+        removed=removed or {},
+        restored=restored or [],
+        running=running or [],
+    )
+
+
+def _apply_all(state: State, events: list[Event]) -> State:
+    for event in events:
+        state = event_apply(event, state)
+    return state
+
+
+def test_a_launch_the_master_never_saw_is_added_as_it_was() -> None:
+    """Two Macs: launched on the side that lost the election. It comes with
+    the nodes it ran on, and waits for them a while, so it comes back on its own node rather
+    than moving to another that has the files."""
+    on_leaves = cluster(deployed(instance_on(LEAVES)), LEAVES)
+    (instance,) = on_leaves.instances.values()
+    launched = only(on_leaves)
+
+    events = _announced(
+        State(),
+        _announce([record_of(launched, [LEAVES])], running=[instance.deployment_id]),
+    )
+
+    after = _apply_all(State(), events)
+    assert only(after).deployment_id == launched.deployment_id
+    assert only(after).hold is None
+    assert only(after).last_nodes == [LEAVES]
+    assert only(after).not_before == (NOW + WAIT).isoformat()
+
+
+def test_a_merged_launch_comes_back_on_its_own_node() -> None:
+    """Both nodes have its files and room: it goes back where it ran, once that node has its
+    files and links, within the wait. Without the nodes in the record it went to whichever
+    fitted best (on the other Mac in 1 of 2 runs)."""
+    on_leaves = cluster(deployed(instance_on(LEAVES)), STAYS, LEAVES)
+    launched = only(on_leaves)
+    lacking = on_leaves.model_copy(update={"instances": {}, "deployments": {}})
+    after = _apply_all(
+        lacking, _announced(lacking, _announce([record_of(launched, [LEAVES])]))
+    )
+
+    assert created(decide(after)) == [frozenset({LEAVES})]
+
+
+def test_a_heal_where_one_side_held_it_and_the_other_ran_it_keeps_it_running() -> None:
+    """Side 1's master held a deployment (it couldn't start it within
+    WAIT_LIMIT) while side 2 ran it. Side 2 wins the election, and side 1 tells it its view.
+    Its hold was its own side's: the running deployment stays as it is. A hold used to bump the
+    revision, so side 1's record won the merge and paused the running model."""
+    running_side = cluster(deployed(instance_on(STAYS)), STAYS)
+    deployment = only(running_side)
+    held_side = event_apply(
+        DeploymentHeld(
+            deployment_id=deployment.deployment_id,
+            hold=Hold(
+                kind="WaitedTooLong", message="It couldn't start again within 1 h"
+            ),
+        ),
+        running_side,
+    )
+
+    events = _announced(running_side, _announce([record_of(only(held_side))]))
+
+    after = _apply_all(running_side, events)
+    assert events == []
+    assert only(after).hold is None
+    assert len(after.instances) == 1
+
+
+def test_a_heal_where_the_side_that_held_it_wins_lifts_the_hold() -> None:
+    """The other way round: side 1 (which held it) wins, and side 2 says its master was
+    running it. The hold was side 1's own: it is lifted, without counting as a change by the
+    user, and the deployment is placed again."""
+    running_side = cluster(deployed(instance_on(STAYS)), STAYS)
+    deployment = only(running_side)
+    held = event_apply(
+        DeploymentHeld(
+            deployment_id=deployment.deployment_id,
+            hold=Hold(
+                kind="WaitedTooLong", message="It couldn't start again within 1 h"
+            ),
+        ),
+        running_side.model_copy(update={"instances": {}}),
+    )
+
+    after = _apply_all(
+        held,
+        _announced(
+            held,
+            _announce(
+                [record_of(deployment, [STAYS])], running=[deployment.deployment_id]
+            ),
+        ),
+    )
+
+    assert only(after).hold is None
+    assert only(after).revision == deployment.revision
+    assert created(decide(after)) == [frozenset({STAYS})]
+
+
+def test_a_deployment_only_on_disks_comes_back_held() -> None:
+    """The whole cluster restarted: models aren't loaded again at start-up."""
+    launched = only(cluster(deployed(instance_on(STAYS)), STAYS))
+
+    after = _apply_all(
+        State(),
+        _announced(
+            State(),
+            _announce([_record(launched)], restored=[launched.deployment_id]),
+        ),
+    )
+
+    hold = only(after).hold
+    assert hold is not None and hold.kind == "Restored"
+    # A node that has run it since it started shows it was no full restart
+    resumed = _apply_all(after, _announced(after, _announce([_record(launched)])))
+    assert only(resumed).hold is None
+
+
+def test_a_stop_beats_a_launch_and_ends_it() -> None:
+    state = cluster(deployed(instance_on(STAYS)), STAYS)
+    running = only(state)
+
+    after = _apply_all(
+        state,
+        _announced(
+            state,
+            _announce(
+                [_record(running)], removed={running.deployment_id: NOW.isoformat()}
+            ),
+        ),
+    )
+
+    assert after.deployments == {}
+    assert after.removed_deployments == {running.deployment_id: NOW.isoformat()}
+    # A node that still has it can't bring it back
+    assert _announced(after, _announce([_record(running)])) == []
+
+
+def test_the_users_later_change_wins_and_an_older_record_changes_nothing() -> None:
+    """The user resumed it on the other side, dropping a pin: that change is the latest, and
+    wins over this master's hold."""
+    state = cluster(deployed(instance_on(STAYS)), STAYS)
+    current = only(state)
+    held = event_apply(
+        DeploymentHeld(
+            deployment_id=current.deployment_id, hold=Hold(kind="CrashLoop")
+        ),
+        state,
+    )
+    unpinned = current.spec.model_copy(update={"pinned_nodes": []})
+    newer = _record(current).model_copy(update={"revision": 4, "spec": unpinned})
+
+    after = _apply_all(held, _announced(held, _announce([newer])))
+
+    assert (only(after).revision, only(after).hold, only(after).spec) == (
+        4,
+        None,
+        unpinned,
+    )
+    assert only(after).last_nodes == current.last_nodes
+    assert _announced(after, _announce([_record(current)])) == []
+
+
+def test_announcing_what_the_master_has_changes_nothing() -> None:
+    state = cluster(deployed(instance_on(STAYS)), STAYS)
+    state = event_apply(
+        DeploymentRemoved(deployment_id=DeploymentId(), at=NOW.isoformat()), state
+    )
+
+    assert (
+        _announced(
+            state,
+            _announce([_record(only(state))], removed=dict(state.removed_deployments)),
+        )
+        == []
+    )
