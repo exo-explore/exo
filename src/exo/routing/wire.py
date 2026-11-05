@@ -30,7 +30,7 @@ from exo.utils.pydantic_ext import FrozenModel
 #   once the other nodes' runners that had joined it are going, and reports its own as going
 #   until then; a node of version 1 never reports a runner it stops, so the two wait on each
 #   other for good.
-WIRE_VERSION: Final = 3
+WIRE_VERSION: Final = 4
 
 # The cluster name when none is given. Not the package version: the wire version and the build
 # decide which nodes can talk, and one name for every version lets a node name a device that

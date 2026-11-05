@@ -477,13 +477,16 @@
       "x-extra": "forbid",
       "x-strict": true
     },
-    "CreateInstance": {
+    "CreateDeployment": {
       "additionalProperties": false,
       "properties": {
-        "CreateInstance": {
+        "CreateDeployment": {
           "additionalProperties": false,
           "properties": {
             "command_id": {
+              "type": "string"
+            },
+            "deployment_id": {
               "type": "string"
             },
             "instance": {
@@ -495,10 +498,19 @@
                   "$ref": "#/$defs/MlxJacclInstance"
                 }
               ]
+            },
+            "model_card": {
+              "$ref": "#/$defs/ModelCard"
+            },
+            "spec": {
+              "$ref": "#/$defs/DeploymentSpec"
             }
           },
           "required": [
-            "instance"
+            "deployment_id",
+            "instance",
+            "model_card",
+            "spec"
           ],
           "type": "object",
           "x-extra": "forbid",
@@ -506,7 +518,7 @@
         }
       },
       "required": [
-        "CreateInstance"
+        "CreateDeployment"
       ],
       "type": "object"
     },
@@ -621,6 +633,32 @@
       ],
       "type": "object"
     },
+    "DeleteDeployment": {
+      "additionalProperties": false,
+      "properties": {
+        "DeleteDeployment": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "deployment_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "deployment_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "DeleteDeployment"
+      ],
+      "type": "object"
+    },
     "DeleteDownload": {
       "additionalProperties": false,
       "properties": {
@@ -651,32 +689,6 @@
       ],
       "type": "object"
     },
-    "DeleteInstance": {
-      "additionalProperties": false,
-      "properties": {
-        "DeleteInstance": {
-          "additionalProperties": false,
-          "properties": {
-            "command_id": {
-              "type": "string"
-            },
-            "instance_id": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "instance_id"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "DeleteInstance"
-      ],
-      "type": "object"
-    },
     "DeleteInstanceLink": {
       "additionalProperties": false,
       "properties": {
@@ -700,6 +712,278 @@
       },
       "required": [
         "DeleteInstanceLink"
+      ],
+      "type": "object"
+    },
+    "Deployment": {
+      "additionalProperties": false,
+      "properties": {
+        "deployment_id": {
+          "type": "string"
+        },
+        "hold": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Hold"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_nodes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "losses": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "lost_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_card": {
+          "$ref": "#/$defs/ModelCard"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "type": "integer"
+        },
+        "spec": {
+          "$ref": "#/$defs/DeploymentSpec"
+        },
+        "waiting": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Waiting"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "deployment_id",
+        "model_card",
+        "spec"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "DeploymentCreated": {
+      "additionalProperties": false,
+      "properties": {
+        "DeploymentCreated": {
+          "additionalProperties": false,
+          "properties": {
+            "deployment": {
+              "$ref": "#/$defs/Deployment"
+            },
+            "event_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "deployment"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "DeploymentCreated"
+      ],
+      "type": "object"
+    },
+    "DeploymentHeld": {
+      "additionalProperties": false,
+      "properties": {
+        "DeploymentHeld": {
+          "additionalProperties": false,
+          "properties": {
+            "deployment_id": {
+              "type": "string"
+            },
+            "event_id": {
+              "type": "string"
+            },
+            "hold": {
+              "$ref": "#/$defs/Hold"
+            }
+          },
+          "required": [
+            "deployment_id",
+            "hold"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "DeploymentHeld"
+      ],
+      "type": "object"
+    },
+    "DeploymentRemoved": {
+      "additionalProperties": false,
+      "properties": {
+        "DeploymentRemoved": {
+          "additionalProperties": false,
+          "properties": {
+            "deployment_id": {
+              "type": "string"
+            },
+            "event_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "deployment_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "DeploymentRemoved"
+      ],
+      "type": "object"
+    },
+    "DeploymentResumed": {
+      "additionalProperties": false,
+      "properties": {
+        "DeploymentResumed": {
+          "additionalProperties": false,
+          "properties": {
+            "at": {
+              "type": "string"
+            },
+            "deployment_id": {
+              "type": "string"
+            },
+            "event_id": {
+              "type": "string"
+            },
+            "unpin": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "at",
+            "deployment_id"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "DeploymentResumed"
+      ],
+      "type": "object"
+    },
+    "DeploymentSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "instance_meta": {
+          "$ref": "#/$defs/InstanceMeta"
+        },
+        "min_nodes": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "model_id": {
+          "type": "string"
+        },
+        "pinned_nodes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sharding": {
+          "$ref": "#/$defs/Sharding"
+        }
+      },
+      "required": [
+        "instance_meta",
+        "model_id",
+        "sharding"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "DeploymentStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "DeploymentStatus": {
+          "additionalProperties": false,
+          "properties": {
+            "deployment_id": {
+              "type": "string"
+            },
+            "event_id": {
+              "type": "string"
+            },
+            "note": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "waiting": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Waiting"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "deployment_id",
+            "note",
+            "waiting"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "DeploymentStatus"
       ],
       "type": "object"
     },
@@ -1100,13 +1384,13 @@
               "$ref": "#/$defs/exo__shared__types__commands__ImageEdits"
             },
             {
-              "$ref": "#/$defs/PlaceInstance"
+              "$ref": "#/$defs/CreateDeployment"
             },
             {
-              "$ref": "#/$defs/CreateInstance"
+              "$ref": "#/$defs/DeleteDeployment"
             },
             {
-              "$ref": "#/$defs/DeleteInstance"
+              "$ref": "#/$defs/ResumeDeployment"
             },
             {
               "$ref": "#/$defs/InstanceBroken"
@@ -1241,6 +1525,21 @@
               "$ref": "#/$defs/InstanceDeleted"
             },
             {
+              "$ref": "#/$defs/DeploymentCreated"
+            },
+            {
+              "$ref": "#/$defs/DeploymentRemoved"
+            },
+            {
+              "$ref": "#/$defs/DeploymentHeld"
+            },
+            {
+              "$ref": "#/$defs/DeploymentResumed"
+            },
+            {
+              "$ref": "#/$defs/DeploymentStatus"
+            },
+            {
               "$ref": "#/$defs/RunnerStatusUpdated"
             },
             {
@@ -1300,6 +1599,35 @@
         "origin",
         "origin_idx",
         "session"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "Hold": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "CrashLoop",
+            "StartFailed",
+            "WaitedTooLong"
+          ],
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind"
       ],
       "type": "object",
       "x-extra": "forbid",
@@ -1930,6 +2258,9 @@
         "InstanceDeleted": {
           "additionalProperties": false,
           "properties": {
+            "at": {
+              "type": "string"
+            },
             "event_id": {
               "type": "string"
             },
@@ -1941,7 +2272,8 @@
                 {
                   "enum": [
                     "NodeLost",
-                    "UserStopped"
+                    "UserStopped",
+                    "Duplicate"
                   ],
                   "type": "string"
                 },
@@ -1953,6 +2285,7 @@
             }
           },
           "required": [
+            "at",
             "instance_id",
             "reason"
           ],
@@ -2110,6 +2443,21 @@
             },
             {
               "$ref": "#/$defs/InstanceDeleted"
+            },
+            {
+              "$ref": "#/$defs/DeploymentCreated"
+            },
+            {
+              "$ref": "#/$defs/DeploymentRemoved"
+            },
+            {
+              "$ref": "#/$defs/DeploymentHeld"
+            },
+            {
+              "$ref": "#/$defs/DeploymentResumed"
+            },
+            {
+              "$ref": "#/$defs/DeploymentStatus"
             },
             {
               "$ref": "#/$defs/RunnerStatusUpdated"
@@ -2331,6 +2679,9 @@
         "MlxJacclInstance": {
           "additionalProperties": false,
           "properties": {
+            "deployment_id": {
+              "type": "string"
+            },
             "instance_id": {
               "type": "string"
             },
@@ -2382,6 +2733,9 @@
         "MlxRingInstance": {
           "additionalProperties": false,
           "properties": {
+            "deployment_id": {
+              "type": "string"
+            },
             "ephemeral_port": {
               "type": "integer"
             },
@@ -2972,44 +3326,6 @@
       ],
       "type": "object"
     },
-    "PlaceInstance": {
-      "additionalProperties": false,
-      "properties": {
-        "PlaceInstance": {
-          "additionalProperties": false,
-          "properties": {
-            "command_id": {
-              "type": "string"
-            },
-            "instance_meta": {
-              "$ref": "#/$defs/InstanceMeta"
-            },
-            "min_nodes": {
-              "type": "integer"
-            },
-            "model_card": {
-              "$ref": "#/$defs/ModelCard"
-            },
-            "sharding": {
-              "$ref": "#/$defs/Sharding"
-            }
-          },
-          "required": [
-            "instance_meta",
-            "min_nodes",
-            "model_card",
-            "sharding"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "PlaceInstance"
-      ],
-      "type": "object"
-    },
     "PrefillProgressChunk": {
       "additionalProperties": false,
       "properties": {
@@ -3121,6 +3437,36 @@
       },
       "required": [
         "RequestEventLog"
+      ],
+      "type": "object"
+    },
+    "ResumeDeployment": {
+      "additionalProperties": false,
+      "properties": {
+        "ResumeDeployment": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "deployment_id": {
+              "type": "string"
+            },
+            "revision": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "deployment_id",
+            "revision"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "ResumeDeployment"
       ],
       "type": "object"
     },
@@ -3970,6 +4316,12 @@
         "custom_model_cards": {
           "additionalProperties": {
             "$ref": "#/$defs/ModelCard"
+          },
+          "type": "object"
+        },
+        "deployments": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Deployment"
           },
           "type": "object"
         },
@@ -5391,6 +5743,46 @@
       "required": [
         "image_token_id",
         "model_type"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
+    "Waiting": {
+      "additionalProperties": false,
+      "properties": {
+        "have": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "enum": [
+            "DeviceAway",
+            "NoDevicesWithFiles",
+            "NotEnoughDevices",
+            "DoesNotFit"
+          ],
+          "type": "string"
+        },
+        "needed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind"
       ],
       "type": "object",
       "x-extra": "forbid",
