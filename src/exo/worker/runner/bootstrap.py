@@ -1,6 +1,7 @@
 import os
 import resource
 import traceback
+from collections.abc import MutableMapping
 from dataclasses import dataclass
 from typing import Self, cast
 
@@ -62,6 +63,37 @@ def use_fast_synch(instance: Instance, override: str | None) -> bool:
     )
 
 
+RESIDENCY_REFRESH_ENV = "MLX_METAL_RESIDENCY_REFRESH_INTERVAL_MS"
+RESIDENCY_REFRESH_DEFAULT_MS = 500
+
+
+def residency_refresh_interval_ms(override: str | None) -> str:
+    """How often MLX re-requests residency for the wired weights (MLX_METAL_RESIDENCY_REFRESH_INTERVAL_MS).
+
+    macOS releases the residency of wired Metal allocations once the GPU has idled for a
+    second or two, so the first request after a pause re-wires the model's weights before
+    its prefill can run: on a Mac Studio (M3 Ultra) about 7 ms per GB of weights, seconds
+    for a model of a few hundred GB. MLX's renewal thread keeps them resident and submits
+    no GPU work. Every 500 ms it costs about 0.02 % of one CPU core while idle; at 2000 ms
+    residency was already lost between renewals. A value set in the environment is kept,
+    and 0 disables the renewal.
+    """
+    if override is not None and override.strip() != "":
+        return override
+    return str(RESIDENCY_REFRESH_DEFAULT_MS)
+
+
+def configure_mlx_environment(
+    instance: Instance, environ: MutableMapping[str, str]
+) -> None:
+    """Set the MLX environment variables a runner needs before MLX creates its Metal device."""
+    fast_synch = use_fast_synch(instance, environ.get("EXO_FAST_SYNCH"))
+    environ["MLX_METAL_FAST_SYNCH"] = "1" if fast_synch else "0"
+    environ[RESIDENCY_REFRESH_ENV] = residency_refresh_interval_ms(
+        environ.get(RESIDENCY_REFRESH_ENV)
+    )
+
+
 def entrypoint(
     bound_instance: BoundInstance,
     event_sender: MpSender[Event | RunnerTerminationError],
@@ -75,12 +107,12 @@ def entrypoint(
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
 
-    fast_synch = use_fast_synch(
-        bound_instance.instance, os.environ.get("EXO_FAST_SYNCH")
-    )
-    os.environ["MLX_METAL_FAST_SYNCH"] = "1" if fast_synch else "0"
+    configure_mlx_environment(bound_instance.instance, os.environ)
 
     logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
+    logger.info(
+        f"Metal residency refresh interval: {os.environ[RESIDENCY_REFRESH_ENV]} ms"
+    )
 
     # Import main after setting global logger - this lets us just import logger from this module
     try:
