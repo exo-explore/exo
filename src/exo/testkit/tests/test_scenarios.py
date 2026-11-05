@@ -258,14 +258,16 @@ CRASHED_MASTER_REPLACED_WITHIN = 10.0
 
 
 @pytest.mark.slow
-def test_killing_the_master_elects_a_new_one_and_fails_in_flight_chats(
+def test_killing_the_master_elects_a_new_one_and_keeps_in_flight_chats(
     make_cluster: MakeCluster,
 ) -> None:
     """kill -9 of the master while a chat streams from a healthy instance on a follower.
-    Main: the followers elect a new master (measured 5.5 s; bound 10 s; before #2586 usually
-    only after the 30 s master-silence timeout, as in 2 of 3 master kills on real Macs), the
-    chat fails when they do, and the dead master leaves every view when the new master
-    times it out (measured 20.5 s after the kill; bound 45 s after the new master)."""
+    The followers elect a new master (measured 5.5 s; bound 10 s; before #2586 usually only
+    after the 30 s master-silence timeout, as in 2 of 3 master kills on real Macs), and the
+    dead master leaves every view when the new master times it out (measured 20.5 s after
+    the kill; bound 45 s after the new master). The chat streams on: requests don't go
+    through the master (before they stopped doing so, it failed when the followers elected
+    a new one)."""
     cluster = make_cluster(3)
     roles = _roles(cluster)
     serving, asking = roles.followers
@@ -278,7 +280,7 @@ def test_killing_the_master_elects_a_new_one_and_fails_in_flight_chats(
         timeout=CRASHED_MASTER_REPLACED_WITHIN, other_than=roles.master
     )
     assert new_master in roles.followers
-    _clean_error(chat.result(60))
+    _ok(chat.result(60))
     cluster.wait_until_consistent(timeout=45)
     _ok(cluster.chat("after the new master", via=asking, timeout=30))
 
@@ -304,13 +306,6 @@ def test_a_crashed_master_is_replaced_quickly(make_cluster: MakeCluster) -> None
             cluster.wait_for_cluster(timeout=60)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=EXPECTED_FAILURES,
-    reason="Every change of master ends every in-flight request, a graceful quit "
-    "included (6 of 6 failed on real Macs, where 16-22% of failed requests in a 2 h soak "
-    "were on instances that lost no node)",
-)
 def test_a_master_change_keeps_chats_on_healthy_instances(
     make_cluster: MakeCluster,
 ) -> None:

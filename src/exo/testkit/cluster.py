@@ -499,7 +499,9 @@ class Cluster:
         (self.root / "dashboard").mkdir(exist_ok=True)
         self.network.start()
         for node in self.nodes:
-            self.network.add_node(node.name, node.discovery_port, node.zenoh_port)
+            self.network.add_node(
+                node.name, node.discovery_port, node.zenoh_port, node.api_port
+            )
             self._prepare(node)
         atexit.register(self.close)
         for node in self.nodes:
@@ -626,6 +628,16 @@ class Cluster:
             NetworkTable(
                 api_ports={node.node_id: node.api_port for node in self.nodes},
                 addresses={node.node_id: node.address for node in self.nodes},
+                api_routes={
+                    source.node_id: {
+                        sink.node_id: self.network.api_proxy_ports[
+                            (source.name, sink.name)
+                        ]
+                        for sink in self.nodes
+                        if sink is not source
+                    }
+                    for source in self.nodes
+                },
                 cuts=[
                     Cut(
                         between=(self.nodes[a].node_id, self.nodes[b].node_id),

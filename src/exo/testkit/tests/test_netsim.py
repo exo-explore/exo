@@ -207,3 +207,37 @@ def test_stub_ring_ports_are_one_per_rank_and_never_shared_between_clusters() ->
     finally:
         first.stop()
         second.stop()
+
+
+def test_a_nodes_api_is_reached_through_the_pairs_proxy_and_cut_with_it() -> None:
+    """One node's HTTP to another's API (serving a request without the master) goes through
+    the pair's proxy, which counts it, and a cut between the two applies to it."""
+    if not socket.has_ipv6:
+        pytest.skip("no IPv6")
+    api = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    api.bind(("127.0.0.1", 0))
+    api.listen()
+    threading.Thread(target=_echo, args=(api,), daemon=True).start()
+    netsim = NetSim()
+    netsim.start()
+    a, b = _node("a"), _node("b")
+    netsim.add_node(a.name, a.discovery_port, a.zenoh_port)
+    netsim.add_node(
+        b.name,
+        b.discovery_port,
+        b.zenoh_port,
+        api_port=int(api.getsockname()[1]),  # pyright: ignore[reportAny]
+    )
+    try:
+        assert ("b", "a") not in netsim.api_proxy_ports, "a has no API"
+        connection = _connect(netsim.api_proxy_ports[("a", "b")])
+        assert netsim.api_connections[("a", "b")] == 1
+        netsim.cut("a", "b", "reset")
+        connection.settimeout(2)
+        with contextlib.suppress(ConnectionResetError):
+            assert connection.recv(4) == b""
+        connection.close()
+    finally:
+        netsim.stop()
+        for each in (a.discovery, a.zenoh, b.discovery, b.zenoh, api):
+            each.close()
