@@ -35,6 +35,7 @@
     lastUpdate,
     clearChat,
     instances,
+    deployments,
     runners,
     downloads,
     nodeDisk,
@@ -83,16 +84,12 @@
     dismissToast,
   } from "$lib/stores/toast.svelte";
   import {
-    STOPPED_MODELS_KEY,
-    THIS_DEVICE_IDS_KEY,
-    parseNotices,
-    stoppedModelMessage,
-    whyModelStopped,
-    withNotice,
-    withThisDeviceId,
-    withoutNotice,
-    type StoppedModelNotice,
-  } from "$lib/utils/stopped_models";
+    launchConstraints,
+    onboardingDecision,
+    parseDeployments,
+    runningNotes,
+    type Deployment,
+  } from "$lib/utils/deployments";
   import { readApiErrorMessage } from "$lib/utils/api_errors";
   import HeaderNav from "$lib/components/HeaderNav.svelte";
   import DeviceIcon from "$lib/components/DeviceIcon.svelte";
@@ -150,6 +147,35 @@
   const tbIdentifiers = $derived(nodeThunderbolt());
   const rdmaCtlData = $derived(nodeRdmaCtl());
   const nodeFilter = $derived(previewNodeFilter());
+  // The deployment an instance runs for
+  function deploymentIdOf(instance: unknown): string | null {
+    const [, inner] = getTagged(instance);
+    const id = (inner as { deploymentId?: unknown } | null)?.deploymentId;
+    return typeof id === "string" ? id : null;
+  }
+  const allDeployments = $derived(
+    parseDeployments(
+      deployments(),
+      new Set(
+        Object.values(instanceData).flatMap((instance) => {
+          const id = deploymentIdOf(instance);
+          return id === null ? [] : [id];
+        }),
+      ),
+      Date.now(),
+    ),
+  );
+  // Models users launched that have no running instance: starting again,
+  // waiting for something, or paused until the user resumes them
+  const pendingDeployments = $derived(
+    allDeployments.filter((deployment) => deployment.phase.kind !== "running"),
+  );
+  // How the running ones run, when it matters (e.g. over TCP instead of RDMA)
+  const notesOfRunning = $derived(runningNotes(allDeployments));
+  function runningNoteOf(instance: unknown): string | undefined {
+    const id = deploymentIdOf(instance);
+    return id === null ? undefined : notesOfRunning.get(id);
+  }
   const heardAtData = $derived(nodeHeardAt());
   const downloadActivityData = $derived(downloadActivity());
 
@@ -1708,13 +1734,6 @@
     mounted = true;
     fetchModels();
     refreshLocalNodeId();
-    // Notices of models that stopped on their own, kept until dismissed
-    for (const notice of readStoppedNotices()) showStoppedNotice(notice);
-    window.addEventListener("storage", (event) => {
-      if (event.key === STOPPED_MODELS_KEY || event.key === null) {
-        syncStoppedNotices();
-      }
-    });
 
     // Handle reset-onboarding query parameter (triggered from native Settings)
     const params = new URLSearchParams(window.location.search);
@@ -1779,8 +1798,10 @@
   });
 
   // A device that joins a cluster that already runs a model skips onboarding:
-  // the cluster is set up, so say so and offer the chat instead. A device on
-  // its own, or in a cluster with nothing running, gets onboarding.
+  // the cluster is set up, so say so and offer the chat instead. So does one
+  // whose cluster has a model launched that isn't running now (paused after
+  // every device restarted, or waiting): its card shows what to do. A device on
+  // its own, or in a cluster with nothing launched, gets onboarding.
   function decideOnboarding() {
     onboardingDecisionPending = false;
     const modelId =
@@ -1788,12 +1809,13 @@
       Object.values(instanceData)
         .map((inst) => getInstanceModelId(inst))
         .find((id) => id !== "Unknown" && id !== "Unknown Model");
-    if (!modelId) {
+    const decision = onboardingDecision(modelId, pendingDeployments.length);
+    if (decision === "onboard") {
       onboardingStep = 6;
       return;
     }
     completeOnboarding();
-    announceJoinedCluster(modelId);
+    if (decision === "announce" && modelId) announceJoinedCluster(modelId);
   }
 
   // Whether the device serving this dashboard is a Mac. Mac models are "Mac
@@ -1912,11 +1934,20 @@
 
       let response: Response;
       if (preview?.instance) {
-        // Launch with pre-computed placement from preview
+        // Launch with pre-computed placement from preview. What the user chose
+        // (a preview, a number of devices, the devices) is kept when exo starts
+        // the model again after a device leaves
         response = await fetch("/instance", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ instance: preview.instance }),
+          body: JSON.stringify({
+            instance: preview.instance,
+            constraints: launchConstraints(
+              selectedMinNodes,
+              specificPreview ? getPreviewNodeCount(specificPreview) : null,
+              nodeFilter,
+            ),
+          }),
         });
       } else {
         // No preview available — use place_instance to let server decide placement
@@ -1927,7 +1958,7 @@
             model_id: modelId,
             sharding: selectedSharding,
             instance_meta: selectedInstanceType,
-            min_nodes: 1,
+            min_nodes: selectedMinNodes,
           }),
         });
       }
@@ -2877,27 +2908,50 @@
     }
   }
 
-  // Instances this dashboard asked to delete, so their disappearance isn't
-  // reported as unexpected. Every instance deletion must go through
-  // requestInstanceDeletion.
-  const userDeletedInstanceIds = new Set<string>();
-
+  // Stops a model: by its instance's id, or by its deployment's id while it
+  // has no instance (exo stops the deployment either way)
   async function requestInstanceDeletion(instanceId: string): Promise<boolean> {
-    userDeletedInstanceIds.add(instanceId);
     try {
       const response = await fetch(`/instance/${instanceId}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
       });
       if (!response.ok) {
-        userDeletedInstanceIds.delete(instanceId);
         console.error("Failed to delete instance:", response.status);
       }
       return response.ok;
     } catch (error) {
-      userDeletedInstanceIds.delete(instanceId);
       console.error("Error deleting instance:", error);
       return false;
+    }
+  }
+
+  // Load a held or waiting model now
+  async function resumeDeployment(deployment: Deployment) {
+    const shortName = getModelDisplayName(deployment.modelId);
+    try {
+      const response = await fetch(`/deployments/${deployment.id}/resume`, {
+        method: "POST",
+      });
+      if (!response.ok) {
+        addToast({
+          type: "error",
+          message: `Couldn't start ${shortName}: ${await readApiErrorMessage(response)}`,
+        });
+      }
+    } catch (error) {
+      addToast({
+        type: "error",
+        message: `Couldn't start ${shortName}: ${error}`,
+      });
+    }
+  }
+
+  async function stopDeployment(deployment: Deployment) {
+    const shortName = getModelDisplayName(deployment.modelId);
+    if (!confirm(`Stop ${shortName}? Downloaded files are kept.`)) return;
+    if (!(await requestInstanceDeletion(deployment.id))) {
+      addToast({ type: "error", message: `Failed to stop ${shortName}` });
     }
   }
 
@@ -3536,187 +3590,6 @@
     previousInstanceStatuses = currentStatuses;
   });
 
-  // ── Instances that disappear without being deleted from this dashboard ──
-  // The master removes an instance when one of its devices leaves the cluster,
-  // and a worker removes it after its runner keeps failing (after retries).
-  // Nothing relaunches it, so say which happened.
-  let previousInstanceSnapshot: Record<
-    string,
-    {
-      modelId: string;
-      nodeIds: string[];
-      // Names of its devices, to say which one left
-      nodeNames: Record<string, string>;
-      failed: boolean;
-      failureReason: string | null;
-    }
-  > = {};
-
-  $effect(() => {
-    const current: typeof previousInstanceSnapshot = {};
-    for (const [id, inst] of Object.entries(instanceData)) {
-      const status = getInstanceDownloadStatus(id, inst);
-      const nodeIds = [...unwrapInstanceNodes(inst)];
-      current[id] = {
-        modelId: getInstanceModelId(inst),
-        nodeIds,
-        nodeNames: Object.fromEntries(
-          nodeIds.flatMap((nodeId) => {
-            const name = data?.nodes?.[nodeId]?.friendly_name;
-            return name ? [[nodeId, name]] : [];
-          }),
-        ),
-        failed: status.isFailed,
-        failureReason: status.errorMessage
-          ? summarizeFailureReason(status.errorMessage)
-          : null,
-      };
-    }
-    // A model that is back (started again from anywhere) no longer needs its
-    // "stopped" toasts, whose Start again would start a duplicate
-    for (const [id, instance] of Object.entries(current)) {
-      if (previousInstanceSnapshot[id]) continue;
-      const shortName = getModelDisplayName(instance.modelId);
-      clearStoppedNotice(instance.modelId);
-      dismissByMessage(stoppedModelMessage(shortName, { kind: "stopped" }));
-    }
-    const connectedNodeIds = new Set(Object.keys(data?.nodes ?? {}));
-    for (const [id, lost] of Object.entries(previousInstanceSnapshot)) {
-      if (current[id] || userDeletedInstanceIds.delete(id)) continue;
-      if (lost.modelId === "Unknown" || lost.modelId === "Unknown Model")
-        continue;
-      const shortName = getModelDisplayName(lost.modelId);
-      // A device that left, or exo restarting on this one (which gives it
-      // a new identity). Devices are told apart by id; names are for display
-      const reason = whyModelStopped({
-        nodeIds: lost.nodeIds,
-        connectedNodeIds,
-        nameOf: (nodeId) => lost.nodeNames[nodeId],
-        thisDeviceIds: readThisDeviceIds(),
-      });
-      if (reason.kind === "stopped" && lost.failed) {
-        // The worker gave up after retrying; starting again would fail the same way
-        addToast({
-          type: "error",
-          message: lost.failureReason
-            ? `${shortName} failed and was removed — ${lost.failureReason}`
-            : `${shortName} failed and was removed`,
-        });
-        continue;
-      }
-      const message = stoppedModelMessage(shortName, reason);
-      if (reason.kind === "stopped") {
-        addToast({
-          type: "warning",
-          message,
-          action: {
-            label: "Start again",
-            onClick: () => relaunchLostModel(lost.modelId),
-          },
-        });
-        continue;
-      }
-      // Nothing will start it again: keep the notice until it's dismissed,
-      // across reloads and in every tab
-      const notice = { modelId: lost.modelId, message, at: Date.now() };
-      writeStoppedNotices(withNotice(readStoppedNotices(), notice));
-      showStoppedNotice(notice);
-    }
-    previousInstanceSnapshot = current;
-  });
-
-  // ── Notices of models that stopped on their own ──
-  // Kept in localStorage (stopped_models.ts) and shown as persistent toasts
-  // with "Start again" in every tab, until dismissed or the model runs again.
-  const stoppedNoticeToasts = new Map<
-    string,
-    { toastId: string; message: string }
-  >();
-
-  function readStoppedNotices(): StoppedModelNotice[] {
-    try {
-      return parseNotices(localStorage.getItem(STOPPED_MODELS_KEY));
-    } catch {
-      return [];
-    }
-  }
-
-  function writeStoppedNotices(notices: StoppedModelNotice[]) {
-    try {
-      localStorage.setItem(STOPPED_MODELS_KEY, JSON.stringify(notices));
-    } catch {
-      // Storage unavailable: the notice lasts until the page reloads
-    }
-  }
-
-  function showStoppedNotice(notice: StoppedModelNotice) {
-    const shown = stoppedNoticeToasts.get(notice.modelId);
-    if (shown?.message === notice.message) return;
-    if (shown) {
-      stoppedNoticeToasts.delete(notice.modelId);
-      dismissToast(shown.toastId);
-    }
-    const toastId = addToast({
-      type: "warning",
-      message: notice.message,
-      persistent: true,
-      action: {
-        label: "Start again",
-        onClick: () => relaunchLostModel(notice.modelId),
-      },
-      // Dismissed here (or Start again): gone for good, in every tab
-      onDismiss: () => {
-        if (stoppedNoticeToasts.get(notice.modelId)?.toastId !== toastId)
-          return;
-        stoppedNoticeToasts.delete(notice.modelId);
-        writeStoppedNotices(
-          withoutNotice(readStoppedNotices(), notice.modelId),
-        );
-      },
-    });
-    stoppedNoticeToasts.set(notice.modelId, {
-      toastId,
-      message: notice.message,
-    });
-  }
-
-  // The model runs again: its notice no longer applies
-  function clearStoppedNotice(modelId: string) {
-    const shown = stoppedNoticeToasts.get(modelId);
-    if (shown) dismissToast(shown.toastId);
-    const notices = readStoppedNotices();
-    if (notices.some((notice) => notice.modelId === modelId)) {
-      writeStoppedNotices(withoutNotice(notices, modelId));
-    }
-  }
-
-  // Another tab added or dismissed a notice
-  function syncStoppedNotices() {
-    const notices = readStoppedNotices();
-    for (const notice of notices) showStoppedNotice(notice);
-    for (const [modelId, shown] of [...stoppedNoticeToasts]) {
-      if (notices.some((notice) => notice.modelId === modelId)) continue;
-      stoppedNoticeToasts.delete(modelId);
-      dismissToast(shown.toastId);
-    }
-  }
-
-  // The ids this device has had: exo picks a new one each time it starts
-  function readThisDeviceIds(): Set<string> {
-    const ids = new Set<string>(localNodeId ? [localNodeId] : []);
-    try {
-      const stored: unknown = JSON.parse(
-        localStorage.getItem(THIS_DEVICE_IDS_KEY) ?? "[]",
-      );
-      if (Array.isArray(stored)) {
-        for (const id of stored) if (typeof id === "string") ids.add(id);
-      }
-    } catch {
-      // Unreadable: only the current id
-    }
-    return ids;
-  }
-
   let lastNodeIdRefresh = 0;
   function refreshLocalNodeId() {
     lastNodeIdRefresh = Date.now();
@@ -3725,15 +3598,6 @@
       .then((id) => {
         if (typeof id !== "string" || !id) return;
         localNodeId = id;
-        try {
-          const known = [...readThisDeviceIds()].filter((x) => x !== id);
-          localStorage.setItem(
-            THIS_DEVICE_IDS_KEY,
-            JSON.stringify(withThisDeviceId(known, id)),
-          );
-        } catch {
-          // Storage unavailable
-        }
       })
       .catch(() => {});
   }
@@ -3745,66 +3609,6 @@
     if (Date.now() - lastNodeIdRefresh < 5_000) return;
     refreshLocalNodeId();
   });
-
-  // Start a lost model again on the devices that are left. Only takes over
-  // the chat view when it's the model being chatted with.
-  async function relaunchLostModel(modelId: string) {
-    if (selectedChatModel() === modelId) {
-      launchModelForChat(modelId, "picker", true);
-      return;
-    }
-    const shortName = getModelDisplayName(modelId);
-    // Already started again (from the picker, another tab or another toast)
-    if (hasExistingInstance(modelId)) {
-      addToast({
-        type: "info",
-        message: `${shortName} has already been started`,
-      });
-      return;
-    }
-    try {
-      const res = await fetch(
-        `/instance/previews?model_id=${encodeURIComponent(modelId)}`,
-      );
-      if (!res.ok) {
-        addToast({
-          type: "error",
-          message: `Couldn't start ${shortName} again (HTTP ${res.status})`,
-        });
-        return;
-      }
-      const { previews } = (await res.json()) as {
-        previews: PlacementPreview[];
-      };
-      const placement = pickOptimalPlacement(previews);
-      if (!placement) {
-        addToast({
-          type: "error",
-          message: `Couldn't start ${shortName} again: it doesn't fit on the devices that are left`,
-        });
-        return;
-      }
-      const launchRes = await fetch("/instance", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instance: placement.instance }),
-      });
-      if (!launchRes.ok) {
-        addToast({
-          type: "error",
-          message: `Couldn't start ${shortName} again (HTTP ${launchRes.status})`,
-        });
-        return;
-      }
-      recordRecentLaunch(modelId);
-      addToast({ type: "info", message: `Starting ${shortName} again…` });
-    } catch (error) {
-      addToast({
-        type: "error",
-        message: `Couldn't start ${shortName} again: ${error}`,
-      });
-    }
-  }
 
   // A lost connection to EXO is shown once, by ConnectionBanner (in the
   // layout, so on every page); no toast as well
@@ -4906,6 +4710,77 @@
     );
   });
 </script>
+
+{#snippet deploymentCards()}
+  <!-- Models users launched that have no running instance: exo says what it is doing -->
+  {#each pendingDeployments as deployment (deployment.id)}
+    {@const phase = deployment.phase}
+    <div
+      class="relative"
+      data-testid="deployment-card"
+      transition:slide={{ duration: 250, easing: cubicOut }}
+    >
+      <div
+        class="bg-exo-dark-gray/60 border border-l-2 p-3 {phase.kind ===
+        'paused'
+          ? 'border-gray-500/30 border-l-gray-400'
+          : 'border-orange-500/30 border-l-orange-400'}"
+      >
+        <div class="flex justify-between items-start mb-2 pl-2 gap-2">
+          <span
+            class="text-exo-yellow font-mono text-sm truncate"
+            title={deployment.modelId}
+            >{getModelDisplayName(deployment.modelId)}</span
+          >
+          <div class="flex flex-shrink-0 gap-1">
+            {#if phase.kind === "paused" || (phase.kind === "waiting" && phase.canStartNow)}
+              <button
+                title={phase.kind === "paused"
+                  ? "Load this model again"
+                  : "Don't wait for the device: load it on the devices that are here"}
+                onclick={() => resumeDeployment(deployment)}
+                class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-exo-yellow/30 text-exo-yellow hover:bg-exo-yellow/10 transition-all duration-200 cursor-pointer"
+              >
+                {phase.kind === "paused" ? "Resume" : "Start now"}
+              </button>
+            {/if}
+            <button
+              title="Stop this model. Downloaded files are kept."
+              onclick={() => stopDeployment(deployment)}
+              class="text-xs px-2 py-1 font-mono tracking-wider uppercase border border-red-500/30 text-red-400 hover:bg-red-500/20 transition-all duration-200 cursor-pointer"
+            >
+              Stop
+            </button>
+          </div>
+        </div>
+        <div class="pl-2">
+          <span
+            class="px-1.5 py-0.5 text-[10px] tracking-wider uppercase rounded font-mono {phase.kind ===
+            'paused'
+              ? 'bg-gray-500/15 text-gray-300'
+              : 'bg-orange-500/15 text-orange-400'}"
+          >
+            {phase.kind === "restarting"
+              ? "Restarting"
+              : phase.kind === "waiting"
+                ? "Waiting"
+                : "Paused"}
+          </span>
+          {#if phase.kind === "waiting" || phase.kind === "paused"}
+            <p class="mt-1 text-[11px] text-white/60 break-words">
+              {phase.reason}
+            </p>
+          {/if}
+          {#if deployment.note}
+            <p class="mt-1 text-[11px] text-white/50 break-words">
+              {deployment.note}
+            </p>
+          {/if}
+        </div>
+      </div>
+    </div>
+  {/each}
+{/snippet}
 
 {#snippet clusterWarnings()}
   {#if tbBridgeCycles.length > 0 || macosVersionMismatch || devicesOnOtherVersions.length > 0 || (tb5WithoutRdma && !tb5InfoDismissed) || (macStudioEn2RdmaWarning && !macStudioEn2Dismissed)}
@@ -6732,7 +6607,7 @@
 
         {#snippet rightSidebarContent()}
           <!-- Running Instances Panel (only shown when instances exist) - Scrollable -->
-          {#if instanceCount > 0}
+          {#if instanceCount > 0 || pendingDeployments.length > 0}
             <div class="p-4 flex-shrink-0">
               <!-- Panel Header -->
               <div class="flex items-center gap-2 mb-4">
@@ -6753,6 +6628,7 @@
                 bind:this={instancesContainerRef}
                 class="max-h-72 xl:max-h-96 space-y-3 overflow-y-auto overflow-x-hidden py-px"
               >
+                {@render deploymentCards()}
                 {#each Object.entries(instanceData) as [id, instance]}
                   {@const downloadInfo = getInstanceDownloadStatus(
                     id,
@@ -6863,6 +6739,11 @@
                             {statusLabel}
                           </span>
                         </div>
+                        {#if runningNoteOf(instance)}
+                          <p class="mt-1 text-[11px] text-white/50 break-words">
+                            {runningNoteOf(instance)}
+                          </p>
+                        {/if}
                         {#if instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model"}
                           <a
                             class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-exo-yellow transition-colors mt-1"
@@ -7942,7 +7823,7 @@
             </button>
 
             <!-- Instances Section (only shown when instances exist) -->
-            {#if instanceCount > 0}
+            {#if instanceCount > 0 || pendingDeployments.length > 0}
               <div class="p-4 flex-1">
                 <!-- Panel Header -->
                 <div class="flex items-center gap-2 mb-4">
@@ -7961,6 +7842,7 @@
                 <div
                   class="space-y-3 max-h-72 xl:max-h-96 overflow-y-auto overflow-x-hidden py-px pr-1"
                 >
+                  {@render deploymentCards()}
                   {#each Object.entries(instanceData) as [id, instance]}
                     {@const downloadInfo = getInstanceDownloadStatus(
                       id,
@@ -8070,6 +7952,13 @@
                               {statusLabel}
                             </span>
                           </div>
+                          {#if runningNoteOf(instance)}
+                            <p
+                              class="mt-1 text-[11px] text-white/50 break-words"
+                            >
+                              {runningNoteOf(instance)}
+                            </p>
+                          {/if}
                           {#if instanceModelId && instanceModelId !== "Unknown" && instanceModelId !== "Unknown Model"}
                             <a
                               class="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-exo-yellow transition-colors mt-1"
