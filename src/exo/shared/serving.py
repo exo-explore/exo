@@ -24,6 +24,7 @@ from exo.shared.request_errors import (
     INTERRUPTED,
     MODEL_STOPPED,
     NO_INSTANCE_FOR_MODEL,
+    PEER_FAILED,
 )
 from exo.shared.types.common import NodeId
 from exo.shared.types.state import State
@@ -86,6 +87,15 @@ def why_instance_ended(state: State, instance: Instance | None) -> str:
     ):
         return DEVICE_LEFT
     return MODEL_STOPPED
+
+
+def why_runner_stopped(state: State, instance: Instance) -> str:
+    """Why a runner of `instance` is being stopped, as its requests are told: its instance was
+    deleted (why_instance_ended), or a runner it works with is going, the only other reason the
+    worker stops one (exo.worker.plan)."""
+    if instance.instance_id in state.instances:
+        return PEER_FAILED
+    return why_instance_ended(state, instance)
 
 
 def _prefill_only(state: State) -> set[InstanceId]:

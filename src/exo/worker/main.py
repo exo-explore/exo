@@ -18,7 +18,7 @@ from exo.routing.membership import Reachability
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
 from exo.shared.models.model_cards import ModelCard, ModelId, card_cache
-from exo.shared.serving import why_instance_ended
+from exo.shared.serving import why_instance_ended, why_runner_stopped
 from exo.shared.types.commands import (
     AddCustomModelCard,
     DeleteInstance,
@@ -413,7 +413,13 @@ class Worker:
                     # It stays in self.runners until its process has exited: only then is
                     # it replaced (see _supervise)
                     if (runner := self.runners.get(runner_id)) is not None:
-                        await runner.stop(task, RUNNER_SHUTDOWN_GRACE)
+                        await runner.stop(
+                            task,
+                            RUNNER_SHUTDOWN_GRACE,
+                            why_runner_stopped(
+                                self.state, runner.bound_instance.instance
+                            ),
+                        )
                     # The runner is stopped, which is what the task is for, and only the worker
                     # can say so: a runner that has died never gets the task, and one that takes
                     # it up is no longer listened to once it has acknowledged it, so its own

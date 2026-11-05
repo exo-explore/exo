@@ -15,6 +15,7 @@ from exo.shared.request_errors import (
     INSTANCE_GONE_BEFORE_START,
     MODEL_STOPPED,
     NOT_TAKEN,
+    PEER_FAILED,
 )
 from exo.shared.types.chunks import Chunk, ErrorChunk, TokenChunk
 from exo.shared.types.common import NodeId
@@ -25,6 +26,7 @@ from exo.shared.types.serving import (
     ServeFrame,
     ServeRequest,
 )
+from exo.shared.types.tasks import Shutdown
 from exo.shared.types.worker.instances import InstanceId
 from exo.shared.types.worker.runners import RunnerFailed, RunnerLoading
 from exo.worker.serving import DeliveryOutcome, RefusalError
@@ -256,6 +258,30 @@ async def test_a_runner_that_stops_ends_its_requests() -> None:
         )
         assert isinstance(chunks[-1], ErrorChunk)
         assert chunks[-1].error_message == MODEL_STOPPED
+
+
+async def test_a_runner_being_stopped_ends_its_requests_as_the_stop_begins() -> None:
+    """A runner waiting on a peer that died never takes up its shutdown, so stopping it takes
+    the whole grace period. Its requests can't finish: they end as the stop begins, once, saying
+    why."""
+    async with serving_cluster(2, tokens=1000) as cluster:
+        rank = cluster.ranks[0]
+        rank.takes_shutdown = False
+        shutdown = Shutdown(
+            instance_id=cluster.instance.instance_id,
+            runner_id=rank.supervisor.bound_instance.bound_runner_id,
+        )
+        with anyio.fail_after(3):
+            chunks = await _stream_until(
+                cluster,
+                request_for(cluster),
+                lambda: cluster.start_soon(
+                    rank.supervisor.stop, shutdown, 10.0, PEER_FAILED
+                ),
+            )
+        errors = [chunk for chunk in chunks if isinstance(chunk, ErrorChunk)]
+        assert [error.error_message for error in errors] == [PEER_FAILED]
+        assert chunks[-1] is errors[0]
 
 
 async def test_a_rank_lost_while_a_request_is_delivered_refuses_it_at_once() -> None:

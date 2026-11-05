@@ -18,7 +18,7 @@ from exo.api.adapters.claude import generate_claude_stream
 from exo.api.adapters.responses import generate_responses_stream
 from exo.api.collected_response import CollectedResponse
 from exo.shared.request_errors import generation_error_code
-from exo.shared.serving import why_instance_ended
+from exo.shared.serving import why_instance_ended, why_runner_stopped
 from exo.shared.topology import Topology
 from exo.shared.types.chunks import (
     ErrorChunk,
@@ -130,11 +130,34 @@ def test_a_request_whose_model_was_stopped_says_so() -> None:
     assert ending == "The model was stopped before the reply finished."
 
 
+def test_a_request_whose_runner_stopped_because_another_failed_says_so() -> None:
+    """A runner is stopped while its instance is still in the state only because a runner it
+    works with is going: not something the user did"""
+    node, runner = NodeId("node"), RunnerId()
+    instance = get_mlx_ring_instance(
+        instance_id=InstanceId(),
+        model_id=MODEL,
+        node_to_runner={node: runner},
+        runner_to_shard={runner: get_pipeline_shard_metadata(MODEL, device_rank=0)},
+    )
+    topology = Topology()
+    topology.add_node(node)
+    still_there = State(topology=topology, instances={instance.instance_id: instance})
+    ending = why_runner_stopped(still_there, instance)
+    assert ending == "A device running this model failed; the reply was cut short."
+    assert generation_error_code(ending) == "model_failed"
+    # Its instance deleted: as for the instance's other requests
+    assert why_runner_stopped(State(topology=topology), instance) == (
+        "The model was stopped before the reply finished."
+    )
+
+
 def test_every_message_exo_ends_a_request_with_has_a_code() -> None:
     for message in (
         "A device serving this model disconnected before the reply finished.",
         "A device serving this model left the cluster before the reply finished.",
         "The model was stopped before the reply finished.",
+        "A device running this model failed; the reply was cut short.",
         "The model instance was shut down before this request could start.",
         "No instance found for model test-model",
         "A device serving this model ran out of GPU memory before the reply finished.",
