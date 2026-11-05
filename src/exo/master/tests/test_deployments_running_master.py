@@ -21,9 +21,11 @@ from exo.master.tests.conftest import create_node_network, create_socket_connect
 from exo.routing.membership import Quorum
 from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.apply import event_apply
+from exo.shared.deployment_store import record_of
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (
+    AnnounceDeployments,
     Command,
     CommandId,
     CreateDeployment,
@@ -34,7 +36,11 @@ from exo.shared.types.commands import (
     ResumeDeployment,
 )
 from exo.shared.types.common import DeploymentId, NodeId, SessionId, SystemId
-from exo.shared.types.deployments import Deployment, DeploymentSpec
+from exo.shared.types.deployments import (
+    Deployment,
+    DeploymentRecord,
+    DeploymentSpec,
+)
 from exo.shared.types.events import (
     Event,
     GlobalForwarderEvent,
@@ -601,3 +607,146 @@ async def test_a_model_stopped_right_after_its_launch_does_not_start() -> None:
         await anyio.sleep(0.5)
         assert running.state.deployments == {}
         assert running.state.instances == {}
+
+
+def _launched_elsewhere(nodes: State) -> tuple[DeploymentRecord, State]:
+    """A deployment some node knows of that this master's state lacks."""
+    other = deployed(instance_on(STAYS))
+    (deployment,) = other.deployments.values()
+    return record_of(deployment), nodes
+
+
+async def test_a_launch_a_new_master_never_saw_is_placed_when_a_node_tells_it() -> None:
+    """The user launched on the side that lost the election (or the master that took over
+    was behind): the node that has it tells the new master, which places it."""
+    record, initial = _launched_elsewhere(cluster(State(), STAYS, LEAVES, BYSTANDER))
+    async with running_master(initial) as running:
+        await running.command(
+            AnnounceDeployments(deployments=[record], removed={}, restored=[])
+        )
+
+        await wait_until(lambda: running.model_nodes() != [])
+        assert list(running.state.deployments) == [record.deployment_id]
+
+
+async def test_a_launch_a_new_master_never_saw_comes_back_on_its_own_node() -> None:
+    """It ran on LEAVES, on the side that lost the election. After the heal LEAVES reports
+    its files a moment later than STAYS, which has them too and more room: the launch waits
+    for LEAVES rather than moving (on the other Mac in 1 of 2 runs)."""
+    (deployment,) = deployed(instance_on(LEAVES)).deployments.values()
+    record = record_of(deployment, [LEAVES])
+    initial = cluster(State(), STAYS, LEAVES, BYSTANDER, without_files=(LEAVES,))
+    async with running_master(initial) as running:
+        await running.command(
+            AnnounceDeployments(deployments=[record], removed={}, restored=[])
+        )
+        await anyio.sleep(0.5)
+        assert running.model_nodes() == []
+        # LEAVES says it has the files
+        await running.send(node_info(LEAVES))
+
+        await wait_until(lambda: running.model_nodes() != [])
+        assert running.model_nodes() == [frozenset({LEAVES})]
+
+
+async def test_a_stop_that_reaches_a_master_that_never_saw_the_launch_holds() -> None:
+    """The user stops a model just as the master changes, and the new
+    master is behind: it never saw the launch. The stop records a tombstone all the same, so
+    a node that has the deployment can't bring it back. It recorded nothing, and the API
+    counted the stop applied since the deployment wasn't there: the model came back with the
+    next announcement."""
+    launched = cluster(deployed(instance_on(STAYS)), STAYS, LEAVES)
+    (deployment,) = launched.deployments.values()
+    behind = launched.model_copy(update={"instances": {}, "deployments": {}})
+    async with running_master(behind) as running:
+        await running.command(DeleteDeployment(deployment_id=deployment.deployment_id))
+        await wait_until(
+            lambda: deployment.deployment_id in running.state.removed_deployments
+        )
+
+        await running.command(
+            AnnounceDeployments(
+                deployments=[record_of(deployment, [STAYS])],
+                removed={},
+                restored=[],
+                running=[deployment.deployment_id],
+            )
+        )
+        await anyio.sleep(0.5)
+    assert running.state.deployments == {}
+    assert running.model_nodes() == []
+
+
+async def test_a_late_copy_of_a_stopped_launch_changes_nothing() -> None:
+    """A launch the user stopped since arrives again (sent again, to a
+    new master). It isn't launched, and doesn't replace the model's deployment that waits,
+    as a new launch of the model would."""
+    waiting_state = cluster(
+        deployed(instance_on(LEAVES)), STAYS, LEAVES, without_files=(STAYS, LEAVES)
+    )
+    (waiting,) = waiting_state.deployments
+    stopped = DeploymentId()
+    state = waiting_state.model_copy(
+        update={
+            "instances": {},
+            "removed_deployments": {stopped: "2026-11-03T12:00:00+00:00"},
+        }
+    )
+    (deployment,) = waiting_state.deployments.values()
+    async with running_master(state) as running:
+        await running.command(
+            CreateDeployment(
+                deployment_id=stopped,
+                spec=deployment.spec,
+                model_card=MODEL,
+                instance=instance_on(STAYS).model_copy(
+                    update={"deployment_id": stopped}
+                ),
+            )
+        )
+        await anyio.sleep(0.5)
+    assert list(running.state.deployments) == [waiting]
+    assert waiting not in running.state.removed_deployments
+    assert running.model_nodes() == []
+
+
+async def test_a_stop_made_on_the_other_side_ends_the_model_here() -> None:
+    initial = cluster(deployed(instance_on(STAYS)), STAYS, LEAVES, BYSTANDER)
+    async with running_master(initial) as running:
+        stopped = running.deployment()
+
+        await running.command(
+            AnnounceDeployments(
+                deployments=[record_of(stopped)],
+                removed={stopped.deployment_id: "2026-11-03T12:00:00+00:00"},
+                restored=[],
+            )
+        )
+
+        await wait_until(lambda: running.state.instances == {})
+        assert running.state.deployments == {}
+        assert stopped.deployment_id in running.state.removed_deployments
+
+
+async def test_after_a_full_restart_models_wait_for_the_user() -> None:
+    """Every node read it from its disk: it comes back held, and loads when resumed."""
+    record, initial = _launched_elsewhere(cluster(State(), STAYS, LEAVES, BYSTANDER))
+    async with running_master(initial) as running:
+        await running.command(
+            AnnounceDeployments(
+                deployments=[record], removed={}, restored=[record.deployment_id]
+            )
+        )
+        await wait_until(lambda: running.state.deployments != {})
+        hold = running.deployment().hold
+        assert hold is not None and hold.kind == "Restored"
+        await anyio.sleep(0.5)
+        assert running.model_nodes() == []
+
+        await running.command(
+            ResumeDeployment(
+                deployment_id=record.deployment_id,
+                revision=running.deployment().revision,
+            )
+        )
+        await wait_until(lambda: running.model_nodes() != [])

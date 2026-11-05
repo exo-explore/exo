@@ -74,6 +74,8 @@ class State(FrozenModel):
 
     # The models users launched, which the cluster keeps running (one instance each at most)
     deployments: Mapping[DeploymentId, Deployment] = {}
+    # The deployments users stopped, and when (the latest REMOVED_DEPLOYMENTS_KEPT)
+    removed_deployments: Mapping[DeploymentId, str] = {}
 
     @field_serializer("topology", mode="plain")
     def _encode_topology(self, value: Topology) -> TopologySnapshot:

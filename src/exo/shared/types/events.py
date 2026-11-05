@@ -88,13 +88,18 @@ class InstanceDeleted(BaseEvent):
 
 
 class DeploymentCreated(BaseEvent):
+    """A deployment launched, or one a node knew of that the master didn't (after a change of
+    master or a heal). For one the state has, only a higher revision changes it."""
+
     deployment: Deployment
 
 
 class DeploymentRemoved(BaseEvent):
-    """A user stopped it."""
+    """A user stopped it. Remembered as a tombstone, so it doesn't come back."""
 
     deployment_id: DeploymentId
+    # ISO 8601 time of the stop
+    at: str
 
 
 class DeploymentHeld(BaseEvent):
@@ -105,13 +110,16 @@ class DeploymentHeld(BaseEvent):
 
 
 class DeploymentResumed(BaseEvent):
-    """The user asked for it to be placed now: whatever held it or made it wait is cleared."""
+    """Placed now: whatever held it or made it wait is cleared. The user asked for it, or the
+    master lifted its own hold (a node showed it running elsewhere, or not a full restart)."""
 
     deployment_id: DeploymentId
     # ISO time: how long it then goes without an instance counts from here
     at: str
     # Its pinned nodes aren't all here: the user asked to load it on the nodes that are
     unpin: bool = False
+    # A user's resume is a change of the deployment (its revision); the master's isn't
+    by_user: bool = True
 
 
 class DeploymentStatus(BaseEvent):

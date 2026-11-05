@@ -1,4 +1,4 @@
-"""Deployments on a real cluster: what a user launched keeps running through cuts and sleeps, and only the user
+"""Deployments on a real cluster: what a user launched keeps running through cuts, sleeps, a change of master and a full restart, and only the user
 stops it.
 
 The membership's timers these depend on: a lost node is Suspect after zenoh's 10 s lease (or the
@@ -12,6 +12,7 @@ from collections.abc import Callable
 import httpx
 import pytest
 
+from exo.api.main import CLUSTER_COMMAND_TIMEOUT
 from exo.api.types import CreateInstanceParams
 from exo.shared.types.common import DeploymentId, NodeId
 from exo.shared.types.state import State
@@ -242,3 +243,104 @@ def test_a_pair_whose_model_node_is_killed_and_restarted_serves_it_before_the_sp
 
     cluster.wait_for(replaced, timeout=90, what="the model placed again on the pair")
     cluster.wait_serving(via=master, timeout=30)
+
+
+# --- a change of master, and a full restart ----------------------------------------------
+
+
+def _launch_while_the_master_sleeps(cluster: Cluster) -> tuple[int, int, DeploymentId]:
+    """Two nodes: the master sleeps (SIGSTOP), the other node takes over, and the user launches
+    a model there. Returns the sleeping master, the other node and the deployment."""
+    master = cluster.wait_for_master(timeout=60)
+    other = 1 - master
+    cluster.pause(master)
+    cluster.wait_for_master(timeout=60, other_than=master)
+    instance = cluster.launch(on=(other,), via=other)
+    return master, other, deployment_of(cluster, instance, via=other)
+
+
+def _runs_in_both_views(cluster: Cluster, launched: DeploymentId) -> None:
+    cluster.wait_until_consistent(timeout=90)
+    cluster.wait_for(
+        lambda: launched in deployments(cluster, 0)
+        and serving(cluster, via=0) != []
+        and serving(cluster, via=1) != [],
+        timeout=90,
+        what="the launch to run in both views after the wake",
+    )
+
+
+def test_a_launch_made_while_the_master_slept_survives_its_return(
+    make_cluster: MakeCluster,
+) -> None:
+    """The master wakes at once. If its older state wins the election the other node adopts it,
+    and the launch is brought back: the API sends it again, and the node that has it tells the
+    master that won. It comes back on the node it was launched on, even when the woken master
+    won: the node says where the launch ran (on the other Mac in 1 of 2 runs without that).
+    Bound 90 s after the wake."""
+    cluster = make_cluster(2)
+    master, other, launched = _launch_while_the_master_sleeps(cluster)
+
+    cluster.resume(master)
+    _runs_in_both_views(cluster, launched)
+    launched_on = frozenset({cluster.nodes[other].node_id})
+    assert serving(cluster, via=0) == serving(cluster, via=1) == [launched_on]
+    _ok(cluster, "after the wake", via=0)
+
+
+def test_a_launch_older_than_the_apis_resend_window_survives_a_master_that_slept(
+    make_cluster: MakeCluster,
+) -> None:
+    """As above, but the master sleeps past the time the API keeps a launch to send it again
+    (CLUSTER_COMMAND_TIMEOUT), so if it wins the election only the node's announcement can bring
+    the launch back. Bound 90 s after the wake."""
+    cluster = make_cluster(2)
+    master, _, launched = _launch_while_the_master_sleeps(cluster)
+    time.sleep(CLUSTER_COMMAND_TIMEOUT + 5)
+
+    cluster.resume(master)
+    _runs_in_both_views(cluster, launched)
+    cluster.wait_serving(via=0, timeout=30)
+
+
+def test_after_a_full_restart_a_model_waits_for_the_user(
+    make_cluster: MakeCluster,
+) -> None:
+    """Every node stops and starts again, under new ids. Every node kept the model on disk: it
+    comes back held, so nothing loads at start-up, and loads when the user resumes it."""
+    cluster = make_cluster(2)
+    instance = cluster.launch(on=(1,))
+    launched = deployment_of(cluster, instance, via=0)
+    # Each node saves what it knows within its keeper's SYNC_INTERVAL (1 s); a launch and a
+    # power cut within that second lose the launch
+    time.sleep(3)
+
+    cluster.kill(0)
+    cluster.kill(1)
+    cluster.restart(0)
+    cluster.restart(1)
+    cluster.wait_until_consistent(timeout=90)
+
+    def held() -> bool:
+        state = cluster.state(0)
+        deployment = None if state is None else state.deployments.get(launched)
+        return (
+            deployment is not None
+            and deployment.hold is not None
+            and deployment.hold.kind == "Restored"
+        )
+
+    cluster.wait_for(held, timeout=60, what="the model to come back held")
+    time.sleep(3)
+    assert serving(cluster, via=0) == [], "a model loaded by itself at start-up"
+
+    response = httpx.post(
+        f"{cluster.nodes[0].url}/deployments/{launched}/resume", timeout=5
+    )
+    assert response.status_code == 200, response.text
+    cluster.wait_for(
+        lambda: serving(cluster, via=0) != [],
+        timeout=60,
+        what="the model to load once resumed",
+    )
+    _ok(cluster, "after the restart", via=0)

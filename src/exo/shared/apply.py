@@ -6,7 +6,11 @@ from loguru import logger
 
 from exo.shared.models.model_cards import ModelCard
 from exo.shared.types.common import DeploymentId, ModelId, NodeId
-from exo.shared.types.deployments import CRASH_LOOP_WINDOW, Deployment
+from exo.shared.types.deployments import (
+    CRASH_LOOP_WINDOW,
+    REMOVED_DEPLOYMENTS_KEPT,
+    Deployment,
+)
 from exo.shared.types.events import (
     ChunkGenerated,
     CustomModelCardAdded,
@@ -113,22 +117,9 @@ def event_apply(event: Event, state: State) -> State:
         case InstanceDeleted():
             return apply_instance_deleted(event, state)
         case DeploymentCreated():
-            return _with_deployments(
-                state,
-                {
-                    event.deployment.deployment_id: event.deployment,
-                    **state.deployments,
-                },
-            )
+            return apply_deployment_created(event, state)
         case DeploymentRemoved():
-            return _with_deployments(
-                state,
-                {
-                    deployment_id: deployment
-                    for deployment_id, deployment in state.deployments.items()
-                    if deployment_id != event.deployment_id
-                },
-            )
+            return apply_deployment_removed(event, state)
         case DeploymentHeld():
             # A hold is the master's, not the user's: it leaves the revision as it is
             return _update_deployment(
@@ -145,7 +136,8 @@ def event_apply(event: Event, state: State) -> State:
                 event.deployment_id,
                 lambda deployment: {
                     "hold": None,
-                    "revision": deployment.revision + 1,
+                    "revision": deployment.revision + (1 if event.by_user else 0),
+                    "not_before": None,
                     "losses": [],
                     "waiting": None,
                     "lost_at": event.at,
@@ -325,9 +317,52 @@ def apply_instance_created(event: InstanceCreated, state: State) -> State:
         state,
         instance.deployment_id,
         lambda _: {
+            "not_before": None,
             "waiting": None,
             "lost_at": None,
         },
+    )
+
+
+def apply_deployment_created(event: DeploymentCreated, state: State) -> State:
+    """A new deployment, or a node's record of one with a later change by the user (a resume):
+    that change wins, and clears what this master held it for. The master's own bookkeeping
+    (where it ran, losses) is kept. A stopped deployment never comes back."""
+    new = event.deployment
+    if new.deployment_id in state.removed_deployments:
+        return state
+    current = state.deployments.get(new.deployment_id)
+    if current is None:
+        return _with_deployments(state, {**state.deployments, new.deployment_id: new})
+    if new.revision <= current.revision:
+        return state
+    return _update_deployment(
+        state,
+        new.deployment_id,
+        lambda _: {
+            "revision": new.revision,
+            "spec": new.spec,
+            "model_card": new.model_card,
+            "hold": None,
+            "waiting": None,
+        },
+    )
+
+
+def apply_deployment_removed(event: DeploymentRemoved, state: State) -> State:
+    removed = sorted(
+        {**state.removed_deployments, event.deployment_id: event.at}.items(),
+        key=lambda item: item[1],
+    )[-REMOVED_DEPLOYMENTS_KEPT:]
+    return state.model_copy(
+        update={
+            "deployments": {
+                deployment_id: deployment
+                for deployment_id, deployment in state.deployments.items()
+                if deployment_id != event.deployment_id
+            },
+            "removed_deployments": dict(removed),
+        }
     )
 
 

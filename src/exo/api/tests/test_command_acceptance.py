@@ -4,6 +4,7 @@ from exo.api.command_acceptance import (
     changed_by,
     command_already_applied,
     command_applied,
+    command_in_effect,
     undoing_command,
 )
 from exo.master.tests.test_requests_to_deleted_instances import deployment_of
@@ -68,6 +69,20 @@ def test_a_launch_is_applied_once_its_deployment_is_in_the_state() -> None:
     )
 
 
+def test_a_launch_already_stopped_counts_as_applied() -> None:
+    """Stopped before this node saw it start (from another tab, say): it was launched, and is
+    never applied again."""
+    stopped = State(
+        removed_deployments={DEPLOYMENT.deployment_id: "2026-11-03T12:00:00+00:00"}
+    )
+    assert command_applied(launch_of(), stopped)
+    # ...but no longer in effect: it isn't this node's to restore to a new master
+    assert not command_in_effect(launch_of(), stopped)
+    assert command_in_effect(
+        launch_of(), State(deployments={DEPLOYMENT.deployment_id: DEPLOYMENT})
+    )
+
+
 def test_a_placement_launched_by_another_request_counts_as_applied() -> None:
     """The same placement posted twice at once: each request makes its own deployment, and
     the master runs the one it took first. The other request's launch is answered by it."""
@@ -81,12 +96,20 @@ def test_a_placement_launched_by_another_request_counts_as_applied() -> None:
     assert changed_by(other) == changed_by(launch_of()) == INSTANCE.instance_id
 
 
-def test_a_stop_is_applied_once_its_deployment_is_gone() -> None:
+def test_a_stop_is_applied_once_its_tombstone_shows() -> None:
+    """Not once the deployment is gone: a new master that never saw the launch lacks it too,
+    and the stop must still reach it, or a node that has the deployment brings it back."""
     stop = DeleteDeployment(deployment_id=DEPLOYMENT.deployment_id)
     assert not command_applied(
         stop, State(deployments={DEPLOYMENT.deployment_id: DEPLOYMENT})
     )
-    assert command_applied(stop, State())
+    assert not command_applied(stop, State())
+    assert command_applied(
+        stop,
+        State(
+            removed_deployments={DEPLOYMENT.deployment_id: "2026-11-03T12:00:00+00:00"}
+        ),
+    )
 
 
 def test_a_resume_is_applied_once_the_revision_it_resumed_has_moved_on() -> None:

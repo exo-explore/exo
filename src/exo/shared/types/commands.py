@@ -7,7 +7,7 @@ from exo.api.types import (
 from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.chunks import InputImageChunk
 from exo.shared.types.common import CommandId, DeploymentId, NodeId, SystemId
-from exo.shared.types.deployments import DeploymentSpec
+from exo.shared.types.deployments import DeploymentRecord, DeploymentSpec
 from exo.shared.types.instance_link import InstanceLinkId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
@@ -65,6 +65,20 @@ class ResumeDeployment(BaseCommand):
 
     deployment_id: DeploymentId
     revision: int
+
+
+class AnnounceDeployments(BaseCommand):
+    """A node tells the master the deployments it knows of, and the stops. A new master may
+    lack them: it started from its own node's copy of the state, or this node was on the other
+    side of a split."""
+
+    deployments: list[DeploymentRecord]
+    removed: dict[DeploymentId, str]
+    # Those this node has only from its disk: no master has run them since it started
+    restored: list[DeploymentId]
+    # Those its previous master was running: a hold the new master has for one of them is
+    # its own side's, and is lifted
+    running: list[DeploymentId] = []
 
 
 class InstanceBroken(BaseCommand):
@@ -145,6 +159,7 @@ Command = (
     | DeleteDeployment
     | ResumeDeployment
     | InstanceBroken
+    | AnnounceDeployments
     | TaskCancelled
     | TaskFinished
     | SendInputChunk

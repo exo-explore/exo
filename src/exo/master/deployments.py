@@ -6,7 +6,8 @@ is placed again here, and only here:
   what placement chose last time, which is only a preference;
 - only on nodes that already have the model's files, so it never starts a download by itself;
 - not while the master's node is Resuming after it was stopped (its peers are still
-  reconnecting);
+  reconnecting), and not before its `not_before` (a launch the master learned of from a node
+  waits for the nodes it last ran on) unless those nodes are back;
 - an RDMA instance comes back as a TCP ring when the RDMA-linked nodes aren't all there.
 A deployment that keeps losing its devices is paused instead (CRASH_LOOP_LIMIT).
 
@@ -17,11 +18,12 @@ import contextlib
 from collections.abc import Hashable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from exo.master.placement import place_instance
 from exo.master.placement_utils import Cycle
 from exo.shared.models.model_cards import ModelCard, ModelId
+from exo.shared.types.commands import AnnounceDeployments
 from exo.shared.types.common import DeploymentId, NodeId
 from exo.shared.types.deployments import (
     CRASH_LOOP_LIMIT,
@@ -33,7 +35,9 @@ from exo.shared.types.deployments import (
     Waiting,
 )
 from exo.shared.types.events import (
+    DeploymentCreated,
     DeploymentHeld,
+    DeploymentRemoved,
     DeploymentResumed,
     DeploymentStatus,
     Event,
@@ -170,6 +174,89 @@ def place_deployment(
             raise rdma_error from None
 
 
+RESTORED_MESSAGE = "exo restarted on every device: resume it to load it again"
+
+
+def announced(
+    state: State, announcement: AnnounceDeployments, now: datetime, wait: timedelta
+) -> list[Event]:
+    """What a node's announcement adds to the master's state: the deployments and stops the
+    state lacks, and the user's later changes (by revision) to those it has.
+
+    A deployment the state lacks waits up to `wait` for the nodes it last ran on, so a launch
+    made on the other side of a heal comes back on its own node. One the node only has from its
+    disk comes back held: the whole cluster restarted, and models aren't loaded again by
+    themselves at start-up. A node that has run it since it started shows this was no full
+    restart, and lifts that hold.
+
+    Holds and waits are this master's own decisions, from what its side saw: none comes from
+    a node, and one this master has is lifted for a deployment the node's previous master was
+    running."""
+    events: list[Event] = []
+    for deployment_id, at in announcement.removed.items():
+        if (
+            deployment_id in state.deployments
+            or deployment_id not in state.removed_deployments
+        ):
+            events.append(DeploymentRemoved(deployment_id=deployment_id, at=at))
+    restored = set(announcement.restored)
+    running = set(announcement.running)
+    placed = {instance.deployment_id for instance in state.instances.values()}
+    for record in announcement.deployments:
+        deployment_id = record.deployment_id
+        if (
+            deployment_id in announcement.removed
+            or deployment_id in state.removed_deployments
+        ):
+            continue
+        current = state.deployments.get(deployment_id)
+        if current is None:
+            hold = (
+                Hold(kind="Restored", message=RESTORED_MESSAGE)
+                if deployment_id in restored
+                else None
+            )
+            events.append(
+                DeploymentCreated(
+                    deployment=Deployment(
+                        deployment_id=deployment_id,
+                        spec=record.spec,
+                        model_card=record.model_card,
+                        revision=record.revision,
+                        hold=hold,
+                        last_nodes=record.last_nodes,
+                        not_before=(now + wait).isoformat()
+                        if record.last_nodes and hold is None
+                        else None,
+                        # It has no instance here: how long it waits counts from now
+                        lost_at=now.isoformat(),
+                    )
+                )
+            )
+        elif record.revision > current.revision:
+            # The user changed it on the other side (resumed it): that wins
+            events.append(
+                DeploymentCreated(
+                    deployment=Deployment(
+                        deployment_id=deployment_id,
+                        spec=record.spec,
+                        model_card=record.model_card,
+                        revision=record.revision,
+                    )
+                )
+            )
+        elif current.hold is not None and (
+            (current.hold.kind == "Restored" and deployment_id not in restored)
+            or (deployment_id in running and deployment_id not in placed)
+        ):
+            events.append(
+                DeploymentResumed(
+                    deployment_id=deployment_id, at=now.isoformat(), by_user=False
+                )
+            )
+    return events
+
+
 def recent_losses(deployment: Deployment, now: datetime) -> int:
     return sum(
         1
@@ -234,7 +321,7 @@ def _linked(nodes: AbstractSet[NodeId], tick: _Tick) -> bool:
 
 
 def _waiting_or_placed(
-    deployment: Deployment, tick: _Tick, with_files: AbstractSet[NodeId]
+    deployment: Deployment, tick: _Tick, with_files: AbstractSet[NodeId], now: datetime
 ) -> Waiting | Placed:
     """Place a deployment again, or say why it waits."""
     spec = deployment.spec
@@ -244,6 +331,12 @@ def _waiting_or_placed(
     # as the nodes' connection checks find them, up to 10 s later: placed in between, a
     # model that ran on two nodes came back on one
     back = bool(previous) and previous <= with_files and _linked(previous, tick)
+    if (
+        deployment.not_before is not None
+        and now < datetime.fromisoformat(deployment.not_before)
+        and not back
+    ):
+        return Waiting(kind="DeviceAway", until=deployment.not_before)
     if not with_files:
         return Waiting(kind="NoDevicesWithFiles")
     if len(with_files) < spec.min_nodes:
@@ -336,7 +429,7 @@ def reconcile(
         if unfit.get(deployment_id) == tried_with:
             still_unfit[deployment_id] = tried_with
             continue
-        outcome = _waiting_or_placed(deployment, tick, with_files)
+        outcome = _waiting_or_placed(deployment, tick, with_files, now)
         if isinstance(outcome, Placed):
             tick.instances[outcome.instance.instance_id] = outcome.instance
             events.append(InstanceCreated(instance=outcome.instance))

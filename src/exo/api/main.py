@@ -63,6 +63,7 @@ from exo.api.command_acceptance import (
     changed_by,
     command_already_applied,
     command_applied,
+    command_in_effect,
     undoing_command,
 )
 from exo.api.finished_commands import RESEND_INTERVAL_SECONDS, finishes_to_resend
@@ -2722,7 +2723,7 @@ class API:
         for target, applied in list(self._applied_cluster_commands.items()):
             if (
                 now - applied.applied_at > CLUSTER_COMMAND_TIMEOUT
-                or not command_applied(applied.command, self.state)
+                or not command_in_effect(applied.command, self.state)
             ):
                 del self._applied_cluster_commands[target]
         # A called-off change is watched for a copy that still applies for
