@@ -8,7 +8,7 @@ from anyio import ClosedResourceError
 
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.common import NodeId
-from exo.shared.types.events import Event, TaskAcknowledged
+from exo.shared.types.events import Event, RunnerEvent, TaskAcknowledged
 from exo.shared.types.tasks import Shutdown, Task
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runner_response import ModelLoadingResponse
@@ -62,7 +62,7 @@ def test_a_runner_shuts_down_cleanly_when_the_supervisor_stops_listening() -> No
     runner = Runner(
         BOUND,
         _IdleBuilder(),
-        cast(MpSender[Event], cast(object, supervisor)),
+        cast(MpSender[RunnerEvent], cast(object, supervisor)),
         tasks,
     )
     shutdown = Shutdown(

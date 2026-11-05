@@ -5,13 +5,12 @@ from contextlib import asynccontextmanager
 
 import anyio
 
-from exo.shared.types.chunks import InputImageChunk
+from exo.routing.tests.fake_reachability import FakeReachability
 from exo.shared.types.commands import ForwarderCommand, ForwarderDownloadCommand
 from exo.shared.types.common import NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     Event,
     IndexedEvent,
-    InputChunkReceived,
     NodeGatheredInfo,
     RunnerStatusUpdated,
     StateSnapshot,
@@ -29,7 +28,6 @@ from exo.utils.info_gatherer.info_gatherer import (
 )
 from exo.worker.main import Worker
 from exo.worker.tests.constants import (
-    COMMAND_1_ID,
     INSTANCE_1_ID,
     MODEL_A_ID,
     NODE_A,
@@ -93,6 +91,7 @@ async def running_worker(
         command_sender=command_send,
         download_command_sender=download_send,
         api_port=52415,
+        reachability=FakeReachability(NODE_A),
     )
     worker.state = state
     async with anyio.create_task_group() as tg:
@@ -164,27 +163,6 @@ async def test_the_worker_waits_for_the_new_master_s_state_before_acting() -> No
         await events.send(snapshot(NEW, state))
         await anyio.sleep(0.5)
         assert downloads_started(sent) >= 1
-
-
-async def test_images_of_requests_that_ended_with_the_old_master_are_dropped() -> None:
-    first_of_two = InputChunkReceived(
-        command_id=COMMAND_1_ID,
-        chunk=InputImageChunk(
-            model=MODEL_A_ID,
-            command_id=COMMAND_1_ID,
-            data="aGVsbG8=",
-            chunk_index=0,
-            total_chunks=2,
-        ),
-    )
-    async with running_worker(State(), applying) as (worker, events, _):
-        await events.send(IndexedEvent(idx=0, event=first_of_two))
-        await wait_until(lambda: COMMAND_1_ID in worker.input_chunk_buffer)
-
-        worker.follow_new_master(NEW)
-        await events.send(snapshot(NEW, State()))
-        await wait_until(lambda: COMMAND_1_ID not in worker.input_chunk_buffer)
-    assert worker.input_chunk_counts == {}
 
 
 async def test_a_worker_that_already_has_the_new_master_s_state_does_not_wait() -> None:

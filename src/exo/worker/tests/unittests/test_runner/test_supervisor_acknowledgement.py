@@ -10,7 +10,7 @@ from anyio.abc import TaskStatus
 
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.common import CommandId, NodeId
-from exo.shared.types.events import Event
+from exo.shared.types.events import Event, RunnerEvent
 from exo.shared.types.tasks import LoadModel, Task, TaskId, TextGeneration
 from exo.shared.types.text_generation import (
     InputMessage,
@@ -58,7 +58,7 @@ async def supervisor() -> AsyncIterator[tuple[RunnerSupervisor, MpReceiver[Task]
     event_sender, _ = channel[Event]()
     task_sender, task_receiver = mp_channel[Task]()
     cancel_sender, cancel_receiver = mp_channel[TaskId]()
-    _, ev_recv = mp_channel[Event | RunnerTerminationError]()
+    _, ev_recv = mp_channel[RunnerEvent | RunnerTerminationError]()
     proc = cast(AsyncProcess, cast(object, _SilentProcess()))
     handler = await RunnerStdioHandler.create(
         stdout_rx=proc.stdout, stderr_rx=proc.stderr

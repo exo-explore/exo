@@ -12,7 +12,7 @@ from exo.shared.constants import EXO_TRACING_ENABLED
 from exo.shared.tracing import clear_trace_buffer, get_trace_buffer
 from exo.shared.types.chunks import Chunk, ErrorChunk
 from exo.shared.types.events import (
-    Event,
+    RunnerEvent,
     TraceEventData,
     TracesCollected,
 )
@@ -30,9 +30,8 @@ from exo.shared.types.worker.runner_response import (
     ModelLoadingResponse,
 )
 from exo.shared.types.worker.shards import (
-    CfgShardMetadata,
-    PipelineShardMetadata,
     ShardMetadata,
+    is_primary_output_shard,
 )
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.disaggregated.server import PrefillRequest
@@ -51,23 +50,13 @@ from exo.worker.runner.failures import describe_failure
 
 
 def _is_primary_output_node(shard_metadata: ShardMetadata) -> bool:
-    """Check if this node is the primary output node for image generation.
-
-    For CFG models: the last pipeline stage in CFG group 0 (positive prompt).
-    For non-CFG models: the last pipeline stage.
-    """
-    if isinstance(shard_metadata, CfgShardMetadata):
-        is_pipeline_last = (
-            shard_metadata.pipeline_rank == shard_metadata.pipeline_world_size - 1
-        )
-        return is_pipeline_last and shard_metadata.cfg_rank == 0
-    elif isinstance(shard_metadata, PipelineShardMetadata):
-        return shard_metadata.device_rank == shard_metadata.world_size - 1
-    return False
+    """Whether this node emits the images. The request's API node streams from the same node
+    (exo.shared.serving.output_node)."""
+    return is_primary_output_shard(shard_metadata)
 
 
 def _send_traces_if_enabled(
-    event_sender: MpSender[Event],
+    event_sender: MpSender[RunnerEvent],
     task_id: TaskId,
     rank: int,
 ) -> None:
@@ -98,7 +87,7 @@ def _send_traces_if_enabled(
 
 @dataclass
 class MfluxBuilder(Builder):
-    event_sender: MpSender[Event]
+    event_sender: MpSender[RunnerEvent]
     cancel_receiver: MpReceiver[TaskId]
     shard_metadata: ShardMetadata | None = None
     image_model: DistributedImageModel | None = None
@@ -138,7 +127,7 @@ class MfluxBuilder(Builder):
 class ImageEngine(Engine):
     image_model: DistributedImageModel
     shard_metadata: ShardMetadata
-    event_sender: MpSender[Event]
+    event_sender: MpSender[RunnerEvent]
     cancel_receiver: MpReceiver[TaskId]
     current_gen: (
         Generator[tuple[TaskId, Chunk | FinishedResponse | CancelledResponse]] | None

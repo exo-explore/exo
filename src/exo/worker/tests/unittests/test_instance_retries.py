@@ -2,6 +2,7 @@
 attempts to start its runner. Those are meant to be attempts that failed: a runner that started
 and later died, its node restarted or its process killed, is not a sign the instance can't start."""
 
+from exo.routing.tests.fake_reachability import FakeReachability
 from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import ForwarderCommand, ForwarderDownloadCommand
@@ -34,13 +35,15 @@ def _worker() -> Worker:
     event_sender, _ = channel[Event]()
     command_sender, _ = channel[ForwarderCommand]()
     download_sender, _ = channel[ForwarderDownloadCommand]()
+    node_id = NodeId()
     worker = Worker(
-        NodeId(),
+        node_id,
         event_receiver=event_receiver,
         event_sender=event_sender,
         command_sender=command_sender,
         download_command_sender=download_sender,
         api_port=52415,
+        reachability=FakeReachability(node_id),
     )
     return worker
 

@@ -17,10 +17,9 @@ from exo.master.tests.conftest import (
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
-from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
     InstanceDeleted,
-    TaskStatusUpdated,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.multiaddr import Multiaddr
@@ -30,12 +29,6 @@ from exo.shared.types.profiling import (
     NetworkInterfaceInfo,
     NodeNetworkInfo,
     NodeRdmaCtlStatus,
-)
-from exo.shared.types.tasks import TaskId, TaskStatus, TextGeneration
-from exo.shared.types.text_generation import (
-    InputMessage,
-    InputMessageContent,
-    TextGenerationTaskParams,
 )
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import (
@@ -429,7 +422,7 @@ def test_placement_says_when_nodes_have_not_reported_their_memory() -> None:
 def test_removal_events_remove_the_instance_with_its_reason():
     instance_id = InstanceId()
 
-    events = removal_events(instance_id, "StartFailed", {}, AT)
+    events = removal_events(instance_id, "StartFailed", AT)
 
     assert events == [
         InstanceDeleted(
@@ -767,108 +760,6 @@ def test_place_mlx_jaccl_rejects_when_node_rdma_ctl_missing(model_card: ModelCar
             _metal_only(node_memory),
             node_rdma_ctl=node_rdma_ctl,
         )
-
-
-def _make_task(
-    instance_id: InstanceId,
-    status: TaskStatus = TaskStatus.Running,
-) -> TextGeneration:
-    return TextGeneration(
-        task_id=TaskId(),
-        task_status=status,
-        instance_id=instance_id,
-        command_id=CommandId(),
-        task_params=TextGenerationTaskParams(
-            model=ModelId("test-model"),
-            input=[InputMessage(role="user", content=InputMessageContent("hello"))],
-        ),
-    )
-
-
-def test_removal_events_cancels_running_tasks(
-    instance: Instance,
-):
-    # arrange
-    instance_id = InstanceId()
-    task = _make_task(instance_id, TaskStatus.Running)
-    tasks = {task.task_id: task}
-
-    # act
-    events = removal_events(instance_id, "UserStopped", tasks, AT)
-
-    # assert – cancellation event should come before the deletion event
-    assert len(events) == 2
-    assert isinstance(events[0], TaskStatusUpdated)
-    assert events[0].task_id == task.task_id
-    assert events[0].task_status == TaskStatus.Cancelled
-    assert isinstance(events[1], InstanceDeleted)
-    assert events[1].instance_id == instance_id
-
-
-def test_removal_events_cancels_pending_tasks(
-    instance: Instance,
-):
-    # arrange
-    instance_id = InstanceId()
-    task = _make_task(instance_id, TaskStatus.Pending)
-    tasks = {task.task_id: task}
-
-    # act
-    events = removal_events(instance_id, "UserStopped", tasks, AT)
-
-    # assert
-    assert len(events) == 2
-    assert isinstance(events[0], TaskStatusUpdated)
-    assert events[0].task_id == task.task_id
-    assert events[0].task_status == TaskStatus.Cancelled
-    assert isinstance(events[1], InstanceDeleted)
-
-
-def test_removal_events_ignores_completed_tasks(
-    instance: Instance,
-):
-    # arrange
-    instance_id = InstanceId()
-    tasks = {
-        t.task_id: t
-        for t in [
-            _make_task(instance_id, TaskStatus.Complete),
-            _make_task(instance_id, TaskStatus.Failed),
-            _make_task(instance_id, TaskStatus.TimedOut),
-            _make_task(instance_id, TaskStatus.Cancelled),
-        ]
-    }
-
-    # act
-    events = removal_events(instance_id, "UserStopped", tasks, AT)
-
-    # assert – only the InstanceDeleted event, no cancellations
-    assert len(events) == 1
-    assert isinstance(events[0], InstanceDeleted)
-
-
-def test_removal_events_cancels_only_matching_tasks(
-    instance: Instance,
-):
-    # arrange
-    instance_id_a = InstanceId()
-    instance_id_b = InstanceId()
-    # only delete instance A, keep instance B
-    task_a = _make_task(instance_id_a, TaskStatus.Running)
-    task_b = _make_task(instance_id_b, TaskStatus.Running)
-    tasks = {task_a.task_id: task_a, task_b.task_id: task_b}
-
-    # act
-    events = removal_events(instance_id_a, "UserStopped", tasks, AT)
-
-    # assert – only task_a should be cancelled
-    cancel_events = [e for e in events if isinstance(e, TaskStatusUpdated)]
-    delete_events = [e for e in events if isinstance(e, InstanceDeleted)]
-    assert len(cancel_events) == 1
-    assert cancel_events[0].task_id == task_a.task_id
-    assert cancel_events[0].task_status == TaskStatus.Cancelled
-    assert len(delete_events) == 1
-    assert delete_events[0].instance_id == instance_id_a
 
 
 def _make_shard_metadata(model_card: ModelCard) -> PipelineShardMetadata:

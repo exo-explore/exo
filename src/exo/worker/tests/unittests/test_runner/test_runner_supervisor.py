@@ -6,9 +6,9 @@ import pytest
 import exo.worker.runner.supervisor as supervisor_module
 from exo.shared.models.model_cards import ModelId
 from exo.shared.request_errors import generation_error_code
-from exo.shared.types.chunks import ErrorChunk
+from exo.shared.types.chunks import Chunk, ErrorChunk
 from exo.shared.types.common import CommandId, NodeId
-from exo.shared.types.events import ChunkGenerated, Event, RunnerStatusUpdated
+from exo.shared.types.events import Event, RunnerEvent, RunnerStatusUpdated
 from exo.shared.types.tasks import Task, TaskId, TextGeneration
 from exo.shared.types.text_generation import (
     InputMessage,
@@ -41,7 +41,7 @@ class _DeadProcess:
 async def _supervisor_of_dead_runner(event_sender: Sender[Event]) -> RunnerSupervisor:
     task_sender, _ = mp_channel[Task]()
     cancel_sender, _ = mp_channel[TaskId]()
-    _, ev_recv = mp_channel[Event | RunnerTerminationError]()
+    _, ev_recv = mp_channel[RunnerEvent | RunnerTerminationError]()
 
     bound_instance: BoundInstance = get_bound_mlx_ring_instance(
         instance_id=InstanceId("instance-a"),
@@ -68,6 +68,15 @@ async def _supervisor_of_dead_runner(event_sender: Sender[Event]) -> RunnerSuper
     return supervisor
 
 
+def _streamed(supervisor: RunnerSupervisor, task: TextGeneration) -> Receiver[Chunk]:
+    """Give the supervisor a request in progress, and return the stream its output goes to"""
+    send, receive = channel[Chunk]()
+    supervisor.in_progress[task.task_id] = task
+    supervisor._outputs[task.task_id] = send  # pyright: ignore[reportPrivateUsage]
+    supervisor._output_tasks[task.command_id] = task.task_id  # pyright: ignore[reportPrivateUsage]
+    return receive
+
+
 def _text_generation(supervisor: RunnerSupervisor, name: str) -> TextGeneration:
     return TextGeneration(
         task_id=TaskId(f"task-{name}"),
@@ -86,20 +95,19 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
     event_sender, event_receiver = channel[Event]()
     supervisor = await _supervisor_of_dead_runner(event_sender)
     task = _text_generation(supervisor, "a")
-    supervisor.in_progress[task.task_id] = task
+    output = _streamed(supervisor, task)
 
     await supervisor._check_runner(RuntimeError("boom"))  # pyright: ignore[reportPrivateUsage]
 
-    got_chunk = await event_receiver.receive()
+    got_chunk = await output.receive()
+    # The request's error goes to its stream; the cluster hears only of the runner
     got_status = await event_receiver.receive()
 
-    assert isinstance(got_chunk, ChunkGenerated)
-    assert got_chunk.command_id == task.command_id
-    assert isinstance(got_chunk.chunk, ErrorChunk)
-    assert got_chunk.chunk.error_message == (
+    assert isinstance(got_chunk, ErrorChunk)
+    assert got_chunk.error_message == (
         "The model stopped before the reply finished: boom."
     )
-    assert generation_error_code(got_chunk.chunk.error_message) == "model_failed"
+    assert generation_error_code(got_chunk.error_message) == "model_failed"
 
     assert isinstance(got_status, RunnerStatusUpdated)
     assert isinstance(got_status.runner_status, RunnerFailed)
@@ -110,41 +118,45 @@ async def test_check_runner_emits_error_chunk_for_inflight_text_generation() -> 
 
 
 @final
-class _FinishesATaskWhileSending:
-    """An event sender during whose sends the runner's last results arrive.
+class _FinishesTheOtherWhileSent:
+    """A request's stream, during whose send the runner's last results arrive.
 
     While the supervisor reports one request as failed, the event loop runs the coroutine that
     forwards the runner's output, which marks another request complete.
     """
 
-    def __init__(self) -> None:
-        self.sent: list[Event] = []
-        self.supervisor: RunnerSupervisor | None = None
+    def __init__(self, supervisor: RunnerSupervisor, other: TaskId) -> None:
+        self.sent: list[Chunk] = []
+        self.supervisor = supervisor
+        self.other = other
 
-    async def send(self, event: Event) -> None:
-        self.sent.append(event)
-        assert self.supervisor is not None
-        if len(self.supervisor.in_progress) > 1:
-            self.supervisor.in_progress.pop(next(reversed(self.supervisor.in_progress)))
+    async def send(self, chunk: Chunk) -> None:
+        self.sent.append(chunk)
+        self.supervisor.in_progress.pop(self.other, None)
         await anyio.sleep(0)
+
+    def send_nowait(self, chunk: Chunk) -> None:
+        self.sent.append(chunk)
+
+    def close(self) -> None:
+        pass
 
 
 @pytest.mark.anyio
 async def test_check_runner_survives_a_request_finishing_while_it_reports() -> None:
-    sender = _FinishesATaskWhileSending()
-    supervisor = await _supervisor_of_dead_runner(
-        cast(Sender[Event], cast(object, sender))
-    )
-    sender.supervisor = supervisor
+    event_sender, event_receiver = channel[Event]()
+    supervisor = await _supervisor_of_dead_runner(event_sender)
     first, second = _text_generation(supervisor, "a"), _text_generation(supervisor, "b")
-    supervisor.in_progress[first.task_id] = first
-    supervisor.in_progress[second.task_id] = second
+    output = _FinishesTheOtherWhileSent(supervisor, second.task_id)
+    _streamed(supervisor, first)
+    second_output = _streamed(supervisor, second)
+    supervisor._outputs[first.task_id] = cast(Sender[Chunk], cast(object, output))  # pyright: ignore[reportPrivateUsage]
 
     await supervisor._check_runner(RuntimeError("boom"))  # pyright: ignore[reportPrivateUsage]
 
-    failed = [e.command_id for e in sender.sent if isinstance(e, ChunkGenerated)]
-    assert failed == [first.command_id]
-    assert isinstance(sender.sent[-1], RunnerStatusUpdated)
+    assert [type(chunk) for chunk in output.sent] == [ErrorChunk]
+    assert second_output.collect() == []
+    assert isinstance(event_receiver.collect()[-1], RunnerStatusUpdated)
 
 
 class _StuckProcess:
@@ -172,7 +184,7 @@ async def test_a_runner_whose_ring_aborted_is_stopped_and_reported_failed(
     event_sender, event_receiver = channel[Event]()
     task_sender, _ = mp_channel[Task]()
     cancel_sender, _ = mp_channel[TaskId]()
-    _, ev_recv = mp_channel[Event | RunnerTerminationError]()
+    _, ev_recv = mp_channel[RunnerEvent | RunnerTerminationError]()
     bound_instance: BoundInstance = get_bound_mlx_ring_instance(
         instance_id=InstanceId("instance-b"),
         model_id=ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit"),
@@ -216,7 +228,7 @@ async def test_a_healthy_runner_is_left_alone(monkeypatch: pytest.MonkeyPatch) -
     event_sender, _ = channel[Event]()
     task_sender, _ = mp_channel[Task]()
     cancel_sender, _ = mp_channel[TaskId]()
-    _, ev_recv = mp_channel[Event | RunnerTerminationError]()
+    _, ev_recv = mp_channel[RunnerEvent | RunnerTerminationError]()
     bound_instance: BoundInstance = get_bound_mlx_ring_instance(
         instance_id=InstanceId("instance-c"),
         model_id=ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit"),
@@ -265,11 +277,11 @@ class _AliveProcess:
 
 async def generating_supervisor(
     rank: int,
-) -> tuple[RunnerSupervisor, _AliveProcess, Receiver[Event]]:
+) -> tuple[RunnerSupervisor, _AliveProcess, Receiver[Event], Receiver[Chunk]]:
     event_sender, event_receiver = channel[Event]()
     task_sender, _ = mp_channel[Task]()
     cancel_sender, _ = mp_channel[TaskId]()
-    _, ev_recv = mp_channel[Event | RunnerTerminationError]()
+    _, ev_recv = mp_channel[RunnerEvent | RunnerTerminationError]()
     bound_instance: BoundInstance = get_bound_mlx_ring_instance(
         instance_id=InstanceId("instance-s"),
         model_id=ModelId("mlx-community/Llama-3.2-1B-Instruct-4bit"),
@@ -308,8 +320,8 @@ async def generating_supervisor(
             input=[InputMessage(role="user", content=InputMessageContent("hi"))],
         ),
     )
-    supervisor.in_progress[task.task_id] = task
-    return supervisor, process, event_receiver
+    output = _streamed(supervisor, task)
+    return supervisor, process, event_receiver, output
 
 
 @pytest.mark.anyio
@@ -318,16 +330,15 @@ async def test_a_first_rank_runner_silent_mid_generation_is_stopped(
 ) -> None:
     monkeypatch.setattr(supervisor_module, "RUNNER_WATCH_INTERVAL", 0.01)
     monkeypatch.setattr(supervisor_module, "RUNNER_STALL_TIMEOUT", 0.05)
-    supervisor, process, events = await generating_supervisor(rank=0)
+    supervisor, process, events, output = await generating_supervisor(rank=0)
 
     with anyio.fail_after(2):
         await supervisor._watch_runner()  # pyright: ignore[reportPrivateUsage]
-        chunk = await events.receive()
+        chunk = await output.receive()
         status = await events.receive()
 
     assert not process.is_alive()
-    assert isinstance(chunk, ChunkGenerated)
-    assert isinstance(chunk.chunk, ErrorChunk)
+    assert isinstance(chunk, ErrorChunk)
     assert isinstance(status, RunnerStatusUpdated)
     assert isinstance(status.runner_status, RunnerFailed)
 
@@ -339,7 +350,7 @@ async def test_a_runner_that_keeps_reporting_is_left_alone(
     # The runner reports every 10 ms; the stall timeout leaves room for a busy CI machine to pause the event loop
     monkeypatch.setattr(supervisor_module, "RUNNER_WATCH_INTERVAL", 0.01)
     monkeypatch.setattr(supervisor_module, "RUNNER_STALL_TIMEOUT", 0.5)
-    supervisor, process, _ = await generating_supervisor(rank=0)
+    supervisor, process, _, _ = await generating_supervisor(rank=0)
 
     async def keep_reporting() -> None:
         while True:
@@ -361,7 +372,7 @@ async def test_other_ranks_are_not_judged_by_their_silence(
 ) -> None:
     monkeypatch.setattr(supervisor_module, "RUNNER_WATCH_INTERVAL", 0.01)
     monkeypatch.setattr(supervisor_module, "RUNNER_STALL_TIMEOUT", 0.05)
-    supervisor, process, _ = await generating_supervisor(rank=1)
+    supervisor, process, _, _ = await generating_supervisor(rank=1)
 
     with anyio.move_on_after(0.3):
         await supervisor._watch_runner()  # pyright: ignore[reportPrivateUsage]
@@ -402,10 +413,10 @@ async def test_a_runner_out_of_gpu_memory_fails_with_the_cause() -> None:
 async def test_a_request_never_ends_with_the_runners_traceback() -> None:
     """A node of the instance quit mid-reply: the runner here raised from MLX's ring. Its
     requests end with one sentence and a code, and the traceback stays in the log."""
-    event_sender, event_receiver = channel[Event]()
+    event_sender, _ = channel[Event]()
     supervisor = await _supervisor_of_dead_runner(event_sender)
     task = _text_generation(supervisor, "a")
-    supervisor.in_progress[task.task_id] = task
+    output = _streamed(supervisor, task)
 
     await supervisor._check_runner(  # pyright: ignore[reportPrivateUsage]
         RunnerTerminationError(
@@ -421,10 +432,9 @@ async def test_a_request_never_ends_with_the_runners_traceback() -> None:
     )
 
     with anyio.fail_after(1):
-        got_chunk = await event_receiver.receive()
-    assert isinstance(got_chunk, ChunkGenerated)
-    assert isinstance(got_chunk.chunk, ErrorChunk)
-    assert got_chunk.chunk.error_message == (
+        got_chunk = await output.receive()
+    assert isinstance(got_chunk, ErrorChunk)
+    assert got_chunk.error_message == (
         "A device serving this model disconnected before the reply finished."
     )
-    assert generation_error_code(got_chunk.chunk.error_message) == "device_left"
+    assert generation_error_code(got_chunk.error_message) == "device_left"

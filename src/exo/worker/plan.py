@@ -4,19 +4,13 @@ from collections.abc import Mapping, Sequence, Set
 
 from exo.shared.types.common import ModelId, NodeId
 from exo.shared.types.tasks import (
-    CancelTask,
     ConnectToGroup,
     CreateRunner,
     DownloadModel,
-    ImageEdits,
-    ImageGeneration,
     LoadModel,
     Shutdown,
     StartWarmup,
     Task,
-    TaskId,
-    TaskStatus,
-    TextGeneration,
 )
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
@@ -50,7 +44,6 @@ def plan(
     global_download_status: Mapping[NodeId, Sequence[DownloadProgress]],
     instances: Mapping[InstanceId, Instance],
     all_runners: Mapping[RunnerId, RunnerStatus],  # all global
-    tasks: Mapping[TaskId, Task],
     instance_backoff: KeyedBackoff[InstanceId],
     download_backoff: KeyedBackoff[ModelId],
     failed_download_backoff: KeyedBackoff[InstanceId] | None = None,
@@ -74,10 +67,10 @@ def plan(
         for runner_id, runner in live.items()
         if not runner.awaiting_acknowledgement
     }
-    # Python short circuiting OR logic should evaluate these sequentially.
+    # Python short circuiting OR logic should evaluate these sequentially. Requests aren't
+    # planned here: the API nodes hand them to the runners directly (exo.worker.serving).
     return (
-        _cancel_tasks(live, tasks)
-        or _kill_runner(live, all_runners, instances)
+        _kill_runner(live, all_runners, instances)
         or _create_runner(
             node_id, runners, all_runners, instances, instance_backoff, exits_in_flight
         )
@@ -91,7 +84,6 @@ def plan(
         or _init_distributed_backend(settled, all_runners)
         or _load_model(settled, all_runners, global_download_status)
         or _ready_to_warmup(settled, all_runners)
-        or _pending_tasks(live, tasks, all_runners)
     )
 
 
@@ -354,66 +346,3 @@ def _ready_to_warmup(
             return StartWarmup(instance_id=instance.instance_id)
 
     return None
-
-
-def _pending_tasks(
-    runners: Mapping[RunnerId, RunnerSupervisor],
-    tasks: Mapping[TaskId, Task],
-    all_runners: Mapping[RunnerId, RunnerStatus],
-) -> Task | None:
-    for task in tasks.values():
-        # for now, just forward chat completions
-        # TODO(ciaran): do this better!
-        if not isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
-            continue
-        if task.task_status not in (TaskStatus.Pending, TaskStatus.Running):
-            continue
-
-        for runner in runners.values():
-            if task.instance_id != runner.bound_instance.instance.instance_id:
-                continue
-
-            # the task status _should_ be set to completed by the LAST runner
-            # it is currently set by the first
-            # this is definitely a hack
-            if task.task_id in runner.completed or task.task_id in runner.in_progress:
-                continue
-
-            if isinstance(runner.status, (RunnerReady, RunnerRunning)) and all(
-                isinstance(all_runners[global_runner_id], (RunnerReady, RunnerRunning))
-                for global_runner_id in runner.bound_instance.instance.shard_assignments.runner_to_shard
-            ):
-                return task
-
-
-def _cancel_tasks(
-    runners: Mapping[RunnerId, RunnerSupervisor],
-    tasks: Mapping[TaskId, Task],
-) -> Task | None:
-    for task in tasks.values():
-        if task.task_status != TaskStatus.Cancelled:
-            continue
-        for runner_id, runner in runners.items():
-            if task.instance_id != runner.bound_instance.instance.instance_id:
-                continue
-            if task.task_id in runner.cancelled:
-                continue
-            return CancelTask(
-                instance_id=task.instance_id,
-                cancelled_task_id=task.task_id,
-                runner_id=runner_id,
-            )
-    # A generation task deleted from the state while it runs (its client went away) must be
-    # cancelled too. The master cancels and deletes such a task within milliseconds, so this
-    # loop rarely sees it as Cancelled, and the runner would generate a response nobody reads.
-    for runner_id, runner in runners.items():
-        for task_id, task in runner.in_progress.items():
-            if not isinstance(task, (TextGeneration, ImageGeneration, ImageEdits)):
-                continue
-            if task_id in tasks or task_id in runner.cancelled:
-                continue
-            return CancelTask(
-                instance_id=task.instance_id,
-                cancelled_task_id=task_id,
-                runner_id=runner_id,
-            )

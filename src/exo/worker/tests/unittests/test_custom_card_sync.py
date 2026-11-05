@@ -9,6 +9,7 @@ import anyio
 import pytest
 
 import exo.worker.main as worker_main
+from exo.routing.tests.fake_reachability import FakeReachability
 from exo.shared.models import model_cards
 from exo.shared.models.model_cards import ModelCard, ModelTask, card_cache
 from exo.shared.types.backends import Backend
@@ -85,6 +86,7 @@ async def running_node() -> AsyncIterator[Node]:
         command_sender=command_send,
         download_command_sender=download_send,
         api_port=52415,
+        reachability=FakeReachability(NODE_A),
     )
     async with anyio.create_task_group() as tg:
         tg.start_soon(worker._reconcile_custom_cards)  # pyright: ignore[reportPrivateUsage]

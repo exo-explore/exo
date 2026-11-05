@@ -16,22 +16,19 @@ from exo.api.recent_events import RecentEvents
 from exo.api.types import (
     CreateInstanceParams,
     CreateInstanceResponse,
-    ImageGenerationTaskParams,
     PlaceInstanceParams,
 )
 from exo.master.tests.conftest import create_node_memory, create_node_network
-from exo.master.tests.test_requests_to_deleted_instances import deployment_of
+from exo.master.tests.master_helpers import deployment_of
 from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask, card_cache
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
-from exo.shared.types.chunks import ErrorChunk, ImageChunk
 from exo.shared.types.commands import (
     Command,
     CreateDeployment,
     DeleteDeployment,
     ForwarderCommand,
-    ImageGeneration,
 )
 from exo.shared.types.common import NodeId, SessionId, SystemId
 from exo.shared.types.events import (
@@ -101,8 +98,6 @@ async def running_api() -> AsyncIterator[
     api.command_sender, commands = channel[ForwarderCommand]()
     events, api.event_receiver = channel[NodeEvents]()
     api._recent_events = RecentEvents()  # pyright: ignore[reportPrivateUsage]
-    api._text_generation_queues = {}  # pyright: ignore[reportPrivateUsage]
-    api._image_generation_queues = {}  # pyright: ignore[reportPrivateUsage]
     api._tg = TaskGroup()  # pyright: ignore[reportPrivateUsage]
     async with api._tg:  # pyright: ignore[reportPrivateUsage]
         api._tg.start_soon(api._apply_state)  # pyright: ignore[reportPrivateUsage]
@@ -540,31 +535,3 @@ async def test_catching_up_from_the_same_master_restores_nothing() -> None:
         await anyio.sleep(0.2)
 
     assert commands.collect() == []
-
-
-# Image requests are sent again until accepted, like chats
-
-
-@pytest.fixture
-def quick_request_resends(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(api_main, "REQUEST_RESEND_WAITS", (0.05, 0.05))
-
-
-@pytest.mark.usefixtures("quick_request_resends")
-async def test_an_image_request_never_accepted_is_sent_again_then_ends_with_an_error() -> (
-    None
-):
-    request = ImageGeneration(
-        task_params=ImageGenerationTaskParams(prompt="a cat", model=MODEL.model_id)
-    )
-    async with running_api() as (api, commands, _events):
-        image_send: Sender[ImageChunk | ErrorChunk]
-        image_send, images = channel[ImageChunk | ErrorChunk]()
-        api._image_generation_queues[request.command_id] = image_send  # pyright: ignore[reportPrivateUsage]
-        await api._send(request)  # pyright: ignore[reportPrivateUsage]
-        with anyio.fail_after(5):
-            chunk = await images.receive()
-        sent: list[Command] = [c.command for c in commands.collect()]
-    assert sent == [request, request, request]
-    assert isinstance(chunk, ErrorChunk)
-    assert "didn't accept" in chunk.error_message

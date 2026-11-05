@@ -9,7 +9,7 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.download.download_utils import build_model_path
 from exo.shared.types.common import ModelId
-from exo.shared.types.events import Event
+from exo.shared.types.events import RunnerEvent
 from exo.shared.types.tasks import TaskId
 from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import ModelLoadingResponse
@@ -47,7 +47,7 @@ def generates_in_batches(model: nn.Module) -> bool:
 @dataclass
 class MlxBuilder(Builder):
     model_id: ModelId
-    event_sender: MpSender[Event]
+    event_sender: MpSender[RunnerEvent]
     cancel_receiver: MpReceiver[TaskId]
     inference_model: Model | None = None
     tokenizer: TokenizerWrapper | None = None

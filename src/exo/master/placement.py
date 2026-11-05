@@ -25,7 +25,6 @@ from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
     Event,
     InstanceDeleted,
-    TaskStatusUpdated,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.placement import PlacementRequest
@@ -36,7 +35,6 @@ from exo.shared.types.profiling import (
     NodeRdmaCtlStatus,
 )
 from exo.shared.types.state import State
-from exo.shared.types.tasks import Task, TaskId, TaskStatus
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadFailed,
@@ -551,19 +549,13 @@ def place_instance(
 def removal_events(
     instance_id: InstanceId,
     reason: InstanceRemovalReason,
-    tasks: Mapping[TaskId, Task],
     at: datetime,
 ) -> Sequence[Event]:
-    """Remove an instance, cancelling the requests it had not finished first."""
+    """Remove an instance. Its requests aren't in the cluster's state: the nodes serving them
+    end them as the instance goes (exo.worker.serving)."""
     events: list[Event] = [
-        TaskStatusUpdated(task_status=TaskStatus.Cancelled, task_id=task.task_id)
-        for task in tasks.values()
-        if task.instance_id == instance_id
-        and task.task_status in (TaskStatus.Pending, TaskStatus.Running)
-    ]
-    events.append(
         InstanceDeleted(instance_id=instance_id, reason=reason, at=at.isoformat())
-    )
+    ]
     return events
 
 

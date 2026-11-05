@@ -19,7 +19,7 @@ import pytest
 import exo.master.main as master_main
 from exo.master.main import Master
 from exo.master.placement import memory_once_loaded
-from exo.master.tests.test_requests_to_deleted_instances import deployment_of
+from exo.master.tests.master_helpers import deployment_of
 from exo.routing.router import get_node_zid
 from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.apply import apply
@@ -27,6 +27,7 @@ from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (
+    AddCustomModelCard,
     Command,
     CreateDeployment,
     DeleteDeployment,
@@ -34,12 +35,10 @@ from exo.shared.types.commands import (
     ForwarderCommand,
     ForwarderDownloadCommand,
     RequestEventLog,
-    TaskCancelled,
-    TaskFinished,
-    TextGeneration,
 )
 from exo.shared.types.common import DeploymentId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
+    CustomModelCardAdded,
     DeploymentRemoved,
     Event,
     GlobalForwarderEvent,
@@ -49,20 +48,12 @@ from exo.shared.types.events import (
     InstanceLinkDeleted,
     LocalForwarderEvent,
     StateSnapshot,
-    TaskCreated,
-    TaskStatusUpdated,
     TestEvent,
 )
 from exo.shared.types.instance_link import InstanceLinkId
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import MemoryUsage
 from exo.shared.types.state import State
-from exo.shared.types.tasks import TaskStatus
-from exo.shared.types.text_generation import (
-    InputMessage,
-    InputMessageContent,
-    TextGenerationTaskParams,
-)
 from exo.shared.types.worker.downloads import DownloadOngoing, DownloadProgressData
 from exo.shared.types.worker.instances import InstanceId, MlxRingInstance
 from exo.shared.types.worker.runners import (
@@ -145,12 +136,9 @@ def cluster(*instances: MlxRingInstance) -> State:
     )
 
 
-def chat_request() -> TextGeneration:
-    return TextGeneration(
-        task_params=TextGenerationTaskParams(
-            model=MODEL,
-            input=[InputMessage(role="user", content=InputMessageContent("hi"))],
-        )
+def custom_card() -> AddCustomModelCard:
+    return AddCustomModelCard(
+        model_card=model_card(ModelId("mlx-community/another-model"))
     )
 
 
@@ -327,9 +315,9 @@ async def test_a_launch_sent_again_changes_nothing() -> None:
 async def test_a_command_that_fails_to_apply_changes_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A command takes effect whole or not at all. Here the deletion of an instance cancels
-    its request, then fails to delete it: neither happens, nothing is sent, and its download
-    cancellation isn't sent either. The master goes on with the next command."""
+    """A command takes effect whole or not at all. Here the deletion of an instance fails to
+    apply: nothing is sent, and its download cancellation isn't sent either. The master goes
+    on with the next command."""
 
     def failing_on_deletion(state: State, event: IndexedEvent) -> State:
         if isinstance(event.event, InstanceDeleted):
@@ -363,22 +351,14 @@ async def test_a_command_that_fails_to_apply_changes_nothing(
         }
     )
     async with running_master(downloading) as running:
-        await running.send(chat_request())
-        await running.sent_until(
-            lambda sent: any(isinstance(m.event, TaskCreated) for m in sent)
-        )
         before = running.master.state
         monkeypatch.setattr(master_main, "apply", failing_on_deletion)
 
         await running.send(DeleteDeployment(deployment_id=instance.deployment_id))
         sent = await running.all_handled()
 
-        assert [type(event) for event in sent] == [TaskCreated, InstanceLinkDeleted]
+        assert [type(event) for event in sent] == [InstanceLinkDeleted]
         assert running.master.state.instances == before.instances
-        assert running.master.state.tasks == before.tasks
-        assert [task.task_status for task in running.master.state.tasks.values()] == [
-            TaskStatus.Pending
-        ]
         assert (
             running.master.state.last_event_applied_idx
             == before.last_event_applied_idx + 1
@@ -390,8 +370,8 @@ async def test_a_command_that_fails_to_apply_changes_nothing(
 async def test_a_node_applying_what_the_master_sends_ends_with_its_state(
     seed: int,
 ) -> None:
-    """A random mix of commands (chats, launches, stops, finishes, cancels, requests for missed
-    events) and of events from two nodes, some out of order. A node that applies everything
+    """A random mix of commands (launches, stops, model cards, requests for missed events) and
+    of events from two nodes, some out of order. A node that applies everything
     the master sends, in index order and each index once, ends with the master's state, and
     the indices run on with no gap; a replayed index carries the very same event."""
     rng = random.Random(seed)
@@ -401,7 +381,6 @@ async def test_a_node_applying_what_the_master_sends_ends_with_its_state(
         origins = [SystemId(), SystemId()]
         next_origin_idx = [0, 0]
         held: list[LocalForwarderEvent] = []
-        chats: list[TextGeneration] = []
         for _ in range(300):
             roll = rng.random()
             if roll < 0.35:
@@ -419,19 +398,8 @@ async def test_a_node_applying_what_the_master_sends_ends_with_its_state(
                     await running.local_events.send(event)
                     if held and rng.random() < 0.5:
                         await running.local_events.send(held.pop(0))
-            elif roll < 0.55:
-                chats.append(chat_request())
-                await running.send(chats[-1])
-            elif roll < 0.65 and chats:
-                chat = rng.choice(chats)
-                await running.send(
-                    rng.choice(
-                        [
-                            TaskFinished(finished_command_id=chat.command_id),
-                            TaskCancelled(cancelled_command_id=chat.command_id),
-                        ]
-                    )
-                )
+            elif roll < 0.65:
+                await running.send(custom_card())
             elif roll < 0.72:
                 await running.send(launch(ready_instance()))
             elif roll < 0.78:
@@ -479,8 +447,7 @@ async def test_an_instance_deleted_twice_in_a_row_is_deleted_once() -> None:
 
 async def test_own_and_node_events_share_one_sequence() -> None:
     """The master's own events and the ones nodes send are numbered in one sequence, sent in
-    its order, kept for replay and covered by snapshots, as if they had all come from nodes.
-    A command's events are numbered together, in the order it made them."""
+    its order, kept for replay and covered by snapshots, as if they had all come from nodes."""
     instance = ready_instance()
     async with running_master(cluster(instance)) as running:
         worker = SystemId()
@@ -496,33 +463,30 @@ async def test_own_and_node_events_share_one_sequence() -> None:
             )
 
         await from_node(0)
-        await running.send(chat_request())
+        await running.send(custom_card())
         await from_node(1)
         await running.send(DeleteDeployment(deployment_id=instance.deployment_id))
         await from_node(2)
-        live = list(await running.sent_until(lambda sent: len(sent) == 7))
+        live = list(await running.sent_until(lambda sent: len(sent) == 6))
         await anyio.sleep(0.05)
         assert running.broadcast.collect() == []
 
-        assert [message.origin_idx for message in live] == list(range(7))
+        assert [message.origin_idx for message in live] == list(range(6))
         kinds = [type(message.event) for message in live]
         assert sorted(kinds, key=lambda kind: kind.__name__) == sorted(
             [TestEvent] * 3
-            + [TaskCreated, TaskStatusUpdated, InstanceDeleted, DeploymentRemoved],
+            + [CustomModelCardAdded, InstanceDeleted, DeploymentRemoved],
             key=lambda kind: kind.__name__,
         )
-        # The deletion cancels the request first, then deletes the instance, in two indices
-        # in a row
-        cancelled = kinds.index(TaskStatusUpdated)
-        assert kinds[cancelled + 1] is InstanceDeleted
-        assert kinds.index(TaskCreated) < cancelled
-        assert running.master.state.last_event_applied_idx == 6
+        # The commands' events in the order the commands came
+        assert kinds.index(CustomModelCardAdded) < kinds.index(InstanceDeleted)
+        assert running.master.state.last_event_applied_idx == 5
         assert instance.instance_id not in running.master.state.instances
 
         # A node that missed them is sent the same events again, with the same indices
         running.sent.clear()
         await running.send(RequestEventLog(since_idx=0))
-        replayed = await running.sent_until(lambda sent: len(sent) == 7)
+        replayed = await running.sent_until(lambda sent: len(sent) == 6)
         assert [(m.origin_idx, m.event) for m in replayed] == [
             (m.origin_idx, m.event) for m in live
         ]
@@ -535,5 +499,5 @@ async def test_own_and_node_events_share_one_sequence() -> None:
         with anyio.fail_after(5):
             snapshot = await running.snapshots.receive()
         assert snapshot.requester == requester
-        assert snapshot.state.last_event_applied_idx == 6
+        assert snapshot.state.last_event_applied_idx == 5
         assert snapshot.state is running.master.state

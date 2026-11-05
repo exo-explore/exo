@@ -35,6 +35,7 @@ from anyio.abc import TaskStatus as StartedStatus
 import exo.worker.main as worker_mod
 import exo.worker.plan as plan_mod
 import exo.worker.runner.supervisor as supervisor_mod
+from exo.routing.tests.fake_reachability import FakeReachability
 from exo.shared.types.commands import ForwarderCommand, ForwarderDownloadCommand
 from exo.shared.types.common import SessionId, SystemId
 from exo.shared.types.events import (
@@ -42,6 +43,7 @@ from exo.shared.types.events import (
     IndexedEvent,
     InstanceCreated,
     NodeDownloadProgress,
+    RunnerEvent,
     RunnerStatusUpdated,
     StateSnapshot,
     TaskAcknowledged,
@@ -135,7 +137,6 @@ def _plan(
             downloads,
             instances,
             all_runners,
-            {},
             KeyedBackoff(),
             KeyedBackoff(),
             exits_in_flight=exits_in_flight,
@@ -147,7 +148,6 @@ def _plan(
         downloads,
         instances,
         all_runners,
-        {},
         KeyedBackoff(),
         KeyedBackoff(),
     )
@@ -286,7 +286,7 @@ class _Runner:
     supervisor: RunnerSupervisor
     process: _Process
     tasks: MpReceiver[Task]
-    events: MpSender[Event | RunnerTerminationError]
+    events: MpSender[RunnerEvent | RunnerTerminationError]
 
     async def told(self, kind: type[Task]) -> Task:
         with anyio.fail_after(10):
@@ -379,6 +379,7 @@ async def _node(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_Node]:
         command_sender=command_sender,
         download_command_sender=download_sender,
         api_port=52415,
+        reachability=FakeReachability(NODE_A),
     )
     node = _Node(worker, to_worker)
 
@@ -386,7 +387,9 @@ async def _node(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_Node]:
         *, bound_instance: BoundInstance, event_sender: Sender[Event]
     ) -> RunnerSupervisor:
         process = _Process()
-        events_sender, events_receiver = mp_channel[Event | RunnerTerminationError]()
+        events_sender, events_receiver = mp_channel[
+            RunnerEvent | RunnerTerminationError
+        ]()
         task_sender, task_receiver = mp_channel[Task]()
         cancel_sender, _ = mp_channel[TaskId]()
         supervisor = RunnerSupervisor(
@@ -584,6 +587,7 @@ async def test_a_peer_seen_going_stops_a_joined_runner_even_if_replaced_since() 
         command_sender=command_sender,
         download_command_sender=download_sender,
         api_port=52415,
+        reachability=FakeReachability(NODE_A),
     )
     process = _Process()
     supervisor = RunnerSupervisor(
@@ -593,7 +597,7 @@ async def test_a_peer_seen_going_stops_a_joined_runner_even_if_replaced_since() 
         _runner_stdio_handler=await RunnerStdioHandler.create(
             stdout_rx=process.stdout, stderr_rx=process.stderr
         ),
-        _ev_recv=mp_channel[Event | RunnerTerminationError]()[1],
+        _ev_recv=mp_channel[RunnerEvent | RunnerTerminationError]()[1],
         _task_sender=mp_channel[Task]()[0],
         _event_sender=event_sender.clone(),
         _cancel_sender=mp_channel[TaskId]()[0],
@@ -621,7 +625,6 @@ async def test_a_peer_seen_going_stops_a_joined_runner_even_if_replaced_since() 
         worker.state.downloads,
         worker.state.instances,
         worker.state.runners,
-        worker.state.tasks,
         KeyedBackoff(),
         KeyedBackoff(),
     )
@@ -683,6 +686,7 @@ def _bare_worker() -> Worker:
         command_sender=command_sender,
         download_command_sender=download_sender,
         api_port=52415,
+        reachability=FakeReachability(NODE_A),
     )
 
 

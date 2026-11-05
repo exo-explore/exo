@@ -13,7 +13,6 @@ from exo.master.placement import (
     launch_refusal,
     removal_events,
 )
-from exo.master.placement_utils import find_ip_prioritised
 from exo.routing.event_router import (
     EventRouterBrokenResourceError,
     EventRouterClosedResourceError,
@@ -26,11 +25,6 @@ from exo.routing.membership import (
     listed_nodes,
 )
 from exo.shared.apply import apply
-from exo.shared.constants import EXO_TRACING_ENABLED
-from exo.shared.model_readiness import instance_is_ready, instance_readiness
-from exo.shared.models.model_cards import ModelId
-from exo.shared.request_errors import DEVICE_UNREACHABLE, INSTANCE_GONE_BEFORE_START
-from exo.shared.types.chunks import ErrorChunk, ImageChunk
 from exo.shared.types.commands import (
     AddCustomModelCard,
     AnnounceDeployments,
@@ -41,17 +35,11 @@ from exo.shared.types.commands import (
     DownloadCommand,
     ForwarderCommand,
     ForwarderDownloadCommand,
-    ImageEdits,
-    ImageGeneration,
     InstanceBroken,
     RequestEventLog,
     ResumeDeployment,
-    SendInputChunk,
     SetInstanceLink,
-    TaskCancelled,
-    TaskFinished,
     TestCommand,
-    TextGeneration,
 )
 from exo.shared.types.common import (
     CommandId,
@@ -62,7 +50,6 @@ from exo.shared.types.common import (
 )
 from exo.shared.types.deployments import Deployment, Hold
 from exo.shared.types.events import (
-    ChunkGenerated,
     CustomModelCardAdded,
     CustomModelCardDeleted,
     DeploymentCreated,
@@ -71,7 +58,6 @@ from exo.shared.types.events import (
     Event,
     GlobalForwarderEvent,
     IndexedEvent,
-    InputChunkReceived,
     InstanceCreated,
     InstanceDeleted,
     InstanceLinkCreated,
@@ -81,29 +67,10 @@ from exo.shared.types.events import (
     NodeLeft,
     NodeTimedOut,
     StateSnapshot,
-    TaskCreated,
-    TaskDeleted,
-    TaskStatusUpdated,
-    TraceEventData,
-    TracesCollected,
-    TracesMerged,
 )
 from exo.shared.types.instance_link import InstanceLink
 from exo.shared.types.state import State
-from exo.shared.types.tasks import (
-    ImageEdits as ImageEditsTask,
-)
-from exo.shared.types.tasks import (
-    ImageGeneration as ImageGenerationTask,
-)
-from exo.shared.types.tasks import (
-    TaskId,
-    TaskStatus,
-)
-from exo.shared.types.tasks import (
-    TextGeneration as TextGenerationTask,
-)
-from exo.shared.types.worker.instances import InstanceId, InstanceRemovalReason
+from exo.shared.types.worker.instances import InstanceRemovalReason
 from exo.utils.channels import Receiver, Sender
 from exo.utils.event_buffer import MultiSourceBuffer
 from exo.utils.task_group import TaskGroup
@@ -126,93 +93,8 @@ PLAN_INTERVAL = 1.0
 # Recent events kept for nodes that missed a few. A node further behind than this
 # is sent a snapshot of the current state instead of the whole history.
 REPLAYABLE_EVENTS = 10_000
-# ...holding at most this much image data. Image chunks are the only large events, and a
-# few requests with large images would otherwise make the window hold gigabytes.
-REPLAYABLE_IMAGE_BYTES = 256 * 1024 * 1024
 # Events replayed per RequestEventLog; the requester asks again for the rest.
 REPLAY_BATCH_SIZE = 1000
-
-
-def _image_bytes(event: Event) -> int:
-    match event:
-        case InputChunkReceived(chunk=chunk):
-            return len(chunk.data)
-        case ChunkGenerated(chunk=ImageChunk() as chunk):
-            return len(chunk.data)
-        case _:
-            return 0
-
-
-def task_for_command(state: State, command_id: CommandId) -> TaskId | None:
-    """The generation task created for a command, as state has it. The master's own tasks are
-    in its state as soon as it creates them, and state carries over to the next master, so a
-    request started under a previous master can still be finished or cancelled."""
-    for task_id, task in state.tasks.items():
-        if (
-            isinstance(task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask))
-            and task.command_id == command_id
-        ):
-            return task_id
-    return None
-
-
-def _prefill_endpoint_for(state: State, decode_instance_id: InstanceId) -> str | None:
-    decode = state.instances.get(decode_instance_id)
-    if decode is None:
-        return None
-    decode_node = next(iter(decode.shard_assignments.node_to_runner.keys()), None)
-    if decode_node is None:
-        return None
-
-    sources: set[InstanceId] = set()
-    for link in state.instance_links.values():
-        if decode_instance_id in link.decode_instances:
-            sources.update(link.prefill_instances)
-    sources.discard(decode_instance_id)
-
-    in_flight = {TaskStatus.Pending, TaskStatus.Running}
-    task_counts: dict[InstanceId, int] = {
-        src_id: sum(
-            1
-            for task in state.tasks.values()
-            if task.instance_id == src_id and task.task_status in in_flight
-        )
-        for src_id in sources
-    }
-    for src_id in sorted(sources, key=lambda sid: task_counts[sid]):
-        instance = state.instances.get(src_id)
-        if instance is None:
-            continue
-        for node_id, runner_id in instance.shard_assignments.node_to_runner.items():
-            port = state.prefill_server_ports.get(runner_id)
-            if port is None:
-                continue
-            ip = find_ip_prioritised(
-                decode_node, node_id, state.topology, state.node_network, ring=True
-            )
-            if ip is None:
-                continue
-            return f"{ip}:{port}"
-    return None
-
-
-def _without_requests(state: State) -> State:
-    """The state without its requests' tasks. Requests don't outlast their master: every
-    node's API ends the ones in flight when the master changes, since the old master was
-    routing their output, so their tasks would only linger."""
-    return state.model_copy(
-        update={
-            "tasks": {
-                task_id: task
-                for task_id, task in state.tasks.items()
-                if not isinstance(
-                    task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask)
-                )
-            }
-        }
-    )
-
-
 # How many processed command ids the master remembers, to act on a repeated command only once
 PROCESSED_COMMANDS_KEPT = 100_000
 
@@ -246,17 +128,6 @@ def nodes_to_remove(listed: AbstractSet[NodeId], view: MembershipView) -> set[No
     }
 
 
-class NoInstanceForModelError(Exception):
-    """A request for a model with no instance that can serve it: none at all (one deleted after
-    the API checked for it), or none ready. The request is ended with this error: dropping it
-    would leave it open forever, and sending it to an instance that isn't ready would leave it
-    waiting for as long as the instance takes, perhaps forever."""
-
-    def __init__(self, model: str, message: str):
-        super().__init__(message)
-        self.model = ModelId(model)
-
-
 class Master:
     def __init__(
         self,
@@ -281,9 +152,7 @@ class Master:
         # A master elected in a running cluster carries on from the state its node already
         # has, so model instances survive the change of master. Its events are numbered on
         # from that state, and other nodes catch up from a snapshot of it.
-        self.state = (
-            _without_requests(initial_state) if initial_state is not None else State()
-        )
+        self.state = initial_state if initial_state is not None else State()
         self._tg: TaskGroup = TaskGroup()
         self.command_receiver = command_receiver
         self.local_event_receiver = local_event_receiver
@@ -293,10 +162,7 @@ class Master:
         self._system_id = SystemId()
         self._multi_buffer = MultiSourceBuffer[SystemId, Event]()
         self._recent_events: deque[Event] = deque()
-        self._recent_image_bytes = 0
         self._replayable_events = REPLAYABLE_EVENTS
-        self._replayable_image_bytes = REPLAYABLE_IMAGE_BYTES
-        self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
         # Deployments that didn't fit, and what they were tried with: tried again only when
         # that changes
         self._unfit: dict[DeploymentId, Hashable] = {}
@@ -309,7 +175,6 @@ class Master:
         self._held_back: frozenset[NodeId] = frozenset()
         self._processed_commands: set[CommandId] = set()
         self._processed_order: deque[CommandId] = deque()
-        self._expected_ranks: dict[TaskId, set[int]] = {}
 
     async def run(self):
         logger.info("Starting Master")
@@ -333,11 +198,10 @@ class Master:
         self._tg.cancel_tasks()
 
     def _already_processed(self, command_id: CommandId) -> bool:
-        """Whether this command was processed already. The API sends a request again until it
+        """Whether this command was processed already. The API sends a change again until it
         sees it take effect, so the same command can arrive more than once, even after what it
-        did was undone (a launch stopped since): a copy is ignored. A new master doesn't know
-        what the old one processed, but a request it accepted is a task."""
-        return command_id in self._processed_commands or self._has_task_for(command_id)
+        did was undone (a launch stopped since): a copy is ignored."""
+        return command_id in self._processed_commands
 
     def _remember_processed(self, command_id: CommandId) -> None:
         """Only a command that changed something is remembered: one that changed nothing (a
@@ -346,13 +210,6 @@ class Master:
         self._processed_order.append(command_id)
         if len(self._processed_order) > PROCESSED_COMMANDS_KEPT:
             self._processed_commands.discard(self._processed_order.popleft())
-
-    def _has_task_for(self, command_id: CommandId) -> bool:
-        return any(
-            isinstance(task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask))
-            and task.command_id == command_id
-            for task in self.state.tasks.values()
-        )
 
     async def _command_processor(self) -> None:
         with self.command_receiver as commands:
@@ -373,93 +230,6 @@ class Master:
                     match command:
                         case TestCommand():
                             pass
-                        case TextGeneration():
-                            # set-difference => prefill-only nodes
-                            prefill_only: set[InstanceId] = set()
-                            for link in self.state.instance_links.values():
-                                prefill_only.update(link.prefill_instances)
-                            for link in self.state.instance_links.values():
-                                prefill_only.difference_update(link.decode_instances)
-
-                            decode_instance_id = self._least_busy_instance(
-                                command.task_params.model, excluded=prefill_only
-                            )
-                            task_id = TaskId()
-                            params = command.task_params.model_copy(
-                                update={
-                                    "prefill_endpoint": _prefill_endpoint_for(
-                                        self.state, decode_instance_id
-                                    ),
-                                }
-                            )
-                            generated_events.append(
-                                TaskCreated(
-                                    task_id=task_id,
-                                    task=TextGenerationTask(
-                                        task_id=task_id,
-                                        command_id=command.command_id,
-                                        instance_id=decode_instance_id,
-                                        task_status=TaskStatus.Pending,
-                                        task_params=params,
-                                    ),
-                                )
-                            )
-                        case ImageGeneration():
-                            task_id = TaskId()
-                            selected_instance_id = self._least_busy_instance(
-                                command.task_params.model
-                            )
-                            generated_events.append(
-                                TaskCreated(
-                                    task_id=task_id,
-                                    task=ImageGenerationTask(
-                                        task_id=task_id,
-                                        command_id=command.command_id,
-                                        instance_id=selected_instance_id,
-                                        task_status=TaskStatus.Pending,
-                                        task_params=command.task_params,
-                                    ),
-                                )
-                            )
-
-                            if EXO_TRACING_ENABLED:
-                                selected_instance = self.state.instances.get(
-                                    selected_instance_id
-                                )
-                                if selected_instance:
-                                    ranks = set(
-                                        shard.device_rank
-                                        for shard in selected_instance.shard_assignments.runner_to_shard.values()
-                                    )
-                                    self._expected_ranks[task_id] = ranks
-                        case ImageEdits():
-                            task_id = TaskId()
-                            selected_instance_id = self._least_busy_instance(
-                                command.task_params.model
-                            )
-                            generated_events.append(
-                                TaskCreated(
-                                    task_id=task_id,
-                                    task=ImageEditsTask(
-                                        task_id=task_id,
-                                        command_id=command.command_id,
-                                        instance_id=selected_instance_id,
-                                        task_status=TaskStatus.Pending,
-                                        task_params=command.task_params,
-                                    ),
-                                )
-                            )
-
-                            if EXO_TRACING_ENABLED:
-                                selected_instance = self.state.instances.get(
-                                    selected_instance_id
-                                )
-                                if selected_instance:
-                                    ranks = set(
-                                        shard.device_rank
-                                        for shard in selected_instance.shard_assignments.runner_to_shard.values()
-                                    )
-                                    self._expected_ranks[task_id] = ranks
                         case CreateDeployment() if (
                             command.deployment_id in self.state.removed_deployments
                         ):
@@ -566,43 +336,9 @@ class Master:
                                 removal_events(
                                     command.instance_id,
                                     command.reason,
-                                    self.state.tasks,
                                     datetime.now(tz=timezone.utc),
                                 )
                             )
-                        case SendInputChunk(chunk=chunk):
-                            generated_events.append(
-                                InputChunkReceived(
-                                    command_id=chunk.command_id,
-                                    chunk=chunk,
-                                )
-                            )
-                        case TaskCancelled():
-                            if (
-                                task_id := task_for_command(
-                                    self.state, command.cancelled_command_id
-                                )
-                            ) is not None:
-                                generated_events.append(
-                                    TaskStatusUpdated(
-                                        task_status=TaskStatus.Cancelled,
-                                        task_id=task_id,
-                                    )
-                                )
-                            else:
-                                logger.warning(
-                                    f"Nonexistent command {command.cancelled_command_id} cancelled"
-                                )
-                        case TaskFinished():
-                            # The API resends a finish while the task is still in its state,
-                            # so a finish for a task already deleted is expected
-                            if (
-                                task_id := task_for_command(
-                                    self.state, command.finished_command_id
-                                )
-                            ) is not None:
-                                generated_events.append(TaskDeleted(task_id=task_id))
-
                         case AddCustomModelCard():
                             generated_events.append(
                                 CustomModelCardAdded(model_card=command.model_card)
@@ -652,80 +388,8 @@ class Master:
                                 origin=self._system_id, command=download_command
                             )
                         )
-                except NoInstanceForModelError as error:
-                    command_id = forwarder_command.command.command_id
-                    self._remember_processed(command_id)
-                    logger.warning(f"Ending request {command_id}: {error}")
-                    self._index(
-                        ChunkGenerated(
-                            command_id=command_id,
-                            chunk=ErrorChunk(
-                                model=error.model, error_message=str(error)
-                            ),
-                        )
-                    )
                 except Exception as e:
                     logger.opt(exception=e).warning("Error in command processor")
-
-    def _least_busy_instance(
-        self, model: str, excluded: AbstractSet[InstanceId] = frozenset()
-    ) -> InstanceId:
-        """The ready instance of the model with the fewest requests in flight.
-
-        Instances with a node this node can't reach now, as its membership sees it, are left
-        out: their output can't arrive. The API that sent the request checked the same on its
-        own view; this is the backstop for views that differ. A request whose model has only
-        such instances ends at once.
-
-        So are instances that aren't ready (downloading, loading, failed): the API waits for
-        a model to be ready before sending a request, but with several instances of a model,
-        one may be ready and another not.
-        """
-        in_flight = {TaskStatus.Pending, TaskStatus.Running}
-        of_model = [
-            instance
-            for instance_id, instance in self.state.instances.items()
-            if instance.shard_assignments.model_id == model
-            and instance_id not in excluded
-        ]
-        if not of_model:
-            # The API sends a request only for a model it saw an instance of, so the instance
-            # was deleted (the model stopped, or a node lost) after the API looked
-            raise NoInstanceForModelError(model, INSTANCE_GONE_BEFORE_START)
-        reachable = [
-            instance
-            for instance in of_model
-            if instance_is_reachable(self.membership, instance)
-        ]
-        if not reachable:
-            raise NoInstanceForModelError(model, DEVICE_UNREACHABLE)
-        ready = [
-            instance.instance_id
-            for instance in reachable
-            if instance_is_ready(instance, self.state.runners)
-        ]
-        if not ready:
-            not_ready = [
-                status
-                for instance in reachable
-                if (status := instance_readiness(self.state, instance)) is not None
-            ]
-            raise NoInstanceForModelError(
-                model,
-                min(
-                    not_ready,
-                    key=lambda status: (status.failed, status.retry_after_seconds),
-                ).message,
-            )
-        task_counts: dict[InstanceId, int] = {
-            instance_id: sum(
-                1
-                for task in self.state.tasks.values()
-                if task.instance_id == instance_id and task.task_status in in_flight
-            )
-            for instance_id in ready
-        }
-        return min(task_counts, key=lambda instance_id: task_counts[instance_id])
 
     # These plan loops are the cracks showing in our event sourcing architecture - more things could be commands
     async def _plan(self) -> None:
@@ -791,9 +455,7 @@ class Master:
                 event
                 for instance_id, instance in self.state.instances.items()
                 if instance.deployment_id == deployment_id
-                for event in removal_events(
-                    instance_id, "UserStopped", self.state.tasks, now
-                )
+                for event in removal_events(instance_id, "UserStopped", now)
             ),
             DeploymentRemoved(deployment_id=deployment_id, at=now.isoformat()),
         ]
@@ -907,7 +569,7 @@ class Master:
                 reason = None
             placed.add(deployment_id)
             if reason is not None:
-                for event in removal_events(instance_id, reason, self.state.tasks, now):
+                for event in removal_events(instance_id, reason, now):
                     self._index(event)
 
     def _on_node_removed(self, node_id: NodeId) -> None:
@@ -960,10 +622,6 @@ class Master:
                     local_event.origin,
                 )
                 for event in self._multi_buffer.drain():
-                    if isinstance(event, TracesCollected):
-                        self._handle_traces_collected(event)
-                        continue
-
                     logger.debug(f"Master indexing event: {str(event)[:100]}")
                     if isinstance(event, NodeLeft):
                         logger.info(f"Node {event.node_id} is leaving the cluster")
@@ -1012,12 +670,8 @@ class Master:
 
     def _remember(self, event: Event) -> None:
         self._recent_events.append(event)
-        self._recent_image_bytes += _image_bytes(event)
-        while (
-            len(self._recent_events) > self._replayable_events
-            or self._recent_image_bytes > self._replayable_image_bytes
-        ):
-            self._recent_image_bytes -= _image_bytes(self._recent_events.popleft())
+        while len(self._recent_events) > self._replayable_events:
+            self._recent_events.popleft()
 
     async def _serve_event_log_request(
         self, since_idx: int, requester: SystemId, snapshot: bool = False
@@ -1052,27 +706,3 @@ class Master:
                 event=event.event,
             )
         )
-
-    def _handle_traces_collected(self, event: TracesCollected) -> None:
-        task_id = event.task_id
-        if task_id not in self._pending_traces:
-            self._pending_traces[task_id] = {}
-        self._pending_traces[task_id][event.rank] = event.traces
-
-        if (
-            task_id in self._expected_ranks
-            and set(self._pending_traces[task_id].keys())
-            >= self._expected_ranks[task_id]
-        ):
-            self._merge_and_save_traces(task_id)
-
-    def _merge_and_save_traces(self, task_id: TaskId) -> None:
-        all_trace_data: list[TraceEventData] = []
-        for trace_data in self._pending_traces[task_id].values():
-            all_trace_data.extend(trace_data)
-
-        self._index(TracesMerged(task_id=task_id, traces=all_trace_data))
-
-        del self._pending_traces[task_id]
-        if task_id in self._expected_ranks:
-            del self._expected_ranks[task_id]

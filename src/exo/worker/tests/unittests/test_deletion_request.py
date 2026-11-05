@@ -3,6 +3,7 @@ failed to start: once, not on every pass of its planning loop until the removal 
 
 import anyio
 
+from exo.routing.tests.fake_reachability import FakeReachability
 from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import (
@@ -30,13 +31,15 @@ async def test_asks_once_to_delete_an_instance_it_gave_up_on():
     event_sender, _ = channel[Event]()
     command_sender, commands = channel[ForwarderCommand]()
     download_sender, _ = channel[ForwarderDownloadCommand]()
+    node_id = NodeId()
     worker = Worker(
-        NodeId(),
+        node_id,
         event_receiver=event_receiver,
         event_sender=event_sender,
         command_sender=command_sender,
         download_command_sender=download_sender,
         api_port=52415,
+        reachability=FakeReachability(node_id),
     )
     instance_id, runner_id = InstanceId(), RunnerId()
     sender, receiver = channel[IndexedEvent]()

@@ -7,7 +7,7 @@ import pytest
 
 import exo.master.main as master_main
 from exo.master.main import Master
-from exo.master.tests.test_requests_to_deleted_instances import deployment_of
+from exo.master.tests.master_helpers import deployment_of
 from exo.master.tests.test_silent_nodes import instance_on
 from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.topology import Topology
