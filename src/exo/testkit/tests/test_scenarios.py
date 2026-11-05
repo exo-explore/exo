@@ -24,7 +24,6 @@ import pytest
 from exo.shared.request_errors import DEVICE_UNREACHABLE
 from exo.shared.types.worker.instances import InstanceId
 from exo.testkit.cluster import (
-    EXPECTED_FAILURES,
     ChatHandle,
     ChatResult,
     Cluster,
@@ -262,14 +261,16 @@ CRASHED_MASTER_REPLACED_WITHIN = 10.0
 
 
 @pytest.mark.slow
-def test_killing_the_master_elects_a_new_one_and_fails_in_flight_chats(
+def test_killing_the_master_elects_a_new_one_and_keeps_in_flight_chats(
     make_cluster: MakeCluster,
 ) -> None:
     """kill -9 of the master while a chat streams from a healthy instance on a follower.
-    Main: the followers elect a new master (measured 5.5 s; bound 10 s; before #2586 usually
-    only after the 30 s master-silence timeout, as in 2 of 3 master kills on real Macs), the
-    chat fails when they do, and the dead master leaves every view when the new master
-    times it out (measured 20.5 s after the kill; bound 45 s after the new master)."""
+    The followers elect a new master (measured 5.5 s; bound 10 s; before #2586 usually only
+    after the 30 s master-silence timeout, as in 2 of 3 master kills on real Macs), and the
+    dead master leaves every view when the new master times it out (measured 20.5 s after
+    the kill; bound 45 s after the new master). The chat streams on: requests don't go
+    through the master (before they stopped doing so, it failed when the followers elected
+    a new one)."""
     cluster = make_cluster(3)
     roles = _roles(cluster)
     serving, asking = roles.followers
@@ -282,7 +283,7 @@ def test_killing_the_master_elects_a_new_one_and_fails_in_flight_chats(
         timeout=CRASHED_MASTER_REPLACED_WITHIN, other_than=roles.master
     )
     assert new_master in roles.followers
-    _clean_error(chat.result(60))
+    _ok(chat.result(60))
     cluster.wait_until_consistent(timeout=45)
     _ok(cluster.chat("after the new master", via=asking, timeout=30))
 
@@ -308,13 +309,6 @@ def test_a_crashed_master_is_replaced_quickly(make_cluster: MakeCluster) -> None
             cluster.wait_for_cluster(timeout=60)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=EXPECTED_FAILURES,
-    reason="Every change of master ends every in-flight request, a graceful quit "
-    "included (6 of 6 failed on real Macs, where 16-22% of failed requests in a 2 h soak "
-    "were on instances that lost no node)",
-)
 def test_a_master_change_keeps_chats_on_healthy_instances(
     make_cluster: MakeCluster,
 ) -> None:
@@ -494,10 +488,20 @@ def test_a_40s_pause_removes_the_node_and_it_rejoins(make_cluster: MakeCluster) 
     master, which removes nothing (it reaches 1 of 3), then merges back (bound 60 s after
     waking) with no ghosts. On real Macs, 60 s and 300 s sleeps (with removal on a silence
     timeout): removed at 17-18 s, merged back in 17-29 s, once after 72 s as its own
-    master."""
+    master.
+
+    The removal can come a moment after the node wakes (Gone is 30 s after Suspect, which
+    comes at 9-12 s), and nothing else changes the cluster's state meanwhile (requests don't
+    go through its log), so the nodes can agree as it wakes: the instance's deletion is
+    waited for (bound 15 s after waking), then the merge."""
     cluster = make_cluster(3)
     instance, result, master = _pause_holding_half_an_instance(cluster, 40)
     _clean_error(result)
+    cluster.wait_for_value(
+        lambda: True if _instance_gone(cluster, instance, via=master) else None,
+        timeout=15,
+        what="the instance deleted once the paused node is gone",
+    )
     cluster.wait_until_consistent(timeout=60)
     assert _instance_gone(cluster, instance, via=master)
 

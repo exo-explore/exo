@@ -36,6 +36,9 @@ class NetworkTable(BaseModel):
     # and exo's worker tells topology edges apart only by address (all of these are this
     # machine's loopback)
     addresses: dict[NodeId, str] = {}
+    # api_routes[source][sink]: the port of the proxy where source reaches sink's API, through
+    # the simulated network
+    api_routes: dict[NodeId, dict[NodeId, int]] = {}
     cuts: list[Cut] = []
 
     def cut_between(self, a: NodeId, b: NodeId) -> CutMode | None:
