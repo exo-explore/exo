@@ -56,6 +56,7 @@ from exo.worker.disaggregated.server import (
 )
 from exo.worker.engines.base import Builder, Engine
 from exo.worker.runner.bootstrap import logger
+from exo.worker.runner.busy_core import busy_core_while_generating
 
 PREFILL_PICKUP_TIMEOUT_SECONDS = 3
 PREFILL_FINISH_TIMEOUT_SECONDS = 300
@@ -342,6 +343,11 @@ class Runner:
 
         self.submit_generation(starting_task)
 
+        with busy_core_while_generating(self.instance, self.shard_metadata):
+            return self._generate_until_idle()
+
+    def _generate_until_idle(self) -> ExitCode:
+        assert isinstance(self.generator, Engine)
         while self.active_tasks:
             results = self.generator.step()
 
