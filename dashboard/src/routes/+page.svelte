@@ -45,6 +45,8 @@
     togglePreviewNodeFilter,
     clearPreviewNodeFilter,
     previewNodeFilter,
+    setPreviewMaxContextLength,
+    previewMaxContextLength,
     createConversation,
     setSelectedChatModel,
     selectedChatModel,
@@ -138,6 +140,7 @@
   const nodeDiskData = $derived(nodeDisk());
   const previewsData = $derived(placementPreviews());
   const selectedModelId = $derived(selectedPreviewModelId());
+  const selectedMaxContextLength = $derived(previewMaxContextLength());
   const loadingPreviews = $derived(isLoadingPreviews());
   const debugEnabled = $derived(debugMode());
   const topologyOnlyEnabled = $derived(topologyOnlyMode());
@@ -1084,8 +1087,12 @@
       quantization?: string;
       base_model?: string;
       capabilities?: string[];
+      context_length?: number;
     }>
   >([]);
+  const nativeContextLength = $derived(
+    models.find((m) => m.id === selectedModelId)?.context_length || null,
+  );
   type ModelMemoryFitStatus =
     | "fits_now"
     // Fits in memory, but its devices haven't the disk space to download it
@@ -1898,6 +1905,21 @@
     isModelPickerOpen = false;
   }
 
+  function handleMaxContextLengthChange(event: Event) {
+    if (!nativeContextLength) return;
+    const target = event.target as HTMLInputElement;
+    const parsed = parseInt(target.value, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      target.value = String(nativeContextLength);
+      setPreviewMaxContextLength(null);
+      return;
+    }
+    const clamped = Math.min(Math.max(parsed, 1), nativeContextLength);
+    target.value = String(clamped);
+    // Only send a cap when it actually reduces context below the native max.
+    setPreviewMaxContextLength(clamped >= nativeContextLength ? null : clamped);
+  }
+
   async function launchInstance(
     modelId: string,
     specificPreview?: PlacementPreview | null,
@@ -1928,6 +1950,7 @@
             sharding: selectedSharding,
             instance_meta: selectedInstanceType,
             min_nodes: 1,
+            max_context_length: selectedMaxContextLength,
           }),
         });
       }
@@ -7534,6 +7557,40 @@
                       {/each}
                     </div>
                   </div>
+
+                  <!-- Max Context Length -->
+                  {#if nativeContextLength}
+                    <div>
+                      <div
+                        class="text-xs text-white/50 font-mono mb-2 flex items-center justify-between"
+                      >
+                        <span>Max Context Length:</span>
+                        <span class="text-white/30"
+                          >native max: {nativeContextLength.toLocaleString()}</span
+                        >
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="1"
+                          max={nativeContextLength}
+                          value={selectedMaxContextLength ??
+                            nativeContextLength}
+                          onchange={handleMaxContextLengthChange}
+                          class="w-28 bg-transparent border border-exo-medium-gray/50 rounded px-2 py-1.5 text-xs font-mono text-exo-yellow transition-all duration-200 hover:border-exo-yellow/50 focus:outline-none focus:border-exo-yellow/70"
+                        />
+                        {#if selectedMaxContextLength !== null}
+                          <button
+                            type="button"
+                            onclick={() => setPreviewMaxContextLength(null)}
+                            class="text-xs text-white/40 hover:text-white/70 font-mono underline underline-offset-2 cursor-pointer"
+                          >
+                            reset
+                          </button>
+                        {/if}
+                      </div>
+                    </div>
+                  {/if}
                 </div>
               {/if}
             </div>
