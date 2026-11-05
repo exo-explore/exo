@@ -52,7 +52,6 @@ def test_plan_kills_runner_when_instance_missing():
         global_download_status={NODE_A: []},
         instances=instances,
         all_runners=all_runners,
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -93,7 +92,6 @@ def test_plan_kills_runner_when_sibling_failed():
         global_download_status={NODE_A: []},
         instances=instances,
         all_runners=all_runners,
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -126,7 +124,6 @@ def test_plan_creates_runner_when_missing_for_node():
         global_download_status={NODE_A: []},
         instances=instances,
         all_runners=all_runners,
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -166,7 +163,6 @@ def test_plan_does_not_create_runner_when_supervisor_already_present():
         global_download_status={NODE_A: []},
         instances=instances,
         all_runners=all_runners,
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -197,7 +193,6 @@ def test_plan_does_not_create_runner_for_unassigned_node():
         global_download_status={NODE_A: []},
         instances=instances,
         all_runners=all_runners,
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )

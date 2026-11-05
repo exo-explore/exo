@@ -14,7 +14,6 @@ from exo.shared.types.commands import (
     ForwarderCommand,
     ForwarderDownloadCommand,
     PlaceInstance,
-    TextGeneration,
 )
 from exo.shared.types.common import ModelId, SessionId, SystemId
 from exo.shared.types.events import (
@@ -25,18 +24,10 @@ from exo.shared.types.events import (
     NodeGatheredInfo,
     RunnerStatusUpdated,
     StateSnapshot,
-    TaskCreated,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import (
     MemoryUsage,
-)
-from exo.shared.types.tasks import TaskStatus
-from exo.shared.types.tasks import TextGeneration as TextGenerationTask
-from exo.shared.types.text_generation import (
-    InputMessage,
-    InputMessageContent,
-    TextGenerationTaskParams,
 )
 from exo.shared.types.worker.instances import (
     InstanceMeta,
@@ -172,27 +163,7 @@ async def test_master():
         )
         while runner_id not in master.state.runners:
             await anyio.sleep(0.001)
-        logger.info("inject a TextGeneration Command")
-        await command_sender.send(
-            ForwarderCommand(
-                origin=SystemId("API"),
-                command=(
-                    TextGeneration(
-                        command_id=CommandId(),
-                        task_params=TextGenerationTaskParams(
-                            model=ModelId("llama-3.2-1b"),
-                            input=[
-                                InputMessage(
-                                    role="user",
-                                    content=InputMessageContent("Hello, how are you?"),
-                                )
-                            ],
-                        ),
-                    )
-                ),
-            )
-        )
-        while len(_get_events()) < 5:
+        while len(_get_events()) < 4:
             await anyio.sleep(0.01)
 
         events = [
@@ -200,11 +171,11 @@ async def test_master():
             for event in _get_events()
             if not isinstance(event.event, RunnerStatusUpdated)
         ]
-        assert len(events) == 4
+        # The master places instances; requests never go through it
+        assert len(events) == 3
         assert events[0].idx == 0
         assert events[1].idx == 1
         assert events[2].idx == 2
-        assert events[3].idx == 4
         assert isinstance(events[0].event, NodeGatheredInfo)
         assert isinstance(events[1].event, NodeGatheredInfo)
         assert isinstance(events[2].event, InstanceCreated)
@@ -241,16 +212,4 @@ async def test_master():
         assert len(created_instance.hosts_by_node[node_id]) == 1
         assert created_instance.hosts_by_node[node_id][0].ip == "0.0.0.0"
         assert created_instance.ephemeral_port > 0
-        assert isinstance(events[3].event, TaskCreated)
-        assert events[3].event.task.task_status == TaskStatus.Pending
-        assert isinstance(events[3].event.task, TextGenerationTask)
-        assert events[3].event.task.task_params == TextGenerationTaskParams(
-            model=ModelId("llama-3.2-1b"),
-            input=[
-                InputMessage(
-                    role="user", content=InputMessageContent("Hello, how are you?")
-                )
-            ],
-        )
-
         await master.shutdown()

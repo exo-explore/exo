@@ -396,8 +396,7 @@ class BenchImageGenerationTaskParams(ImageGenerationTaskParams):
 class ImageEditsTaskParams(BaseModel):
     """Internal task params for image-editing requests."""
 
-    image_data: str = ""  # Base64-encoded image (empty when using chunked transfer)
-    total_input_chunks: int = 0
+    image_data: str = ""  # Base64-encoded image, sent inline to the nodes that run it
     prompt: str
     model: str
     n: int | None = 1

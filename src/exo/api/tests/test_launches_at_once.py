@@ -169,8 +169,6 @@ def an_api(state: State) -> tuple[API, Receiver[ForwarderCommand]]:
     api._system_id = SystemId()
     api.command_sender, commands = channel[ForwarderCommand]()
     api._recent_events = RecentEvents()
-    api._text_generation_queues = {}
-    api._image_generation_queues = {}
     api._tg = TaskGroup()
     return api, commands
 

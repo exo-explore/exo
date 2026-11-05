@@ -17,10 +17,13 @@ from loguru import logger
 
 from exo.shared.constants import EXO_RUNNER_STDERR_LOG, EXO_RUNNER_STDOUT_LOG
 from exo.shared.models.model_cards import ModelCard
-from exo.shared.types.chunks import ErrorChunk
+from exo.shared.request_errors import MODEL_STOPPED
+from exo.shared.types.chunks import Chunk, ErrorChunk
+from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
+    RunnerEvent,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
@@ -28,6 +31,7 @@ from exo.shared.types.events import (
 from exo.shared.types.tasks import (
     CANCEL_ALL_TASKS,
     ConnectToGroup,
+    GenerationTask,
     ImageEdits,
     ImageGeneration,
     LoadModel,
@@ -281,7 +285,7 @@ class RunnerSupervisor:
     bound_instance: BoundInstance
     runner_process: AsyncProcess
     _runner_stdio_handler: RunnerStdioHandler
-    _ev_recv: MpReceiver[Event | RunnerTerminationError]
+    _ev_recv: MpReceiver[RunnerEvent | RunnerTerminationError]
     _task_sender: MpSender[Task]
     _event_sender: Sender[Event]
     _cancel_sender: MpSender[TaskId]
@@ -305,6 +309,10 @@ class RunnerSupervisor:
     # sets it on the report itself, which the plan, looking at the state every so often, could
     # miss: a replacement's status can follow it within moments.
     peer_went: bool = field(default=False, init=False)
+    # Where the output of each request this runner emits goes: the request's stream on this
+    # node (exo.worker.serving). Only the output rank has them; the other ranks emit nothing.
+    _outputs: dict[TaskId, Sender[Chunk]] = field(default_factory=dict, init=False)
+    _output_tasks: dict[CommandId, TaskId] = field(default_factory=dict, init=False)
 
     @classmethod
     async def create(
@@ -317,7 +325,7 @@ class RunnerSupervisor:
         # while it waits for the other ranks. Left to a background thread, the status and the
         # acknowledgement the runner sends just before would wait for the call to return, and
         # the other ranks wait for that status before they connect.
-        ev_send, ev_recv = mp_channel[Event | RunnerTerminationError](
+        ev_send, ev_recv = mp_channel[RunnerEvent | RunnerTerminationError](
             send_immediately=True
         )
         task_sender, task_recv = mp_channel[Task]()
@@ -365,6 +373,10 @@ class RunnerSupervisor:
                 tg.start_soon(self._forward_events)
         finally:
             logger.info("Runner supervisor shutting down")
+            # Its requests can't finish now (the model was stopped, or its instance is being
+            # rebuilt): end their streams rather than leave them waiting
+            with anyio.CancelScope(shield=True):
+                await self._end_outputs(MODEL_STOPPED)
             if not self._cancel_watch_runner.cancel_called:
                 self._cancel_watch_runner.cancel()
             with contextlib.suppress(ClosedResourceError):
@@ -473,8 +485,25 @@ class RunnerSupervisor:
                     )
                 )
 
-    async def start_task(self, task: Task):
+    async def fail(self, reason: str) -> None:
+        """Stop the runner as failed, as the stall watchdog does: its requests end with an
+        error, and its instance's runners are started again (exo.worker.plan)."""
+        await self._check_runner(RunnerStoppedError(reason))
+
+    def has_task(self, task_id: TaskId) -> bool:
+        """Whether this runner was given the task (it may have finished it since)"""
+        return (
+            task_id in self.pending
+            or task_id in self.in_progress
+            or task_id in self.completed
+            or task_id in self.cancelled
+        )
+
+    async def start_task(self, task: Task, output: Sender[Chunk] | None = None):
         """Send the task to the runner, without waiting for the runner to acknowledge it.
+
+        A request's chunks go to `output`, which is closed once the runner has finished or
+        cancelled the request, or has gone.
 
         The caller is the worker's planning for every runner on this node, and a runner can
         take minutes to pick up a generation task behind a long prompt, or never acknowledge a
@@ -495,11 +524,17 @@ class RunnerSupervisor:
         logger.info(f"Starting task {task}")
         self.pending[task.task_id] = anyio.Event()
         self.in_progress[task.task_id] = task
+        if output is not None and isinstance(
+            task, (TextGeneration, ImageGeneration, ImageEdits)
+        ):
+            self._outputs[task.task_id] = output
+            self._output_tasks[task.command_id] = task.task_id
         try:
             await self._task_sender.send_async(task)
         except ClosedResourceError:
             self.in_progress.pop(task.task_id, None)
             self.pending.pop(task.task_id, None)
+            self._end_output(task.task_id)
             logger.warning(f"Task {task} dropped, runner closed communication.")
             return
         match task:
@@ -599,6 +634,23 @@ class RunnerSupervisor:
                     if isinstance(event, TaskAcknowledged):
                         self.pending.pop(event.task_id).set()
                         continue
+                    if isinstance(event, ChunkGenerated):
+                        # A request's output goes to its stream, never into the cluster's log
+                        await self._send_output(event.command_id, event.chunk)
+                        continue
+                    if isinstance(event, TaskStatusUpdated) and isinstance(
+                        self.in_progress.get(event.task_id), GenerationTask
+                    ):
+                        # Requests aren't in the cluster state: their progress is this node's
+                        if event.task_status in (
+                            TaskStatus.Complete,
+                            TaskStatus.Cancelled,
+                            TaskStatus.Failed,
+                        ):
+                            self.in_progress.pop(event.task_id, None)
+                            self.completed.add(event.task_id)
+                            self._end_output(event.task_id)
+                        continue
                     if (
                         isinstance(event, TaskStatusUpdated)
                         and event.task_status == TaskStatus.Cancelled
@@ -633,6 +685,39 @@ class RunnerSupervisor:
         finally:
             for tid in self.pending:
                 self.pending[tid].set()
+
+    async def _send_output(self, command_id: CommandId, chunk: Chunk) -> None:
+        task_id = self._output_tasks.get(command_id)
+        if task_id is None or (output := self._outputs.get(task_id)) is None:
+            return  # a rank that doesn't stream this request, or one already ended
+        try:
+            await output.send(chunk)
+        except (ClosedResourceError, BrokenResourceError):
+            self._end_output(task_id)
+
+    def _end_output(self, task_id: TaskId) -> None:
+        if (output := self._outputs.pop(task_id, None)) is not None:
+            output.close()
+        self._output_tasks = {
+            command_id: tid
+            for command_id, tid in self._output_tasks.items()
+            if tid != task_id
+        }
+
+    async def _end_outputs(self, error_message: str) -> None:
+        """End every request still streaming from this runner with an error"""
+        for task_id in list(self._outputs):
+            output = self._outputs.get(task_id)
+            if output is None:
+                continue
+            with contextlib.suppress(ClosedResourceError, BrokenResourceError):
+                output.send_nowait(
+                    ErrorChunk(
+                        model=self.shard_metadata.model_card.model_id,
+                        error_message=error_message,
+                    )
+                )
+            self._end_output(task_id)
 
     async def _watch_runner(self) -> None:
         with self._cancel_watch_runner:
@@ -759,16 +844,16 @@ class RunnerSupervisor:
                     f"Ending request {task.command_id} with: {error_message}"
                 )
                 with anyio.CancelScope(shield=True):
-                    await self._event_sender.send(
-                        ChunkGenerated(
-                            command_id=task.command_id,
-                            chunk=ErrorChunk(
-                                model=self.shard_metadata.model_card.model_id,
-                                diagnostics=diagnostics,
-                                error_message=error_message,
-                            ),
-                        )
+                    await self._send_output(
+                        task.command_id,
+                        ErrorChunk(
+                            model=self.shard_metadata.model_card.model_id,
+                            diagnostics=diagnostics,
+                            error_message=error_message,
+                        ),
                     )
+                self.in_progress.pop(task.task_id, None)
+                self._end_output(task.task_id)
 
         if isinstance(self.status, RunnerShuttingDown) and rc in (
             -signal.SIGTERM,

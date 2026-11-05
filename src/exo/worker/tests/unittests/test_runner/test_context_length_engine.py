@@ -12,7 +12,7 @@ from exo.shared.models.model_cards import ModelId
 from exo.shared.request_errors import generation_error_code
 from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.common import CommandId
-from exo.shared.types.events import ChunkGenerated, Event
+from exo.shared.types.events import ChunkGenerated, Event, RunnerEvent
 from exo.shared.types.tasks import TaskId, TextGeneration
 from exo.shared.types.text_generation import (
     InputMessage,
@@ -64,7 +64,7 @@ def _engine(events: _Events) -> SequentialGenerator:
         model_id=MODEL,
         device_rank=0,
         cancel_receiver=cancel_receiver,
-        event_sender=cast(MpSender[Event], cast(object, events)),
+        event_sender=cast(MpSender[RunnerEvent], cast(object, events)),
     )
 
 

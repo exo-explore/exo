@@ -10,9 +10,11 @@ from anyio.abc import TaskStatus
 
 import exo.worker.main as worker_mod
 import exo.worker.plan as plan_mod
+from exo.routing.tests.fake_reachability import FakeReachability
 from exo.shared.types.commands import ForwarderCommand, ForwarderDownloadCommand
-from exo.shared.types.events import Event, IndexedEvent
+from exo.shared.types.events import Event, IndexedEvent, RunnerEvent
 from exo.shared.types.memory import Memory
+from exo.shared.types.serving import Delivery
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     ConnectToGroup,
@@ -119,7 +121,7 @@ async def _silent_supervisor(
     event_sender, _ = channel[Event]()
     task_sender, task_receiver = mp_channel[Task]()
     cancel_sender, _ = mp_channel[TaskId]()
-    _, ev_recv = mp_channel[Event | RunnerTerminationError]()
+    _, ev_recv = mp_channel[RunnerEvent | RunnerTerminationError]()
     proc = cast(AsyncProcess, cast(object, _SilentProcess()))
     handler = await RunnerStdioHandler.create(
         stdout_rx=proc.stdout, stderr_rx=proc.stderr
@@ -155,6 +157,7 @@ def _worker() -> Worker:
         command_sender=command_send,
         download_command_sender=download_send,
         api_port=52415,
+        reachability=FakeReachability(NODE_A),
     )
 
 
@@ -176,7 +179,6 @@ async def test_a_runner_that_never_acknowledges_does_not_hold_up_its_node(
             RUNNER_3_ID: RunnerReady(),
         },
         downloads={NODE_A: DOWNLOADED},
-        tasks={TASK_1_ID: REQUEST},
     )
     worker.runners = {RUNNER_1_ID: stuck, RUNNER_3_ID: serving}
 
@@ -187,8 +189,7 @@ async def test_a_runner_that_never_acknowledges_does_not_hold_up_its_node(
 
         # The other model on the node still gets its request...
         with anyio.fail_after(2):
-            while TASK_1_ID not in serving.in_progress:
-                await anyio.sleep(0.05)
+            await worker.serving.deliver(Delivery(task=REQUEST))
         assert [t.task_id for t in await _sent(sent_to_serving)] == [TASK_1_ID]
         # ...and the stuck runner was told to connect once, not again and again
         assert [type(t) for t in await _sent(sent_to_stuck)] == [ConnectToGroup]
@@ -226,7 +227,6 @@ def test_a_runner_yet_to_acknowledge_is_not_sent_its_task_again() -> None:
             global_download_status={NODE_A: DOWNLOADED},
             instances={INSTANCE_1_ID: STUCK},
             all_runners={RUNNER_1_ID: RunnerIdle(), RUNNER_2_ID: RunnerIdle()},
-            tasks={},
             instance_backoff=KeyedBackoff(),
             download_backoff=KeyedBackoff(),
         )

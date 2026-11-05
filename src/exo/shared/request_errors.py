@@ -39,6 +39,18 @@ DEVICE_DISCONNECTED = (
     "A device serving this model disconnected before the reply finished."
 )
 DEVICE_LEFT = "A device serving this model left the cluster before the reply finished."
+# The output node's process went silent for the membership's wedge bound (exo.shared.serving)
+DEVICE_NOT_RESPONDING = (
+    "A device serving this model stopped responding before the reply finished."
+)
+# A request this API node can't hand to the instance's output node: no address of it answers
+DEVICE_UNREACHABLE = "This device can't reach the device running this model."
+# ...or that node refused this one as not a device of its cluster (it doesn't know any of this
+# device's addresses yet)
+NOT_A_MEMBER = "The device running this model doesn't recognise this device as part of the cluster yet."
+# A device of the instance didn't take the request (it was slow, gone, or its model not ready),
+# so the request didn't run anywhere
+NOT_TAKEN = "A device serving this model didn't take the request. Please send it again."
 MODEL_STOPPED = "The model was stopped before the reply finished."
 # A request sent to an instance that was deleted (the model was stopped, or a node was lost)
 # just before the request could start
@@ -64,13 +76,17 @@ MODEL_NOT_READY = "The model is not ready yet: "
 CONTEXT_LENGTH_EXCEEDED = "This model's maximum context length is "
 # Followed by what was wrong with the request
 INVALID_REQUEST = "This request can't be run on this model: "
-# Followed by the model's name: the master had no instance of the model for a request that the
-# API had sent because it saw one, so it had just been deleted
+# Followed by the model's name: no instance of the model to send a request to (one deleted just
+# after the API checked for it)
 NO_INSTANCE_FOR_MODEL = "No instance found for model "
 
 _CODES: dict[str, GenerationErrorCode] = {
     DEVICE_DISCONNECTED: "device_left",
     DEVICE_LEFT: "device_left",
+    DEVICE_NOT_RESPONDING: "device_left",
+    DEVICE_UNREACHABLE: "device_left",
+    NOT_A_MEMBER: "device_left",
+    NOT_TAKEN: "device_left",
     MODEL_STOPPED: "model_stopped",
     INSTANCE_GONE_BEFORE_START: "model_stopped",
     OUT_OF_MEMORY: "out_of_memory",

@@ -69,10 +69,6 @@ class Base64Image(TruncatingString):
     truncate_length = 10
 
 
-class Base64ImageHash(TruncatingString):
-    truncate_length = 10
-
-
 def _wrap_chat_value(x: Any) -> Any:  # pyright: ignore[reportAny]
     if isinstance(x, (InputMessageContent, Base64Image)):
         return x
@@ -129,8 +125,8 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     repetition_context_size: int | None = None
     presence_penalty: float | None = None
     frequency_penalty: float | None = None
+    # Sent inline with the request to the nodes that run it
     images: list[Base64Image] = Field(default_factory=list)
-    image_hashes: dict[int, Base64ImageHash] = Field(default_factory=dict)
 
     prefill_endpoint: str | None = None
 

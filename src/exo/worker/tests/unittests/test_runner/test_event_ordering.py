@@ -12,6 +12,7 @@ from exo.shared.types.chunks import TokenChunk
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
+    RunnerEvent,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
@@ -110,7 +111,9 @@ CHAT_TASK = TextGeneration(
 )
 
 
-def assert_events_equal(test_events: Iterable[Event], true_events: Iterable[Event]):
+def assert_events_equal(
+    test_events: Iterable[RunnerEvent], true_events: Iterable[RunnerEvent]
+):
     for test_event, true_event in zip(test_events, true_events, strict=True):
         test_event = test_event.model_copy(update={"event_id": true_event.event_id})
         assert test_event == true_event, f"{test_event} != {true_event}"
@@ -201,7 +204,7 @@ class FakeExoBatchGenerator:
 # Use a fake event_sender to remove test flakiness.
 class EventCollector:
     def __init__(self, on_event: Callable[[Event], None] | None = None) -> None:
-        self.events: list[Event] = []
+        self.events: list[RunnerEvent] = []
         self._on_event = on_event
 
     def send(self, event: Event) -> None:

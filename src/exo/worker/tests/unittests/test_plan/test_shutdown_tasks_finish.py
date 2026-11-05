@@ -18,11 +18,13 @@ import pytest
 from anyio.abc import TaskStatus as StartedStatus
 
 import exo.worker.main as worker_mod
+from exo.routing.tests.fake_reachability import FakeReachability
 from exo.shared.apply import apply
 from exo.shared.types.commands import ForwarderCommand, ForwarderDownloadCommand
 from exo.shared.types.events import (
     Event,
     IndexedEvent,
+    RunnerEvent,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskCreated,
@@ -105,7 +107,7 @@ class _Runner:
 
     supervisor: RunnerSupervisor
     tasks: MpReceiver[Task]
-    events: MpSender[Event | RunnerTerminationError]
+    events: MpSender[RunnerEvent | RunnerTerminationError]
 
 
 @asynccontextmanager
@@ -125,12 +127,13 @@ async def _cluster(
         command_sender=command_sender,
         download_command_sender=download_sender,
         api_port=52415,
+        reachability=FakeReachability(NODE_A),
     )
 
     bound = BoundInstance(
         instance=INSTANCE, bound_runner_id=RUNNER_1_ID, bound_node_id=NODE_A
     )
-    events_sender, events_receiver = mp_channel[Event | RunnerTerminationError]()
+    events_sender, events_receiver = mp_channel[RunnerEvent | RunnerTerminationError]()
     task_sender, task_receiver = mp_channel[Task]()
     cancel_sender, _ = mp_channel[TaskId]()
     runner_process = cast(AsyncProcess, cast(object, process))

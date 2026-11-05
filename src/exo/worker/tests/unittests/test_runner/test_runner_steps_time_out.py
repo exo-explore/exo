@@ -18,7 +18,7 @@ from loguru import logger
 import exo.worker.runner.supervisor as supervisor_module
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.common import NodeId
-from exo.shared.types.events import Event, RunnerStatusUpdated
+from exo.shared.types.events import Event, RunnerEvent, RunnerStatusUpdated
 from exo.shared.types.memory import Memory
 from exo.shared.types.tasks import ConnectToGroup, StartWarmup, Task, TaskId
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
@@ -73,12 +73,12 @@ async def _supervisor() -> tuple[
     RunnerSupervisor,
     _AliveProcess,
     Receiver[Event],
-    MpSender[Event | RunnerTerminationError],
+    MpSender[RunnerEvent | RunnerTerminationError],
 ]:
     event_sender, events = channel[Event]()
     task_sender, _ = mp_channel[Task]()
     cancel_sender, _ = mp_channel[TaskId]()
-    ev_send, ev_recv = mp_channel[Event | RunnerTerminationError]()
+    ev_send, ev_recv = mp_channel[RunnerEvent | RunnerTerminationError]()
     process = _AliveProcess()
     proc = cast(AsyncProcess, cast(object, process))
     handler = await RunnerStdioHandler.create(
@@ -236,7 +236,7 @@ class _ConnectHoldsTheGil(Builder):
 
 def _runner_that_never_connects(
     bound_instance: BoundInstance,
-    event_sender: MpSender[Event | RunnerTerminationError],
+    event_sender: MpSender[RunnerEvent | RunnerTerminationError],
     task_receiver: MpReceiver[Task],
     _cancel_receiver: MpReceiver[TaskId],
     _logger: "loguru.Logger",
@@ -244,7 +244,7 @@ def _runner_that_never_connects(
     Runner(
         bound_instance,
         _ConnectHoldsTheGil(),
-        cast(MpSender[Event], event_sender),
+        cast(MpSender[RunnerEvent], event_sender),
         task_receiver,
     ).main()
 

@@ -61,7 +61,6 @@ def test_plan_starts_warmup_for_accepting_rank_when_all_loaded_or_warming():
         global_download_status={NODE_A: []},
         instances=instances,
         all_runners=all_runners,
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -104,7 +103,6 @@ def test_plan_starts_warmup_for_rank_zero_after_others_warming():
         global_download_status={NODE_A: []},
         instances=instances,
         all_runners=all_runners,
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -146,7 +144,6 @@ def test_plan_does_not_start_warmup_for_non_zero_rank_until_all_loaded_or_warmin
         global_download_status={NODE_A: [], NODE_B: []},
         instances=instances,
         all_runners=all_runners,
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -192,7 +189,6 @@ def test_plan_does_not_start_warmup_for_rank_zero_until_others_warming():
         global_download_status={NODE_A: []},
         instances=instances,
         all_runners=all_runners,
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -210,7 +206,6 @@ def test_plan_does_not_start_warmup_for_rank_zero_until_others_warming():
         global_download_status={NODE_A: []},
         instances=instances,
         all_runners=all_runners,
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -255,7 +250,6 @@ def test_plan_starts_warmup_for_connecting_rank_after_others_warming():
         global_download_status={NODE_B: []},
         instances=instances,
         all_runners=all_runners,
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -299,7 +293,6 @@ def test_plan_does_not_start_warmup_for_accepting_rank_until_all_loaded_or_warmi
         global_download_status={NODE_A: [], NODE_B: []},
         instances=instances,
         all_runners=all_runners,
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -342,7 +335,6 @@ def test_plan_does_not_start_warmup_for_connecting_rank_until_others_warming():
         global_download_status={NODE_A: [], NODE_B: []},
         instances=instances,
         all_runners=all_runners,
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )

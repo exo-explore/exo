@@ -56,7 +56,7 @@ class StartWarmup(BaseTask):  # emitted by Worker
     pass
 
 
-class TextGeneration(BaseTask):  # emitted by Master
+class TextGeneration(BaseTask):  # sent by an API node to the instance's ranks
     command_id: CommandId
     task_params: TextGenerationTaskParams
 
@@ -64,12 +64,7 @@ class TextGeneration(BaseTask):  # emitted by Master
     error_message: str | None = Field(default=None)
 
 
-class CancelTask(BaseTask):
-    cancelled_task_id: TaskId
-    runner_id: RunnerId
-
-
-class ImageGeneration(BaseTask):  # emitted by Master
+class ImageGeneration(BaseTask):  # sent by an API node to the instance's ranks
     command_id: CommandId
     task_params: ImageGenerationTaskParams
 
@@ -77,7 +72,7 @@ class ImageGeneration(BaseTask):  # emitted by Master
     error_message: str | None = Field(default=None)
 
 
-class ImageEdits(BaseTask):  # emitted by Master
+class ImageEdits(BaseTask):  # sent by an API node to the instance's ranks
     command_id: CommandId
     task_params: ImageEditsTaskParams
 
@@ -96,7 +91,6 @@ Task = (
     | LoadModel
     | StartWarmup
     | TextGeneration
-    | CancelTask
     | ImageGeneration
     | ImageEdits
     | Shutdown

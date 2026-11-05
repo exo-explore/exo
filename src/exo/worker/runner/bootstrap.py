@@ -6,7 +6,7 @@ from typing import Self, cast
 
 import loguru
 
-from exo.shared.types.events import Event
+from exo.shared.types.events import Event, RunnerEvent
 from exo.shared.types.tasks import Task, TaskId
 from exo.shared.types.worker.instances import (
     BoundInstance,
@@ -84,7 +84,9 @@ def entrypoint(
 
     # Import main after setting global logger - this lets us just import logger from this module
     try:
-        event_sender_downcast: MpSender[Event] = cast(MpSender[Event], event_sender)
+        event_sender_downcast: MpSender[RunnerEvent] = cast(
+            MpSender[RunnerEvent], event_sender
+        )
 
         from exo.worker.runner.runner import Runner
 

@@ -12,7 +12,7 @@ from exo.shared.types.chunks import Chunk
 from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
-    Event,
+    RunnerEvent,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
@@ -86,7 +86,7 @@ class Runner:
         self,
         bound_instance: BoundInstance,
         builder: Builder,
-        event_sender: MpSender[Event],
+        event_sender: MpSender[RunnerEvent],
         task_receiver: MpReceiver[Task],
     ):
         self.event_sender = event_sender
