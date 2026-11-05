@@ -167,6 +167,16 @@ def _install_model(home: Path, model: StubModel) -> None:
 
 
 _RESOURCE_TRACKER = "multiprocessing.resource_tracker"
+# In a runner's command line: multiprocessing spawns it
+_RUNNER = "multiprocessing.spawn"
+
+
+def process_is_running(process: psutil.Process) -> bool:
+    """Whether the process still runs. A zombie doesn't: it holds no memory, and only waits for
+    its new parent to reap it (in a container, PID 1 may never do that)."""
+    with contextlib.suppress(psutil.Error):
+        return process.is_running() and process.status() != psutil.STATUS_ZOMBIE
+    return False
 
 
 def _group_members(process_group: int) -> list[psutil.Process]:
@@ -442,6 +452,9 @@ class Cluster:
         # What the harness had to force (see _fallback); a scenario that expects some sets
         # expect_fallbacks, otherwise the test fails when its cluster closes
         self.fallbacks: list[str] = []
+        # What kill_node_only left running: its node's process group can't be used for it any
+        # more, as the group's id may belong to someone else once its members are gone
+        self._left_by_killed_nodes: list[psutil.Process] = []
         self.expect_fallbacks = False
         # exo's own reachability probe asks every peer at the prober's own API port; the
         # harness asks each at its real port, unless told to behave like exo
@@ -542,6 +555,13 @@ class Cluster:
             with contextlib.suppress(subprocess.TimeoutExpired):
                 process.wait(5)
             node.status = "stopped"
+        for process in self._left_by_killed_nodes:
+            with contextlib.suppress(psutil.Error):
+                if process_is_running(process):
+                    self._fallback(f"{process.pid} outlived its killed node")
+                    # Not the resource tracker, which ends with its last client
+                    if _RESOURCE_TRACKER not in " ".join(process.cmdline()):
+                        process.kill()
         self.network.stop()
         for lease in self._port_leases:
             lease.release()
@@ -707,6 +727,27 @@ class Cluster:
             node.process.wait(10)
         node.status = "stopped"
         self.note(f"kill -9 {node.name}")
+
+    def kill_node_only(self, index: int) -> list[psutil.Process]:
+        """kill -9 the node's own process and nothing else: exo crashing, or the OS or a user
+        killing it. Its runners and its resource tracker are returned: they have to notice by
+        themselves, and close() ends any of them still running, and says so. (Short-lived
+        commands the node had started, such as system_profiler, end by themselves.)"""
+        node = self.nodes[index]
+        if node.process is None:
+            raise HarnessError(f"{node.name} isn't running")
+        left: list[psutil.Process] = []
+        for member in _group_members(node.process.pid):
+            with contextlib.suppress(psutil.Error):
+                command = " ".join(member.cmdline())
+                if _RUNNER in command or _RESOURCE_TRACKER in command:
+                    left.append(member)
+        node.process.kill()
+        node.process.wait(10)
+        node.status = "stopped"
+        self._left_by_killed_nodes.extend(left)
+        self.note(f"kill -9 {node.name} alone; it left {[p.pid for p in left]}")
+        return left
 
     def pause(self, index: int) -> None:
         """SIGSTOP the node and its runners: a laptop going to sleep (its sockets stay open)."""

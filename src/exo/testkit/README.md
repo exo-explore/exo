@@ -93,7 +93,7 @@ should check, just before, that the node it stops is still the master.
 | what | call |
 |---|---|
 | start and stop | `Cluster(size, root)`, `.start()`, `.close()` (or the `make_cluster` fixture) |
-| faults | `.kill(i)` (SIGKILL to the node and its runners, sparing the resource tracker), `.pause(i)` / `.resume(i)` (SIGSTOP / SIGCONT), `.quit(i)` (SIGINT; returns seconds to exit), `.restart(i, new_identity=True)` |
+| faults | `.kill(i)` (SIGKILL to the node and its runners, sparing the resource tracker), `.kill_node_only(i)` (SIGKILL to exo's own process alone; returns what it left, which must exit by itself), `.pause(i)` / `.resume(i)` (SIGSTOP / SIGCONT), `.quit(i)` (SIGINT; returns seconds to exit), `.restart(i, new_identity=True)` |
 | network | `.cut(i, j, mode)`, `.isolate(i, mode)`, `.heal()`. `mode="blackhole"` holds every byte, as when a cable is pulled; `"reset"` tears connections down at once |
 | models | `.launch(on=(1, 2))` (placed on exactly those nodes, then waits until ready), `.launch()` (exo places it), `.place(...)` (doesn't wait for ready), `.preview(on)` (raises `NoPlacementError` when exo offers none), `.wait_ready(id)`, `.wait_serving(via=i)` (after a fault: a chat that succeeds, since the state can still show the runners from before it as ready), `.delete(id)` |
 | chats | `.chat(prompt, via=i, stream=True, max_tokens=None)` returns a `ChatResult`; `.chat_in_background(...)` returns a handle with `.result(timeout)` |

@@ -31,6 +31,7 @@ from exo.testkit.cluster import (
     HarnessError,
     HarnessTimeoutError,
     NoPlacementError,
+    process_is_running,
 )
 from exo.testkit.stub.config import StubConfig
 from exo.testkit.tests.conftest import MakeCluster
@@ -594,6 +595,62 @@ def test_a_runner_that_fails_to_connect_once_leaves_its_instance_serving(
         ) from error
     _ok(cluster.chat("after the failed connect", via=0, timeout=30))
     cluster.wait_until_consistent(timeout=30)
+
+
+# --- a node dies, and its runners don't get killed with it -----------------------------------
+
+
+# A runner notices at once: this only allows for a heavily loaded machine
+_RUNNER_EXIT_BOUND = 10.0
+
+
+@pytest.mark.parametrize(
+    "phase",
+    [
+        "idle",
+        pytest.param("generating", marks=pytest.mark.slow),
+        pytest.param("loading", marks=pytest.mark.slow),
+    ],
+)
+def test_a_runner_exits_when_its_node_is_killed(
+    make_cluster: MakeCluster, phase: str
+) -> None:
+    """kill -9 of exo's own process leaves its runners running: they aren't killed with it,
+    and nothing they wait on ends (each holds both ends of its pipes, so they never see an end
+    of file). An orphan keeps the model's memory until the machine restarts, hundreds of GB
+    with a big model, so a restarted exo can't load it; it also keeps the resource tracker
+    alive, so the node's named semaphores aren't released. Once the runner exits, the tracker
+    follows. Measured: both gone within 0.2 s, idle, generating or loading; bound 10 s. Before,
+    both were still running 90 s later, in every phase."""
+    cluster = make_cluster(2)
+    roles = _roles(cluster)
+    (node,) = roles.followers
+    chat: ChatHandle | None = None
+    if phase == "loading":
+        cluster.configure_stub(StubConfig(load_seconds=120), nodes=(node,))
+        instance = cluster.place(on=(node,))
+        cluster.wait_for(
+            lambda: _runner_statuses(cluster, instance, roles.master)
+            == ["RunnerLoading"],
+            timeout=30,
+            what="the runner to be loading",
+        )
+    else:
+        cluster.launch(on=(node,))
+        if phase == "idle":
+            _ok(cluster.chat("before the kill", via=roles.master, timeout=30))
+        else:
+            chat = _streaming(cluster, "node dies " + LONG, via=roles.master)
+
+    left = cluster.kill_node_only(node)
+    assert len(left) == 2, f"expected the runner and the resource tracker: {left}"
+    cluster.wait_for(
+        lambda: not any(process_is_running(p) for p in left),
+        timeout=_RUNNER_EXIT_BOUND,
+        what="the killed node's runner and resource tracker to exit",
+    )
+    if chat is not None:
+        _clean_error(chat.result(60))
 
 
 # --- restarts --------------------------------------------------------------------------
