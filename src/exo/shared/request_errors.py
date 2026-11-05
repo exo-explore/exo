@@ -63,6 +63,9 @@ NOT_A_MEMBER = "The device running this model doesn't recognise this device as p
 # so the request didn't run anywhere
 NOT_TAKEN = "A device serving this model didn't take the request. Please send it again."
 MODEL_STOPPED = "The model was stopped before the reply finished."
+# A runner of the instance is being stopped because another runner it works with is going (that
+# device's model failed, or the device is being restarted)
+PEER_FAILED = "A device running this model failed; the reply was cut short."
 # A request sent to an instance that was deleted (the model was stopped, or a node was lost)
 # just before the request could start
 INSTANCE_GONE_BEFORE_START = (
@@ -99,6 +102,7 @@ _CODES: dict[str, GenerationErrorCode] = {
     NOT_A_MEMBER: "device_left",
     NOT_TAKEN: "device_left",
     MODEL_STOPPED: "model_stopped",
+    PEER_FAILED: "model_failed",
     INSTANCE_GONE_BEFORE_START: "model_stopped",
     OUT_OF_MEMORY: "out_of_memory",
     GPU_TIMEOUT: "gpu_timeout",

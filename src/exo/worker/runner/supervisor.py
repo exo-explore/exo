@@ -401,12 +401,15 @@ class RunnerSupervisor:
     def shutdown(self):
         self._tg.cancel_tasks()
 
-    async def stop(self, task: Shutdown, grace: float) -> None:
+    async def stop(self, task: Shutdown, grace: float, reason: str) -> None:
         """Stop the runner: it has `grace` seconds to take up `task` and shut itself down, then
         its process is stopped (terminated, and killed if need be) in the background. The
         runner is ShuttingDown to the cluster from now on, so that no runner of its instance
-        pairs with it again."""
+        pairs with it again. Its requests can't finish now: their streams end at once, with
+        `reason`, not when its process has gone (a runner waiting on a peer that died never
+        takes up `task`, and is stopped only after `grace`)."""
         self._begin_stopping()
+        await self._end_outputs(reason)
         await self._report_leaving()
         try:
             with anyio.fail_after(grace):

@@ -25,13 +25,20 @@ from exo.shared.model_readiness import (
 from exo.shared.models.model_cards import ModelId
 from exo.shared.request_errors import (
     INSTANCE_GONE_BEFORE_START,
+    INTERRUPTED,
     NO_INSTANCE_FOR_MODEL,
+    PEER_FAILED,
+    removal_message,
 )
 from exo.shared.types.common import NodeId
 from exo.shared.types.state import State
 from exo.shared.types.tasks import GenerationTask, ImageEdits, ImageGeneration
 from exo.shared.types.topology import SocketConnection
-from exo.shared.types.worker.instances import Instance, InstanceId
+from exo.shared.types.worker.instances import (
+    Instance,
+    InstanceId,
+    InstanceRemovalReason,
+)
 from exo.shared.types.worker.runners import RunnerRunning
 from exo.shared.types.worker.shards import is_primary_output_shard
 from exo.utils.channels import Receiver, Sender, channel
@@ -74,6 +81,20 @@ def output_node(instance: Instance, *, images: bool) -> NodeId:
         elif shard.device_rank == 0:
             return node_id
     raise ValueError(f"instance {instance.instance_id} has no output shard")
+
+
+def why_runner_stopped(
+    state: State, instance: Instance, removal: InstanceRemovalReason | None
+) -> str:
+    """Why a runner of `instance` is being stopped, as its requests are told: a runner it works
+    with is going (the instance is still in the state: the only other reason the worker stops
+    one, exo.worker.plan), or its instance was removed, for `removal` (removal_message). A
+    removal this node didn't see the reason of reads as the request being interrupted."""
+    if instance.instance_id in state.instances:
+        return PEER_FAILED
+    if removal is not None:
+        return removal_message(removal)
+    return INTERRUPTED
 
 
 def _prefill_only(state: State) -> set[InstanceId]:

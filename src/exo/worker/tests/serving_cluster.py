@@ -11,7 +11,7 @@ and stops streaming, as a sleeping Mac) or kill it (its connections break).
 import contextlib
 import gc
 from collections import defaultdict
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import cast, final
 
@@ -41,6 +41,7 @@ from exo.shared.types.state import State
 from exo.shared.types.tasks import (
     GenerationTask,
     ImageGeneration,
+    Shutdown,
     Task,
     TaskId,
     TaskStatus,
@@ -137,6 +138,8 @@ class Rank:
     cancels_received: list[TaskId] = field(default_factory=list)
     # Tasks and cancellations, in the order the runner read them
     arrivals: list[tuple[str, TaskId]] = field(default_factory=list)
+    # False: the runner never takes up a Shutdown (as one waiting on a peer that died)
+    takes_shutdown: bool = True
 
 
 @final
@@ -274,6 +277,12 @@ class ServingCluster:
 
     # --- faults ----------------------------------------------------------------------------
 
+    def start_soon(
+        self, function: Callable[..., Awaitable[object]], *args: object
+    ) -> None:
+        assert self._tg is not None
+        self._tg.start_soon(function, *args)
+
     def freeze(self, node: NodeId) -> None:
         self.awake[node] = anyio.Event()
 
@@ -351,6 +360,8 @@ class ServingCluster:
                 task = await rank.tasks.receive_async()
                 rank.received.append(task.task_id)
                 rank.arrivals.append(("task", task.task_id))
+                if isinstance(task, Shutdown) and not rank.takes_shutdown:
+                    continue
                 rank.events.send(TaskAcknowledged(task_id=task.task_id))
                 if isinstance(task, GenerationTask):
                     agreement.hold(rank.rank, task)

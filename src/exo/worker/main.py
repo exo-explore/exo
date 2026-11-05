@@ -19,6 +19,7 @@ from exo.shared.apply import apply
 from exo.shared.constants import EXO_MAX_INSTANCE_RETRIES
 from exo.shared.models.model_cards import ModelCard, ModelId, card_cache
 from exo.shared.request_errors import removal_message
+from exo.shared.serving import why_runner_stopped
 from exo.shared.types.commands import (
     AddCustomModelCard,
     ForwarderCommand,
@@ -52,7 +53,7 @@ from exo.shared.types.tasks import (
 )
 from exo.shared.types.topology import Connection, SocketConnection
 from exo.shared.types.worker.downloads import DownloadCompleted, DownloadFailed
-from exo.shared.types.worker.instances import InstanceId
+from exo.shared.types.worker.instances import InstanceId, InstanceRemovalReason
 from exo.shared.types.worker.runners import (
     RunnerFailed,
     RunnerId,
@@ -127,6 +128,9 @@ class Worker:
         )
         # When this worker last asked for an instance it gave up on to be deleted
         self._deletion_requested: dict[InstanceId, float] = {}
+        # Why instances were removed, until their runners here are stopped: what their
+        # requests are told (removal_message)
+        self._removal_reasons: dict[InstanceId, InstanceRemovalReason] = {}
         self._stopped: anyio.Event = anyio.Event()
 
         # The latest information of each kind gathered about this node, so that a new
@@ -228,6 +232,11 @@ class Worker:
                 if isinstance(event, InstanceDeleted):
                     self._instance_backoff.reset(event.instance_id)
                     self._deletion_requested.pop(event.instance_id, None)
+                    if any(
+                        runner.bound_instance.instance.instance_id == event.instance_id
+                        for runner in self.runners.values()
+                    ):
+                        self._removal_reasons[event.instance_id] = event.reason
                     self.serving.end_instance(
                         event.instance_id, removal_message(event.reason)
                     )
@@ -421,7 +430,16 @@ class Worker:
                     # It stays in self.runners until its process has exited: only then is
                     # it replaced (see _supervise)
                     if (runner := self.runners.get(runner_id)) is not None:
-                        await runner.stop(task, RUNNER_SHUTDOWN_GRACE)
+                        instance = runner.bound_instance.instance
+                        await runner.stop(
+                            task,
+                            RUNNER_SHUTDOWN_GRACE,
+                            why_runner_stopped(
+                                self.state,
+                                instance,
+                                self._removal_reasons.pop(instance.instance_id, None),
+                            ),
+                        )
                     # The runner is stopped, which is what the task is for, and only the worker
                     # can say so: a runner that has died never gets the task, and one that takes
                     # it up is no longer listened to once it has acknowledged it, so its own
