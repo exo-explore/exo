@@ -244,7 +244,10 @@ extend-select = ["I", "N", "B", "A", "PIE", "SIM"]
 [tool.pytest.ini_options]
 pythonpath = "."
 asyncio_mode = "auto"
-markers = ["slow: marks tests as slow (deselected by default)"]
+markers = [
+  "slow: marks tests as slow (deselected by default)",
+  "cluster: starts real exo nodes on this machine with exo.testkit (deselected by default; run with -m 'cluster and not slow')",
+]
 env = ["EXO_TESTS=1"]
-addopts = "-m 'not slow' --ignore=tests --ignore=tmp"
+addopts = "-m 'not slow and not cluster' --ignore=tests --ignore=tmp"
 filterwarnings = ["ignore:builtin type Swig:DeprecationWarning"]

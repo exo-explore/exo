@@ -18,8 +18,11 @@ uv run exo
 # Run with verbose logging
 uv run exo -v   # or -vv for more verbose
 
-# Run tests (excludes slow tests by default)
+# Run tests (excludes slow and cluster tests by default)
 uv run pytest
+
+# Run the fast cluster scenarios (real exo nodes on this machine, stub engine; ~5 min)
+uv run pytest -m "cluster and not slow"
 
 # Run all tests including slow tests
 uv run pytest -m ""

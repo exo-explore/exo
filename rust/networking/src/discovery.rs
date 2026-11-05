@@ -32,6 +32,15 @@ const BLOCKED_WARNING_INTERVAL: Duration = Duration::from_secs(60);
 /// How often to repeat that an exo with another version or namespace is on the network (and,
 /// separately, that a device in this namespace runs another version).
 const OTHER_CLUSTER_NOTICE_INTERVAL: Duration = Duration::from_secs(10 * 60);
+/// Test hook, for exo.testkit only: when set, Hellos go to these loopback addresses
+/// (comma-separated, such as `[::1]:40000`) instead of the multicast group. exo's
+/// single-machine cluster tests point it at their discovery relay: nodes on one machine can't
+/// find each other by multicast, because they share the discovery port and a unicast reply to
+/// it reaches only one of them (and on macOS a process without Local Network access can't send
+/// multicast at all). Only loopback addresses are taken, so it can't make a node announce
+/// itself anywhere off this machine. Outside those tests it is unset and discovery is
+/// unchanged.
+pub const ANNOUNCE_TO_ENV: &str = "EXO_TESTKIT_DISCOVERY_ANNOUNCE_TO";
 
 pub struct Discovery {
     sock: Arc<UdpSocket>,
@@ -48,6 +57,8 @@ pub struct Discovery {
     other_cluster_notice: Mutex<OtherClusterNotice>,
     other_version_notice: Mutex<OtherClusterNotice>,
     stall_guard: StallGuard,
+    /// Where Hellos go instead of the multicast group (`ANNOUNCE_TO_ENV`), if anywhere
+    announce_to: Option<Vec<SocketAddrV6>>,
     _sync: Mutex<WatchHandle>,
 }
 
@@ -145,6 +156,7 @@ impl Discovery {
             other_cluster_notice: Mutex::new(OtherClusterNotice::default()),
             other_version_notice: Mutex::new(OtherClusterNotice::default()),
             stall_guard: StallGuard::default(),
+            announce_to: announce_to_from_env(),
             _sync,
         })
     }
@@ -317,7 +329,10 @@ impl Discovery {
         }
         .alloc();
 
-        let addrs = self.ifaces.lock().clone();
+        let addrs = match &self.announce_to {
+            Some(targets) => targets.clone(),
+            None => self.ifaces.lock().clone(),
+        };
         debug!("announcing Hello({nonce:?}) to {addrs:?}");
         match send_to_all(&self.sock, &buf, &addrs).await {
             Ok(()) => {
@@ -349,6 +364,37 @@ impl Discovery {
         }
         Ok(())
     }
+}
+
+fn announce_to_from_env() -> Option<Vec<SocketAddrV6>> {
+    let value = std::env::var(ANNOUNCE_TO_ENV).ok()?;
+    let targets = parse_announce_to(&value);
+    if targets.is_empty() {
+        warn!("{ANNOUNCE_TO_ENV}={value:?} names no IPv6 loopback address; using multicast");
+        return None;
+    }
+    info!("discovery announces to {targets:?} instead of multicast ({ANNOUNCE_TO_ENV})");
+    Some(targets)
+}
+
+fn parse_announce_to(value: &str) -> Vec<SocketAddrV6> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| {
+            part.parse::<SocketAddrV6>()
+                .inspect_err(|e| warn!("ignoring {ANNOUNCE_TO_ENV} entry {part:?}: {e}"))
+                .ok()
+        })
+        .filter(|addr| {
+            let loopback = addr.ip().is_loopback();
+            if !loopback {
+                warn!("ignoring {ANNOUNCE_TO_ENV} entry {addr}: not a loopback address");
+            }
+            loopback
+        })
+        .collect()
 }
 
 /// Ignores peers for a while after this process stalled (see `HOLD_OFF`).
@@ -629,6 +675,21 @@ mod tests {
             expected_whats_up,
             "a wire change: bump WIRE_VERSION"
         );
+    }
+
+    #[test]
+    fn announce_to_takes_ipv6_loopback_addresses_and_skips_the_rest() {
+        let targets = parse_announce_to(
+            " [::1]:40000, nonsense, 127.0.0.1:5,[::1]:40001,[2001:db8::1]:40002,[fe80::1%1]:3,",
+        );
+        assert_eq!(
+            targets,
+            vec![
+                SocketAddrV6::new(Ipv6Addr::LOCALHOST, 40000, 0, 0),
+                SocketAddrV6::new(Ipv6Addr::LOCALHOST, 40001, 0, 0),
+            ]
+        );
+        assert!(parse_announce_to("").is_empty());
     }
 
     #[test]
