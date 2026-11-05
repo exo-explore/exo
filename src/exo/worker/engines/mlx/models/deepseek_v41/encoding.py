@@ -46,6 +46,8 @@ import json
 import re
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from exo.shared.request_content import describe_text
+
 # ============================================================
 # Special Tokens
 # ============================================================
@@ -1001,7 +1003,9 @@ def parse_tool_calls(
             index, text, [tool_call_start_token, tool_calls_end_token]
         )
         if _ != ">\n":
-            raise ValueError(f"Tool call format error: expected '>\\n' but got '{_}'")
+            raise ValueError(
+                f"Tool call format error: expected '>\\n' but got {describe_text(_)}"
+            )
 
         if stop_token == tool_calls_end_token:
             break
@@ -1017,7 +1021,9 @@ def parse_tool_calls(
             r'^\s*name="(.*?)">\n$', tool_name_content, flags=re.DOTALL
         )
         if len(p_tool_name) != 1:
-            raise ValueError(f"Tool name format error: '{tool_name_content}'")
+            raise ValueError(
+                f"Tool name format error: {describe_text(tool_name_content)}"
+            )
         tool_name = p_tool_name[0]
 
         tool_args: Dict[str, Tuple[str, str]] = {}
@@ -1032,11 +1038,15 @@ def parse_tool_calls(
                 flags=re.DOTALL,
             )
             if len(param_kv) != 1:
-                raise ValueError(f"Parameter format error: '{param_content}'")
+                raise ValueError(
+                    f"Parameter format error: {describe_text(param_content)}"
+                )
             param_name, string, param_value = param_kv[0]
 
             if param_name in tool_args:
-                raise ValueError(f"Duplicate parameter name: '{param_name}'")
+                raise ValueError(
+                    f"Duplicate parameter name: {describe_text(param_name)}"
+                )
             tool_args[param_name] = (param_value, string)
 
             index, content, stop_token = _read_until_stop(
@@ -1044,7 +1054,7 @@ def parse_tool_calls(
             )
             if content != ">\n":
                 raise ValueError(
-                    f"Parameter format error: expected '>\\n' but got '{content}'"
+                    f"Parameter format error: expected '>\\n' but got {describe_text(content)}"
                 )
 
         tool_call = decode_dsml_to_arguments(tool_name=tool_name, tool_args=tool_args)

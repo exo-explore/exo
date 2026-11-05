@@ -10,6 +10,7 @@ from openai_harmony import (  # pyright: ignore[reportMissingTypeStubs]
 )
 
 from exo.api.types import ToolCallItem
+from exo.shared.request_content import logging_request_content
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
 from exo.worker.runner.bootstrap import logger
 
@@ -43,11 +44,12 @@ def parse_gpt_oss(
         recipient = stream.current_recipient
 
         # Debug: log every token with state
-        logger.debug(
-            f"parse_gpt_oss token={response.token} text={response.text!r} "
-            f"recipient={recipient!r} ch={ch!r} delta={delta!r} "
-            f"state={stream.state} current_tool={current_tool_name!r}"
-        )
+        if logging_request_content():
+            logger.debug(
+                f"parse_gpt_oss token={response.token} text={response.text!r} "
+                f"recipient={recipient!r} ch={ch!r} delta={delta!r} "
+                f"state={stream.state} current_tool={current_tool_name!r}"
+            )
 
         if recipient != current_tool_name:
             if current_tool_name is not None:

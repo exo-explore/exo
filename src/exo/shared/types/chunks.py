@@ -1,6 +1,8 @@
 from collections.abc import Generator
 from typing import Annotated, Any, Literal
 
+from pydantic import Field
+
 from exo.api.types import (
     FinishReason,
     GenerationStats,
@@ -21,7 +23,8 @@ class BaseChunk(TaggedModel):
 
 
 class TokenChunk(BaseChunk):
-    text: str
+    # The reply's text: kept out of repr, so the events that carry it can be logged
+    text: str = Field(repr=False)
     token_id: int
     usage: Usage | None
     finish_reason: Literal["stop", "length", "content_filter"] | None = None

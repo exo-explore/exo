@@ -4,6 +4,7 @@ from typing import Any
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.api.types import ToolCallItem
+from exo.shared.request_content import describe_text, logging_request_content
 from exo.shared.types.chunks import (
     ErrorChunk,
     GenerationChunk,
@@ -251,14 +252,22 @@ def parse_tool_calls(
             # parse the actual tool calls from the tool call text
             combined = "".join(tool_call_text_parts)
             parsed = tool_parser.parse(combined.strip(), tools=tools)
-            logger.info(f"parsed {tool_call_text_parts=} into {parsed=}")
+            if logging_request_content():
+                logger.info(f"parsed {tool_call_text_parts=} into {parsed=}")
+            else:
+                logger.info(
+                    f"parsed a tool call of {len(combined)} chars into "
+                    f"{len(parsed or [])} call(s)"
+                )
             in_tool_call = False
             tool_call_text_parts = []
 
             if parsed is None:
                 # What the model wrote isn't a tool call we can read: give it back as text, as
                 # other OpenAI-compatible servers do, rather than failing the request
-                logger.warning(f"tool call parsing failed for text {combined}")
+                logger.warning(
+                    f"tool call parsing failed for text {describe_text(combined)}"
+                )
                 yield response.model_copy(update={"text": combined, "token": 0})
                 continue
 

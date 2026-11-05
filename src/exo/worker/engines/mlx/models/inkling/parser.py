@@ -20,6 +20,7 @@ from collections.abc import Generator
 from typing import Final, Literal, cast
 
 from exo.api.types import ToolCallItem
+from exo.shared.request_content import describe_text
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
 from exo.worker.runner.bootstrap import logger
 
@@ -176,7 +177,9 @@ def parse_inkling(
                     if parsed is None:
                         # Not a tool call we can read: give it back as text, as other
                         # OpenAI-compatible servers do.
-                        logger.warning(f"Inkling tool call parsing failed: {body!r}")
+                        logger.warning(
+                            f"Inkling tool call parsing failed: {describe_text(body)}"
+                        )
                         yield response.model_copy(
                             update={
                                 "text": MARKERS[INVOKE_TOOL_JSON].join(

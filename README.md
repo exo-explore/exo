@@ -370,6 +370,7 @@ exo supports several environment variables for configuration:
 | `EXO_ZENOH_NAMESPACE` | Custom namespace for cluster isolation (same as `--namespace`) | exo version |
 | `EXO_FAST_SYNCH` | Control MLX_METAL_FAST_SYNCH behavior (for JACCL backend) | Auto |
 | `EXO_TRACING_ENABLED` | Enable distributed tracing for performance analysis | `false` |
+| `EXO_LOG_REQUEST_CONTENT` | Write the text of requests and replies (messages, tool arguments, the rendered prompt) to the logs, for debugging. Logs show lengths when off. | `false` |
 
 **Example usage:**
 

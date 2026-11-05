@@ -30,6 +30,7 @@ from collections.abc import Generator
 from typing import Final, Literal, cast, final
 
 from exo.api.types import ToolCallItem
+from exo.shared.request_content import describe_text
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
 from exo.worker.runner.bootstrap import logger
 
@@ -420,7 +421,9 @@ class _Llama3Stream:
                 return (self._gap if self.said or content else "") + rest, calls
             # Not a call we can read: give it back as text, as other OpenAI-compatible
             # servers do.
-            logger.warning(f"Llama 3 tool call parsing failed for: {self._call!r}")
+            logger.warning(
+                f"Llama 3 tool call parsing failed for: {describe_text(self._call)}"
+            )
         if self._mode == "text":
             return self._held, []
         return self._gap + self._call, []

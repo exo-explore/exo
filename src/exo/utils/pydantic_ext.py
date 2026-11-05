@@ -22,6 +22,9 @@ class FrozenModel(BaseModel):
         extra="forbid",
         strict=True,
         frozen=True,
+        # A validation error otherwise quotes the input it rejected, and that can be a
+        # request's text: it says which field was wrong and why, not what was in it.
+        hide_input_in_errors=True,
     )
 
 
