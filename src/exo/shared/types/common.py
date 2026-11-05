@@ -4,6 +4,7 @@ from uuid import uuid4
 from pydantic import GetCoreSchemaHandler, field_validator
 from pydantic_core import CoreSchema, core_schema
 
+from exo.shared.request_content import logging_request_content
 from exo.utils.pydantic_ext import FrozenModel
 
 
@@ -61,10 +62,13 @@ class TruncatingString(str):
         return core_schema.no_info_after_validator_function(cls, handler(str))
 
     def __repr__(self):
+        # Only the length, so a request logged as a whole (task, command or event) shows how
+        # big its text was and not what it said. EXO_LOG_REQUEST_CONTENT brings back the start.
+        name = type(self).__name__
+        if not logging_request_content():
+            return f"<{name}: {len(self)} chars>"
         tl = type(self).truncate_length
-        return (
-            f"<{type(self).__name__}: {self[:tl] + '...' if len(self) > tl else self}>"
-        )
+        return f"<{name}: {self[:tl] + '...' if len(self) > tl else self}>"
 
 
 class SessionId(FrozenModel):

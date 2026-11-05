@@ -58,7 +58,7 @@ class InputMessageContent(TruncatingString):
     truncate_length = 100
 
 
-class InputMessage(BaseModel, frozen=True):
+class InputMessage(BaseModel, frozen=True, hide_input_in_errors=True):
     """Internal message for text generation pipelines."""
 
     role: MessageRole
@@ -99,7 +99,7 @@ type ChatTemplateValue = Annotated[
 ]
 
 
-class TextGenerationTaskParams(BaseModel, frozen=True):
+class TextGenerationTaskParams(BaseModel, frozen=True, hide_input_in_errors=True):
     """Canonical internal task params for text generation.
 
     Every API adapter converts its wire type into this before handing
@@ -113,11 +113,12 @@ class TextGenerationTaskParams(BaseModel, frozen=True):
     temperature: float | None = None
     top_p: float | None = None
     stream: bool = False
-    tools: list[dict[str, Any]] | None = None
+    # Tool schemas and stop strings come from the request: kept out of repr (and so out of logs)
+    tools: list[dict[str, Any]] | None = Field(default=None, repr=False)
     bench: bool = False
     use_prefix_cache: bool = False
     top_k: int | None = None
-    stop: str | list[str] | None = None
+    stop: str | list[str] | None = Field(default=None, repr=False)
     seed: int | None = None
     chat_template_messages: list[dict[str, ChatTemplateValue]] | None = None
     reasoning_effort: ReasoningEffort | None = None

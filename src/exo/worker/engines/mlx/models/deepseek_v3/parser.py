@@ -1,6 +1,7 @@
 from collections.abc import Callable, Generator
 
 from exo.api.types import ToolCallItem
+from exo.shared.request_content import describe_text
 from exo.shared.types.worker.runner_response import GenerationResponse, ToolCallResponse
 from exo.worker.runner.bootstrap import logger
 
@@ -47,7 +48,7 @@ def parse_dsml_stream(
             return ToolCallResponse(
                 tool_calls=parsed, usage=response.usage, stats=response.stats
             )
-        logger.warning(f"DSML tool call parsing failed for: {text}")
+        logger.warning(f"DSML tool call parsing failed for: {describe_text(text)}")
         return response.model_copy(update={"text": text})
 
     for response in responses:

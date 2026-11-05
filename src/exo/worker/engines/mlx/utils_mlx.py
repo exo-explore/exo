@@ -27,6 +27,7 @@ from mlx_lm.models.deepseek_v3 import DeepseekV3Model
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.models.model_cards import ModelId
+from exo.shared.request_content import logging_request_content
 from exo.worker.engines.mlx.constants import TRUST_REMOTE_CODE
 from exo.worker.engines.mlx.models.registry import (
     architecture_for_model,
@@ -698,7 +699,10 @@ def apply_chat_template(
             messages.append({"role": msg.role, "content": msg.content})
 
     prompt = render_chat_template(tokenizer, messages, task_params, model_type)
-    logger.debug(prompt)
+    if logging_request_content():
+        logger.debug(prompt)
+    else:
+        logger.debug(f"Chat template rendered {len(prompt)} chars")
 
     return prompt
 

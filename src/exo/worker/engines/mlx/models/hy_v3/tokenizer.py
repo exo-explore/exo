@@ -30,6 +30,7 @@ from typing import Any, cast
 from mlx_lm.tokenizer_utils import BPEStreamingDetokenizer, TokenizerWrapper
 from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
+from exo.shared.request_content import describe_text
 from exo.shared.types.common import ModelId
 from exo.worker.engines.mlx.models.hy_v3.model_ids import is_hy3_model_id
 
@@ -96,7 +97,7 @@ def parse_tool_calls(
             )
         calls.append({"name": tool_name, "arguments": arguments})
     if not calls:
-        raise ValueError(f"no Hy3 tool call in {text!r}")
+        raise ValueError(f"no Hy3 tool call in {describe_text(text)}")
     return calls
 
 

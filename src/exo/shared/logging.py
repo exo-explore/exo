@@ -86,6 +86,10 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
 
     logger.remove()
 
+    # Every sink below sets diagnose=False. loguru's default (True) writes the value of each
+    # variable in the frames of a logged exception, and those frames hold the request being
+    # served: its messages, tool arguments and reply.
+
     # replace all stdlib loggers with _InterceptHandlers that log to loguru
     logging.basicConfig(handlers=[_InterceptHandler()], level=0)
 
@@ -96,6 +100,7 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
             level=console_log_level(verbosity),
             colorize=True,
             enqueue=True,
+            diagnose=False,
         )
     else:
         logger.add(
@@ -104,6 +109,7 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
             level=console_log_level(verbosity),
             colorize=True,
             enqueue=True,
+            diagnose=False,
         )
     if log_file:
         # A Rust panic goes straight into the file too: it can end the process before a queued
@@ -115,6 +121,7 @@ def logger_setup(log_file: Path | None, verbosity: int = 0):
             level="DEBUG" if verbosity > 0 else "INFO",
             colorize=False,
             enqueue=True,
+            diagnose=False,
             rotation=_rotate_at_start_and_by_size(_MAX_LOG_BYTES),
             retention=_MAX_LOG_ARCHIVES,
             compression=_zstd_compress,
