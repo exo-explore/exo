@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from exo.shared.request_errors import DEVICE_UNREACHABLE
 from exo.shared.types.worker.instances import InstanceId
 from exo.testkit.cluster import (
     EXPECTED_FAILURES,
@@ -203,11 +204,12 @@ def test_two_clusters_on_one_machine_never_meet(make_cluster: MakeCluster) -> No
 def test_killing_a_follower_ends_its_requests_with_a_clean_error(
     make_cluster: MakeCluster,
 ) -> None:
-    """kill -9 of a follower holding half of a two-node instance. Main: the in-flight chat
-    ends with an error (measured 3.6 s; bound 15 s: the supervisor checks every 5 s); the
-    master removes the node and deletes the instance (measured 16 s; bound 35 s) and nothing
-    places it again; a new chat for the model fails at once. On real Macs: removed after
-    15-17 s, with clean errors."""
+    """kill -9 of a follower holding half of a two-node instance. The in-flight chat ends
+    with an error (measured 3.6 s; bound 15 s: the supervisor checks every 5 s, and the API
+    ends it once the node is Suspect, 2 s after its connection closes); the master removes
+    the node and deletes the instance once it is Gone, the 30 s grace after that (measured
+    about 32 s; bound 45 s), and nothing places it again; a new chat for the model fails at
+    once. Before removal waited for Gone, it took 16 s on a silence timeout."""
     cluster = make_cluster(3)
     roles = _roles(cluster)
     a, b = roles.followers
@@ -220,7 +222,7 @@ def test_killing_a_follower_ends_its_requests_with_a_clean_error(
     _clean_error(result)
     assert result.ended - killed_at < 15, result.summary()
 
-    cluster.wait_until_consistent(timeout=35)
+    cluster.wait_until_consistent(timeout=45)
     assert _instance_gone(cluster, instance, via=roles.master)
     after = cluster.chat("after the loss", via=roles.master, timeout=10)
     assert after.status_code == 404, after.summary()
@@ -461,16 +463,12 @@ def _pause_holding_half_an_instance(
     return instance, chat.result(120), roles.master
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=EXPECTED_FAILURES,
-    reason="A pause longer than zenoh's 10 s lease removes the node and deletes its models "
-    "(after a 12 s pause, removed at +16 s here; on real Macs a 10 s sleep failed 13 of 19 "
-    "requests)",
-)
 def test_a_12s_pause_keeps_the_model(make_cluster: MakeCluster) -> None:
     """A short sleep: 12 s, clear of zenoh's 10 s lease (at exactly 10 s the outcome depends
-    on which timer fires first)."""
+    on which timer fires first). The node is Suspect from the lease and back long before the
+    30 s grace is out, so nothing is removed and the model serves again. (A silence timeout
+    used to remove it at +16 s and delete the model; on real Macs a 10 s sleep failed 13 of
+    19 requests.)"""
     with _setup("a cluster"):
         cluster = make_cluster(3)
     instance, _, master = _pause_holding_half_an_instance(cluster, 12)
@@ -481,11 +479,14 @@ def test_a_12s_pause_keeps_the_model(make_cluster: MakeCluster) -> None:
 
 @pytest.mark.slow
 def test_a_40s_pause_removes_the_node_and_it_rejoins(make_cluster: MakeCluster) -> None:
-    """SIGSTOP of a follower holding half of an instance for 40 s. Main: the in-flight chat
-    fails, the node is removed and its instance deleted (~16 s); on waking it briefly runs
-    as its own master, then merges back (measured +56 s; bound 60 s after waking) with no
-    ghosts. On real Macs, 60 s and 300 s sleeps: removed at 17-18 s, merged back in 17-29 s,
-    once after 72 s as its own master."""
+    """SIGSTOP of a follower holding half of an instance for 40 s. The in-flight chat fails
+    once the node is Suspect (at the lease); the node is removed and its instance deleted
+    once it is Gone, the 30 s grace after that, about as it resumes (it can't rejoin before:
+    discovery holds off for 12 s after a stall); on waking it briefly runs as its own
+    master, which removes nothing (it reaches 1 of 3), then merges back (bound 60 s after
+    waking) with no ghosts. On real Macs, 60 s and 300 s sleeps (with removal on a silence
+    timeout): removed at 17-18 s, merged back in 17-29 s, once after 72 s as its own
+    master."""
     cluster = make_cluster(3)
     instance, result, master = _pause_holding_half_an_instance(cluster, 40)
     _clean_error(result)
@@ -602,9 +603,9 @@ def test_a_restarted_node_leaves_no_ghost_and_no_instance(
     make_cluster: MakeCluster,
 ) -> None:
     """kill -9 of a follower holding an instance, restarted at once: exo gives it a new id,
-    so it comes back as a new device. Main: the old id lingers as a ghost (measured 15.6 s)
-    and its instance is deleted when it times out (16.1 s); bound 45 s. On real Macs the
-    ghost lasted 7-11 s."""
+    so it comes back as a new device. The old id lingers as a ghost until it is Gone (2 s
+    after its connection closes, then the 30 s grace: about 32 s) and its instance is
+    deleted then; bound 45 s. (On a silence timeout it was 16 s.)"""
     cluster = make_cluster(3)
     roles = _roles(cluster)
     node = roles.followers[-1]
@@ -658,10 +659,13 @@ def test_a_cut_node_crowns_itself_and_rejoins_after_the_heal(
     make_cluster: MakeCluster,
 ) -> None:
     """A follower holding half of an instance is cut off from both others (blackhole) for
-    20 s. Main: the cut node makes itself master of a one-node cluster (measured +13.4 s;
-    +13.6-13.9 s with real network cuts between Macs), the majority removes it and deletes
-    the instance (~16 s); after the heal it merges back with one master and no ghosts
-    (measured 3.5 s; bound 30 s)."""
+    20 s. The cut node makes itself master of a one-node cluster (measured +13.4 s;
+    +13.6-13.9 s with real network cuts between Macs), and the chat through the master ends
+    once the cut node is Suspect there, saying a device can't be reached. Neither side
+    removes anything within the grace (the cut node, in a minority, not at all), so after
+    the heal it merges back with one master, no ghosts and the model kept (measured 3.5 s;
+    bound 30 s). (With removal on a silence timeout, the majority removed the cut node and
+    deleted the model at about 16 s.)"""
     cluster = make_cluster(3)
     roles = _roles(cluster)
     a, b = roles.followers
@@ -673,22 +677,24 @@ def test_a_cut_node_crowns_itself_and_rejoins_after_the_heal(
         timeout=25,
         what="the cut node to make itself master",
     )
-    _clean_error(chat.result(60))
+    result = chat.result(60)
+    _clean_error(result)
+    assert result.error == DEVICE_UNREACHABLE, result.summary()
     time.sleep(max(0.0, 20 - STREAM_FIRST))
     cluster.heal()
     cluster.wait_until_consistent(timeout=30)
-    assert _instance_gone(cluster, instance, via=roles.master)
+    assert _instance_present(cluster, instance, via=roles.master), (
+        "the model was deleted"
+    )
 
 
 @pytest.mark.slow
-@pytest.mark.xfail(
-    strict=True,
-    raises=EXPECTED_FAILURES,
-    reason="A node cut off for longer than about 11 s loses its models, and the cut node "
-    "deletes every model in its own view (a 20 s cut deleted them at +16 s here and with "
-    "real network cuts between Macs)",
-)
 def test_a_20s_cut_keeps_the_model(make_cluster: MakeCluster) -> None:
+    """A follower holding half of an instance is cut off for 20 s. The majority removes a
+    node only once it is Gone (the 30 s grace after the lease), which the heal comes before,
+    and the cut node, in a minority, removes nothing. (With removal on a silence timeout, a
+    20 s cut deleted the model at +16 s, here and with real network cuts between Macs, and
+    the cut node deleted every model in its own view.)"""
     with _setup("a model on the two followers"):
         cluster = make_cluster(3)
         roles = _roles(cluster)
