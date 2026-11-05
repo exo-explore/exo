@@ -15,6 +15,7 @@ from typing import final
 
 from exo.shared.request_errors import MODEL_NOT_READY, user_facing_detail
 from exo.shared.types.common import ModelId, NodeId
+from exo.shared.types.deployments import Deployment, Waiting
 from exo.shared.types.state import State
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
@@ -79,19 +80,76 @@ def instance_is_ready(
 
 def model_readiness(state: State, model_id: ModelId) -> NotReady | None:
     """None if an instance of the model is ready to serve, else what the most advanced of its
-    instances is doing. The model must have an instance."""
+    instances, or of its deployments that have none, is doing. The model must have one or
+    the other."""
     statuses = [
         instance_readiness(state, instance)
         for instance in state.instances.values()
         if instance.shard_assignments.model_id == model_id
     ]
-    if not statuses or any(status is None for status in statuses):
+    if any(status is None for status in statuses):
         return None
+    placed = {instance.deployment_id for instance in state.instances.values()}
+    statuses += [
+        deployment_readiness(deployment)
+        for deployment_id, deployment in state.deployments.items()
+        if deployment.spec.model_id == model_id and deployment_id not in placed
+    ]
     not_ready = [status for status in statuses if status is not None]
+    if not not_ready:
+        return None
     # Loading beats downloading beats failed
     return min(
         not_ready, key=lambda status: (status.failed, status.retry_after_seconds)
     )
+
+
+def is_launched(state: State, model_id: ModelId) -> bool:
+    """Whether the model has an instance, or a deployment that will have one again."""
+    return any(
+        instance.shard_assignments.model_id == model_id
+        for instance in state.instances.values()
+    ) or any(
+        deployment.spec.model_id == model_id
+        for deployment in state.deployments.values()
+    )
+
+
+def deployment_readiness(deployment: Deployment) -> NotReady:
+    """What a deployment that has no instance is doing: starting again, waiting, or paused."""
+    if deployment.hold is not None:
+        reason = deployment.hold.message or "it was paused"
+        return NotReady(
+            status=f"it is paused ({_as_clause(reason.rstrip('.'))}). Resume it to load it "
+            "again",
+            retry_after_seconds=_RETRY_FAILED_SECONDS,
+            failed=True,
+        )
+    if deployment.waiting is not None:
+        return _waiting(deployment.waiting)
+    # Nothing to wait for: the master places it at its next round
+    return NotReady(
+        status="it is being placed again", retry_after_seconds=_RETRY_LOADING_SECONDS
+    )
+
+
+def _waiting(waiting: Waiting) -> NotReady:
+    """Why a deployment waits to be placed again, as the master said"""
+    match waiting.kind:
+        case "DeviceAway":
+            status = "it waits for a device it must run on to come back"
+        case "NoDevicesWithFiles":
+            status = "no connected device has its files"
+        case "NotEnoughDevices":
+            status = (
+                f"it needs {waiting.needed} devices that have its files, and "
+                f"{waiting.have} {'is' if waiting.have == 1 else 'are'} connected"
+            )
+        case "DoesNotFit":
+            status = (
+                "it doesn't fit in the free memory of the devices that have its files"
+            )
+    return NotReady(status=status, retry_after_seconds=_RETRY_FAILED_SECONDS)
 
 
 def instance_readiness(state: State, instance: Instance) -> NotReady | None:
@@ -132,6 +190,11 @@ def instance_readiness(state: State, instance: Instance) -> NotReady | None:
     else:
         status = "starting"
     return NotReady(status=status, retry_after_seconds=_RETRY_LOADING_SECONDS)
+
+
+def _as_clause(message: str) -> str:
+    """'It lost a device…' as it reads inside a sentence: 'it lost a device…'"""
+    return message[:1].lower() + message[1:]
 
 
 def _download_failure(

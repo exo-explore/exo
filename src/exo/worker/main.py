@@ -423,7 +423,15 @@ class Worker:
                         requested_at is None
                         or time.monotonic() - requested_at >= DELETION_REQUEST_RETRY
                     ):
-                        message = f"its runner here failed to start {EXO_MAX_INSTANCE_RETRIES} times"
+                        # What the user is shown: the runner's own error, when it had one
+                        last = self.state.runners.get(
+                            task.bound_instance.bound_runner_id
+                        )
+                        message = (
+                            last.error_message
+                            if isinstance(last, RunnerFailed) and last.error_message
+                            else f"its runner failed to start {EXO_MAX_INSTANCE_RETRIES} times"
+                        )
                         logger.warning(
                             f"Instance {iid}: {message}; asking for it to be removed"
                         )

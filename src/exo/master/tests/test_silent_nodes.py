@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from exo.master.main import Master
+from exo.master.tests.test_requests_to_deleted_instances import deployment_of
 from exo.routing.membership import (
     LossReason,
     MemberState,
@@ -100,6 +101,10 @@ def master_with(
             topology=topology,
             last_seen=last_seen,
             instances={instance.instance_id: instance for instance in instances},
+            deployments={
+                instance.deployment_id: deployment_of(instance)
+                for instance in instances
+            },
         ),
     )
     return master, broadcast

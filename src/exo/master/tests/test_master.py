@@ -5,6 +5,7 @@ import anyio
 import pytest
 from loguru import logger
 
+from exo.master.deployments import place_deployment
 from exo.master.main import Master
 from exo.routing.router import get_node_zid
 from exo.routing.tests.fake_membership import FakeMembership
@@ -12,13 +13,15 @@ from exo.shared.models.model_cards import ModelCard, ModelTask
 from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (
     CommandId,
+    CreateDeployment,
     ForwarderCommand,
     ForwarderDownloadCommand,
-    PlaceInstance,
     TextGeneration,
 )
-from exo.shared.types.common import ModelId, SessionId, SystemId
+from exo.shared.types.common import DeploymentId, ModelId, SessionId, SystemId
+from exo.shared.types.deployments import DeploymentSpec
 from exo.shared.types.events import (
+    DeploymentCreated,
     GlobalForwarderEvent,
     IndexedEvent,
     InstanceCreated,
@@ -133,26 +136,38 @@ async def test_master():
         while len(master.state.node_backends) == 0:
             await anyio.sleep(0.001)
 
-        logger.info("inject a CreateInstance Command")
+        logger.info("inject a CreateDeployment Command")
+        deployment_id = DeploymentId()
+        spec = DeploymentSpec(
+            model_id=ModelId("llama-3.2-1b"),
+            sharding=Sharding.Pipeline,
+            instance_meta=InstanceMeta.MlxRing,
+        )
+        card = ModelCard(
+            model_id=ModelId("llama-3.2-1b"),
+            n_layers=16,
+            storage_size=Memory.from_bytes(678948),
+            hidden_size=7168,
+            supports_tensor=True,
+            tasks=[ModelTask.TextGeneration],
+            backends=[Backend.MlxMetal],
+        )
         await command_sender.send(
             ForwarderCommand(
                 origin=SystemId("API"),
-                command=(
-                    PlaceInstance(
-                        command_id=CommandId(),
-                        model_card=ModelCard(
-                            model_id=ModelId("llama-3.2-1b"),
-                            n_layers=16,
-                            storage_size=Memory.from_bytes(678948),
-                            hidden_size=7168,
-                            supports_tensor=True,
-                            tasks=[ModelTask.TextGeneration],
-                            backends=[Backend.MlxMetal],
-                        ),
-                        sharding=Sharding.Pipeline,
-                        instance_meta=InstanceMeta.MlxRing,
-                        min_nodes=1,
-                    )
+                command=CreateDeployment(
+                    command_id=CommandId(),
+                    deployment_id=deployment_id,
+                    spec=spec,
+                    model_card=card,
+                    instance=place_deployment(
+                        deployment_id,
+                        spec,
+                        card,
+                        master.state,
+                        master.state.instances,
+                        allowed_nodes={node_id},
+                    ).instance,
                 ),
             )
         )
@@ -194,7 +209,7 @@ async def test_master():
                 ),
             )
         )
-        while len(_get_events()) < 5:
+        while len(_get_events()) < 6:
             await anyio.sleep(0.01)
 
         events = [
@@ -202,15 +217,15 @@ async def test_master():
             for event in _get_events()
             if not isinstance(event.event, RunnerStatusUpdated)
         ]
-        assert len(events) == 4
-        assert events[0].idx == 0
-        assert events[1].idx == 1
-        assert events[2].idx == 2
-        assert events[3].idx == 4
+        assert len(events) == 5
+        assert [event.idx for event in events] == [0, 1, 2, 3, 5]
         assert isinstance(events[0].event, NodeGatheredInfo)
         assert isinstance(events[1].event, NodeGatheredInfo)
-        assert isinstance(events[2].event, InstanceCreated)
-        created_instance = events[2].event.instance
+        assert isinstance(events[2].event, DeploymentCreated)
+        assert events[2].event.deployment.deployment_id == deployment_id
+        assert isinstance(events[3].event, InstanceCreated)
+        created_instance = events[3].event.instance
+        assert created_instance.deployment_id == deployment_id
         assert isinstance(created_instance, MlxRingInstance)
         runner_id = list(created_instance.shard_assignments.runner_to_shard.keys())[0]
         # Validate the shard assignments
@@ -243,10 +258,10 @@ async def test_master():
         assert len(created_instance.hosts_by_node[node_id]) == 1
         assert created_instance.hosts_by_node[node_id][0].ip == "0.0.0.0"
         assert created_instance.ephemeral_port > 0
-        assert isinstance(events[3].event, TaskCreated)
-        assert events[3].event.task.task_status == TaskStatus.Pending
-        assert isinstance(events[3].event.task, TextGenerationTask)
-        assert events[3].event.task.task_params == TextGenerationTaskParams(
+        assert isinstance(events[4].event, TaskCreated)
+        assert events[4].event.task.task_status == TaskStatus.Pending
+        assert isinstance(events[4].event.task, TextGenerationTask)
+        assert events[4].event.task.task_params == TextGenerationTaskParams(
             model=ModelId("llama-3.2-1b"),
             input=[
                 InputMessage(

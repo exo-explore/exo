@@ -6,7 +6,16 @@ from pydantic import Field
 from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Connection
 from exo.shared.types.chunks import Chunk, InputImageChunk
-from exo.shared.types.common import CommandId, Id, ModelId, NodeId, SessionId, SystemId
+from exo.shared.types.common import (
+    CommandId,
+    DeploymentId,
+    Id,
+    ModelId,
+    NodeId,
+    SessionId,
+    SystemId,
+)
+from exo.shared.types.deployments import Deployment, Hold, Waiting
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.state import State
 from exo.shared.types.tasks import Task, TaskId, TaskStatus
@@ -74,6 +83,43 @@ class InstanceCreated(BaseEvent):
 class InstanceDeleted(BaseEvent):
     instance_id: InstanceId
     reason: InstanceRemovalReason
+    # When, as an ISO 8601 time (a datetime field in an event can't be read back from JSON)
+    at: str
+
+
+class DeploymentCreated(BaseEvent):
+    deployment: Deployment
+
+
+class DeploymentRemoved(BaseEvent):
+    """A user stopped it."""
+
+    deployment_id: DeploymentId
+
+
+class DeploymentHeld(BaseEvent):
+    """It isn't placed again until the user resumes it."""
+
+    deployment_id: DeploymentId
+    hold: Hold
+
+
+class DeploymentResumed(BaseEvent):
+    """The user asked for it to be placed now: whatever held it or made it wait is cleared."""
+
+    deployment_id: DeploymentId
+    # ISO time: how long it then goes without an instance counts from here
+    at: str
+    # Its pinned nodes aren't all here: the user asked to load it on the nodes that are
+    unpin: bool = False
+
+
+class DeploymentStatus(BaseEvent):
+    """Why it can't be placed now, and how it runs. Sent only when one of them changes."""
+
+    deployment_id: DeploymentId
+    waiting: Waiting | None
+    note: str | None
 
 
 class RunnerStatusUpdated(BaseEvent):
@@ -163,6 +209,11 @@ Event = Annotated[
     | TaskAcknowledged
     | InstanceCreated
     | InstanceDeleted
+    | DeploymentCreated
+    | DeploymentRemoved
+    | DeploymentHeld
+    | DeploymentResumed
+    | DeploymentStatus
     | RunnerStatusUpdated
     | NodeTimedOut
     | NodeGatheredInfo

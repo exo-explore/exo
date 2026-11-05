@@ -29,6 +29,7 @@ from exo.api.types import (
 )
 from exo.master.main import Master
 from exo.master.tests.conftest import create_node_network
+from exo.master.tests.test_requests_to_deleted_instances import deployment_of
 from exo.routing.router import get_node_zid
 from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask, card_cache
@@ -36,12 +37,12 @@ from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (
     Command,
-    CreateInstance,
-    DeleteInstance,
+    CreateDeployment,
+    DeleteDeployment,
     ForwarderCommand,
     ForwarderDownloadCommand,
 )
-from exo.shared.types.common import NodeId, SessionId, SystemId
+from exo.shared.types.common import DeploymentId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     Event,
     GlobalForwarderEvent,
@@ -250,12 +251,14 @@ async def test_of_two_launches_at_once_that_do_not_both_fit_one_starts(
     assert [error.status_code for error in failed] == [503]
     assert "may not have fitted" in str(failed[0].detail)
     assert len(master.state.instances) == 1
+    # Only the launch that started is a deployment
+    assert len(master.state.deployments) == 1
     # The refused launch is called off: should it still apply, this node undoes it
     (withdrawn,) = api._withdrawn_cluster_commands.values()
-    assert isinstance(withdrawn.command, CreateInstance)
-    assert withdrawn.command.instance.instance_id not in master.state.instances
-    assert isinstance(withdrawn.undo, DeleteInstance)
-    assert withdrawn.undo.instance_id == withdrawn.command.instance.instance_id
+    assert isinstance(withdrawn.command, CreateDeployment)
+    assert withdrawn.command.deployment_id not in master.state.deployments
+    assert isinstance(withdrawn.undo, DeleteDeployment)
+    assert withdrawn.undo.deployment_id == withdrawn.command.deployment_id
 
 
 async def run_with_a_lagging_api(
@@ -314,13 +317,13 @@ async def run_with_a_lagging_api(
             ):
                 await anyio.sleep(0.001)
             api._tg.start_soon(request)
-            while not any(isinstance(command, CreateInstance) for command in sent):
+            while not any(isinstance(command, CreateDeployment) for command in sent):
                 await anyio.sleep(0.001)
             (launched,) = [
-                command for command in sent if isinstance(command, CreateInstance)
+                command for command in sent if isinstance(command, CreateDeployment)
             ]
             # The master handles the launch on the state it has
-            while launched.instance.instance_id not in master.state.instances:
+            while launched.deployment_id not in master.state.deployments:
                 await anyio.sleep(0.001)
             lag_over.set()
             while not answers:
@@ -359,15 +362,15 @@ async def test_a_launch_the_master_accepted_is_kept_whatever_the_api_saw_meanwhi
 
     answers, sent, master = await run_with_a_lagging_api(initial, events)
 
-    (launched,) = [command for command in sent if isinstance(command, CreateInstance)]
+    (launched,) = [command for command in sent if isinstance(command, CreateDeployment)]
     assert isinstance(answers[0], CreateInstanceResponse), answers[0]
     assert not [
         command
         for command in sent
-        if isinstance(command, DeleteInstance)
-        and command.instance_id == launched.instance.instance_id
+        if isinstance(command, DeleteDeployment)
+        and command.deployment_id == launched.deployment_id
     ]
-    assert launched.instance.instance_id in master.state.instances
+    assert launched.deployment_id in master.state.deployments
 
 
 def test_a_called_off_launch_is_watched_for_a_late_copy_only_as_long_as_the_wait() -> (
@@ -382,9 +385,15 @@ def test_a_called_off_launch_is_watched_for_a_late_copy_only_as_long_as_the_wait
         (old, time.monotonic() - api_main.CLUSTER_COMMAND_TIMEOUT - 1),
         (recent, time.monotonic()),
     ):
+        deployment_id = DeploymentId()
         api._withdrawn_cluster_commands[launch.instance_id] = WithdrawnClusterCommand(
-            command=CreateInstance(instance=launch),
-            undo=DeleteInstance(instance_id=launch.instance_id),
+            command=CreateDeployment(
+                deployment_id=deployment_id,
+                spec=deployment_of(launch).spec,
+                model_card=OTHER,
+                instance=launch.model_copy(update={"deployment_id": deployment_id}),
+            ),
+            undo=DeleteDeployment(deployment_id=deployment_id),
             withdrawn_at=answered_at,
         )
 

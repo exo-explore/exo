@@ -1,15 +1,21 @@
 import copy
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 
 from loguru import logger
 
 from exo.shared.models.model_cards import ModelCard
-from exo.shared.types.common import ModelId, NodeId
+from exo.shared.types.common import DeploymentId, ModelId, NodeId
+from exo.shared.types.deployments import CRASH_LOOP_WINDOW, Deployment
 from exo.shared.types.events import (
     ChunkGenerated,
     CustomModelCardAdded,
     CustomModelCardDeleted,
+    DeploymentCreated,
+    DeploymentHeld,
+    DeploymentRemoved,
+    DeploymentResumed,
+    DeploymentStatus,
     Event,
     IndexedEvent,
     InputChunkReceived,
@@ -106,6 +112,58 @@ def event_apply(event: Event, state: State) -> State:
             return apply_instance_created(event, state)
         case InstanceDeleted():
             return apply_instance_deleted(event, state)
+        case DeploymentCreated():
+            return _with_deployments(
+                state,
+                {
+                    event.deployment.deployment_id: event.deployment,
+                    **state.deployments,
+                },
+            )
+        case DeploymentRemoved():
+            return _with_deployments(
+                state,
+                {
+                    deployment_id: deployment
+                    for deployment_id, deployment in state.deployments.items()
+                    if deployment_id != event.deployment_id
+                },
+            )
+        case DeploymentHeld():
+            # A hold is the master's, not the user's: it leaves the revision as it is
+            return _update_deployment(
+                state,
+                event.deployment_id,
+                lambda deployment: {"hold": event.hold, "waiting": None},
+            )
+        case DeploymentResumed():
+            # A fresh start: what held it or made it wait, and the losses that count towards
+            # a crash loop, are cleared. One that failed to start isn't sent back to the
+            # nodes it failed on, and pins the user can't have now are dropped.
+            return _update_deployment(
+                state,
+                event.deployment_id,
+                lambda deployment: {
+                    "hold": None,
+                    "revision": deployment.revision + 1,
+                    "losses": [],
+                    "waiting": None,
+                    "lost_at": event.at,
+                    "last_nodes": []
+                    if deployment.hold is not None
+                    and deployment.hold.kind == "StartFailed"
+                    else deployment.last_nodes,
+                    "spec": deployment.spec.model_copy(update={"pinned_nodes": []})
+                    if event.unpin
+                    else deployment.spec,
+                },
+            )
+        case DeploymentStatus():
+            return _update_deployment(
+                state,
+                event.deployment_id,
+                lambda _: {"waiting": event.waiting, "note": event.note},
+            )
         case NodeTimedOut():
             return apply_node_timed_out(event, state)
         case NodeDownloadProgress():
@@ -261,7 +319,50 @@ def apply_instance_created(event: InstanceCreated, state: State) -> State:
         **state.instances,
         instance.instance_id: instance,
     }
-    return state.model_copy(update={"instances": new_instances})
+    state = state.model_copy(update={"instances": new_instances})
+    # Placed: nothing to wait for
+    return _update_deployment(
+        state,
+        instance.deployment_id,
+        lambda _: {
+            "waiting": None,
+            "lost_at": None,
+        },
+    )
+
+
+def _with_deployments(
+    state: State, deployments: Mapping[DeploymentId, Deployment]
+) -> State:
+    return state.model_copy(update={"deployments": deployments})
+
+
+def _update_deployment(
+    state: State,
+    deployment_id: DeploymentId,
+    update: Callable[[Deployment], dict[str, object]],
+) -> State:
+    """The state with a deployment changed; unchanged if it doesn't have that deployment."""
+    deployment = state.deployments.get(deployment_id)
+    if deployment is None:
+        return state
+    return _with_deployments(
+        state,
+        {
+            **state.deployments,
+            deployment_id: deployment.model_copy(update=update(deployment)),
+        },
+    )
+
+
+def _losses_after(deployment: Deployment, event: InstanceDeleted) -> list[str]:
+    """The deployment's losses within CRASH_LOOP_WINDOW of this one, this one included."""
+    at = datetime.fromisoformat(event.at)
+    return [
+        loss
+        for loss in deployment.losses
+        if at - datetime.fromisoformat(loss) < CRASH_LOOP_WINDOW
+    ] + [event.at]
 
 
 def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
@@ -301,7 +402,7 @@ def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
         for tid, task in state.tasks.items()
         if task.instance_id != event.instance_id or _is_generation(task)
     }
-    return state.model_copy(
+    state = state.model_copy(
         update={
             "instances": new_instances,
             "instance_links": new_links,
@@ -309,6 +410,25 @@ def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
             "runners": new_runners,
             "prefill_server_ports": new_ports,
         }
+    )
+    if deleted is None:
+        return state
+    if event.reason == "Duplicate":
+        # Its deployment runs on as its other instance
+        return state
+    # Its deployment remembers where it ran, as a preference for its next placement. A lost
+    # node counts towards a crash loop: a model that takes its node down as it loads would
+    # otherwise be loaded again forever
+    return _update_deployment(
+        state,
+        deleted.deployment_id,
+        lambda deployment: {
+            "last_nodes": list(deleted.shard_assignments.node_to_runner),
+            "lost_at": event.at,
+            "losses": _losses_after(deployment, event)
+            if event.reason == "NodeLost"
+            else deployment.losses,
+        },
     )
 
 

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from exo.routing.wire import DeviceOnOtherVersion
 from exo.shared.models.model_cards import ModelCard, ModelId
-from exo.shared.types.common import CommandId, NodeId
+from exo.shared.types.common import CommandId, DeploymentId, NodeId
 from exo.shared.types.memory import Memory
 from exo.shared.types.text_generation import ReasoningDialect, ReasoningEffort
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
@@ -276,8 +276,17 @@ class PlaceInstanceParams(BaseModel):
     min_nodes: int = 1
 
 
+class DeploymentConstraints(BaseModel):
+    """What the user fixed when launching: the model is only ever placed again with these.
+    Without them, a model that loses a device may come back on fewer devices."""
+
+    min_nodes: int = Field(default=1, ge=1)
+    pinned_nodes: list[NodeId] = []
+
+
 class CreateInstanceParams(BaseModel):
     instance: Instance
+    constraints: DeploymentConstraints | None = None
 
 
 class PlacementPreview(BaseModel):
@@ -302,6 +311,15 @@ class CreateInstanceResponse(BaseModel):
     message: str
     command_id: CommandId
     model_card: ModelCard
+    # The launched model: DELETE /instance/{deployment_id} stops it, even while it waits to
+    # be placed again
+    deployment_id: DeploymentId
+
+
+class ResumeDeploymentResponse(BaseModel):
+    message: str
+    command_id: CommandId
+    deployment_id: DeploymentId
 
 
 class DeleteInstanceResponse(BaseModel):

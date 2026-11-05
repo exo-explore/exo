@@ -14,12 +14,13 @@ from exo.master.tests.test_requests_to_deleted_instances import (
     LOST_NODE,
     NODE,
     instance_on,
+    launch_of,
     master_with,
 )
 from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.models.model_cards import ModelId
-from exo.shared.types.commands import CreateInstance, DeleteInstance, ForwarderCommand
-from exo.shared.types.common import CommandId, SystemId
+from exo.shared.types.commands import DeleteDeployment, ForwarderCommand
+from exo.shared.types.common import CommandId, DeploymentId, SystemId
 from exo.shared.types.events import (
     Event,
     GlobalForwarderEvent,
@@ -118,12 +119,12 @@ async def next_event[T: Event](
             return event
 
 
-async def test_a_copy_of_a_launch_after_its_instance_was_stopped_is_ignored() -> None:
+async def test_a_copy_of_a_launch_after_its_model_was_stopped_is_ignored() -> None:
     """The API sends a launch again until its own node's state shows it, under the same id,
     so a node that lags sends copies after the master placed it. One arriving after the
-    instance was stopped (through another node) must not bring it back."""
+    model was stopped (through another node) must not bring it back."""
     master, events = master_with_room()
-    launch = CreateInstance(instance=instance_on(NODE))
+    launch = launch_of(instance_on(NODE))
     commands_sender, master.command_receiver = channel[ForwarderCommand]()
     async with anyio.create_task_group() as tg:
         tg.start_soon(master._command_processor)  # pyright: ignore[reportPrivateUsage]
@@ -131,7 +132,7 @@ async def test_a_copy_of_a_launch_after_its_instance_was_stopped_is_ignored() ->
         with anyio.fail_after(5):
             await next_event(events, InstanceCreated)
         # Stopped since, through another node
-        stop = DeleteInstance(instance_id=launch.instance.instance_id)
+        stop = DeleteDeployment(deployment_id=launch.deployment_id)
         await commands_sender.send(ForwarderCommand(origin=SystemId(), command=stop))
         with anyio.fail_after(5):
             await next_event(events, InstanceDeleted)
@@ -152,7 +153,7 @@ async def test_a_launch_on_a_node_the_master_dropped_waits_until_it_is_back() ->
     master, events = master_with_room()
     membership = FakeMembership(master.node_id, NODE)
     master.membership = membership
-    launch = CreateInstance(instance=instance_on(LOST_NODE))
+    launch = launch_of(instance_on(LOST_NODE))
     commands_sender, master.command_receiver = channel[ForwarderCommand]()
     async with anyio.create_task_group() as tg:
         tg.start_soon(master._command_processor)  # pyright: ignore[reportPrivateUsage]
@@ -170,11 +171,11 @@ async def test_a_launch_on_a_node_the_master_dropped_waits_until_it_is_back() ->
         tg.cancel_scope.cancel()
 
 
-async def test_a_stop_of_an_instance_already_gone_is_logged_in_one_line() -> None:
-    """The API sends a stop again until its node sees the instance go, so copies can reach a
-    master that deleted it already: nothing to do, and no error with a traceback."""
+async def test_a_stop_of_a_model_already_gone_is_logged_in_one_line() -> None:
+    """The API sends a stop again until its node sees the model go, so copies can reach a
+    master that removed it already: nothing to do, and no error with a traceback."""
     master, events = master_with()
-    stop = DeleteInstance(instance_id=instance_on(NODE).instance_id)
+    stop = DeleteDeployment(deployment_id=DeploymentId())
     commands_sender, master.command_receiver = channel[ForwarderCommand]()
     logged: list[str] = []
     sink = logger.add(logged.append, level="DEBUG", format="{level} {message}")

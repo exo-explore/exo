@@ -23,18 +23,18 @@ def filter_cycles_by_memory(
     node_memory: Mapping[NodeId, MemoryUsage],
     required_memory: Memory,
 ) -> list[Cycle]:
-    filtered_cycles: list[Cycle] = []
-    for cycle in cycles:
-        if not all(node in node_memory for node in cycle):
-            continue
-
-        total_mem = sum(
-            (node_memory[node_id].ram_available for node_id in cycle.node_ids),
-            start=Memory(),
-        )
-        if total_mem >= required_memory:
-            filtered_cycles.append(cycle)
-    return filtered_cycles
+    # In bytes: summing Memory objects over every cycle of a large cluster (16,000 for 8
+    # nodes) made this the costliest part of placing a model
+    free = {
+        node_id: usage.ram_available.in_bytes for node_id, usage in node_memory.items()
+    }
+    required = required_memory.in_bytes
+    return [
+        cycle
+        for cycle in cycles
+        if all(node in free for node in cycle)
+        and sum(free[node_id] for node_id in cycle.node_ids) >= required
+    ]
 
 
 def get_smallest_cycles(

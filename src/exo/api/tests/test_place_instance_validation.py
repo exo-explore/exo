@@ -11,7 +11,7 @@ from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask, card_cache
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
-from exo.shared.types.commands import CreateInstance, ForwarderCommand
+from exo.shared.types.commands import CreateDeployment, ForwarderCommand
 from exo.shared.types.common import NodeId, SystemId
 from exo.shared.types.memory import Memory
 from exo.shared.types.state import State
@@ -64,7 +64,7 @@ async def test_a_placement_that_fits_is_sent_to_the_master() -> None:
     )
 
     # Launched as the placement made here, so it can be sent again without starting twice
-    assert [type(command) for command in sent] == [CreateInstance]
+    assert [type(command) for command in sent] == [CreateDeployment]
 
 
 async def test_a_placement_that_cannot_fit_is_refused_with_the_reason() -> None:

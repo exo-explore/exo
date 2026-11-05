@@ -19,7 +19,7 @@ from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask, card_cache
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
-from exo.shared.types.commands import CreateInstance, ForwarderCommand
+from exo.shared.types.commands import CreateDeployment, ForwarderCommand
 from exo.shared.types.common import NodeId, SystemId
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import MemoryUsage
@@ -87,8 +87,8 @@ def pair_api(
     return api, membership, commands
 
 
-def nodes_of(instance: CreateInstance) -> set[NodeId]:
-    return set(instance.instance.shard_assignments.node_to_runner)
+def nodes_of(launch: CreateDeployment) -> set[NodeId]:
+    return set(launch.instance.shard_assignments.node_to_runner)
 
 
 async def test_a_placement_is_made_on_the_nodes_it_reaches() -> None:
@@ -107,7 +107,7 @@ async def test_a_placement_is_made_on_the_nodes_it_reaches() -> None:
     )
 
     (launch,) = sent
-    assert isinstance(launch, CreateInstance)
+    assert isinstance(launch, CreateDeployment)
     assert nodes_of(launch) == {SMALL}
 
 

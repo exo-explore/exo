@@ -399,7 +399,9 @@ async def test_a_node_the_coordinator_removed_stops_counting_in_the_quorum() -> 
             IndexedEvent(
                 idx=1,
                 event=InstanceDeleted(
-                    instance_id=InstanceId("an-instance"), reason="NodeLost"
+                    instance_id=InstanceId("an-instance"),
+                    reason="NodeLost",
+                    at="2026-11-04T12:00:00+00:00",
                 ),
             )
         )
@@ -452,7 +454,11 @@ async def test_a_report_shows_that_exo_on_the_node_runs_and_that_the_cluster_lis
         IndexedEvent(idx=0, event=report),
         IndexedEvent(
             idx=1,
-            event=InstanceDeleted(instance_id=InstanceId("one"), reason="NodeLost"),
+            event=InstanceDeleted(
+                instance_id=InstanceId("one"),
+                reason="NodeLost",
+                at=datetime.now(tz=UTC).isoformat(),
+            ),
         ),
     )
     assert (networking.heard, networking.listed_nodes) == ([PEER], [PEER])

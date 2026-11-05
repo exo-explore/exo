@@ -2,7 +2,7 @@
 """Every removal of an instance says why: a user stopped it, a node was lost, or its runner kept
 failing to start.
 
-DeleteInstance used to stand for the first and the last. A worker that gave up on an instance sent the
+One command used to stand for the first and the last. A worker that gave up on an instance sent the
 same command as a user who stopped it, so nothing that came after could tell them apart: the
 API told the instance's requests "The model was stopped", and anything that should start a
 lost model again would have had to guess whether the user wanted it.
@@ -18,11 +18,11 @@ from exo.master.tests.test_requests_to_deleted_instances import (
 )
 from exo.routing.topics import COMMANDS, GLOBAL_EVENTS
 from exo.shared.types.commands import (
-    DeleteInstance,
+    DeleteDeployment,
     ForwarderCommand,
     InstanceBroken,
 )
-from exo.shared.types.common import NodeId, SessionId, SystemId
+from exo.shared.types.common import DeploymentId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     Event,
     GlobalForwarderEvent,
@@ -44,7 +44,10 @@ async def test_a_user_stop_is_a_user_stop() -> None:
     master, events = master_with(instance)
 
     output = await process(
-        master, events, DeleteInstance(instance_id=instance.instance_id), chat_request()
+        master,
+        events,
+        DeleteDeployment(deployment_id=instance.deployment_id),
+        chat_request(),
     )
 
     assert removals(output) == [(instance.instance_id, "UserStopped")]
@@ -78,7 +81,7 @@ async def test_a_late_report_on_an_instance_already_gone_changes_nothing() -> No
         master,
         events,
         InstanceBroken(instance_id=InstanceId(), reason="StartFailed"),
-        DeleteInstance(instance_id=InstanceId()),
+        DeleteDeployment(deployment_id=DeploymentId()),
         chat_request(),
     )
 
@@ -98,9 +101,8 @@ async def test_an_instance_removed_for_a_lost_node_is_not_removed_again() -> Non
         chat_request(),
     )
 
-    assert lost == InstanceDeleted(
-        instance_id=instance.instance_id, reason="NodeLost", event_id=lost.event_id
-    )
+    assert isinstance(lost, InstanceDeleted)
+    assert (lost.instance_id, lost.reason) == (instance.instance_id, "NodeLost")
     assert removals(output) == []
 
 
@@ -112,7 +114,9 @@ def test_the_reasons_cross_the_network() -> None:
             origin_idx=0,
             origin=master,
             session=SessionId(master_node_id=master, election_clock=1),
-            event=InstanceDeleted(instance_id=InstanceId(), reason=reason),
+            event=InstanceDeleted(
+                instance_id=InstanceId(), reason=reason, at="2026-11-03T12:00:00+00:00"
+            ),
         )
         assert GLOBAL_EVENTS.deserialize(GLOBAL_EVENTS.serialize(event)) == event
     command = ForwarderCommand(

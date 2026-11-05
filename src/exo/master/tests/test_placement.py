@@ -1,9 +1,9 @@
 from collections.abc import Mapping
+from datetime import datetime, timezone
 
 import pytest
 
 from exo.master.placement import (
-    get_transition_events,
     memory_once_loaded,
     place_instance,
     removal_events,
@@ -17,15 +17,14 @@ from exo.master.tests.conftest import (
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
-from exo.shared.types.commands import PlaceInstance
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import (
-    InstanceCreated,
     InstanceDeleted,
     TaskStatusUpdated,
 )
 from exo.shared.types.memory import Memory
 from exo.shared.types.multiaddr import Multiaddr
+from exo.shared.types.placement import PlacementRequest
 from exo.shared.types.profiling import (
     MemoryUsage,
     NetworkInterfaceInfo,
@@ -68,6 +67,8 @@ from exo.shared.types.worker.runners import (
 )
 from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
 
+AT = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
+
 
 @pytest.fixture
 def instance() -> Instance:
@@ -100,9 +101,8 @@ def _metal_only(
     return {node_id: [Backend.MlxMetal] for node_id in node_memory}
 
 
-def place_instance_command(model_card: ModelCard) -> PlaceInstance:
-    return PlaceInstance(
-        command_id=CommandId(),
+def place_instance_command(model_card: ModelCard) -> PlacementRequest:
+    return PlacementRequest(
         model_card=model_card,
         sharding=Sharding.Pipeline,
         instance_meta=InstanceMeta.MlxRing,
@@ -426,42 +426,16 @@ def test_placement_says_when_nodes_have_not_reported_their_memory() -> None:
     assert str(error.value) == "Waiting for the nodes to report their memory"
 
 
-def test_get_transition_events_no_change(instance: Instance):
-    # arrange
-    instance_id = InstanceId()
-    current_instances = {instance_id: instance}
-    target_instances = {instance_id: instance}
-
-    # act
-    events = get_transition_events(current_instances, target_instances)
-
-    # assert
-    assert len(events) == 0
-
-
-def test_get_transition_events_create_instance(instance: Instance):
-    # arrange
-    instance_id = InstanceId()
-    current_instances: dict[InstanceId, Instance] = {}
-    target_instances: dict[InstanceId, Instance] = {instance_id: instance}
-
-    # act
-    events = get_transition_events(current_instances, target_instances)
-
-    # assert
-    assert len(events) == 1
-    assert isinstance(events[0], InstanceCreated)
-
-
 def test_removal_events_remove_the_instance_with_its_reason():
     instance_id = InstanceId()
 
-    events = removal_events(instance_id, "StartFailed", {})
+    events = removal_events(instance_id, "StartFailed", {}, AT)
 
     assert events == [
         InstanceDeleted(
             instance_id=instance_id,
             reason="StartFailed",
+            at=AT.isoformat(),
             event_id=events[0].event_id,
         )
     ]
@@ -606,10 +580,9 @@ def test_tensor_rdma_backend_connectivity_matrix(
     topology.add_connection(Connection(source=node_b, sink=node_a, edge=ethernet_conn))
     topology.add_connection(Connection(source=node_c, sink=node_b, edge=ethernet_conn))
 
-    cic = PlaceInstance(
+    cic = PlacementRequest(
         sharding=Sharding.Tensor,
         instance_meta=InstanceMeta.MlxJaccl,
-        command_id=CommandId(),
         model_card=model_card,
         min_nodes=1,
     )
@@ -737,10 +710,9 @@ def test_place_mlx_jaccl_rejects_when_a_node_has_rdma_ctl_disabled(
         node_b: NodeRdmaCtlStatus(enabled=True),
         node_c: NodeRdmaCtlStatus(enabled=False),
     }
-    cic = PlaceInstance(
+    cic = PlacementRequest(
         sharding=Sharding.Tensor,
         instance_meta=InstanceMeta.MlxJaccl,
-        command_id=CommandId(),
         model_card=model_card,
         min_nodes=3,
     )
@@ -777,10 +749,9 @@ def test_place_mlx_jaccl_rejects_when_node_rdma_ctl_missing(model_card: ModelCar
         node_a: NodeRdmaCtlStatus(enabled=True),
         node_b: NodeRdmaCtlStatus(enabled=True),
     }
-    cic = PlaceInstance(
+    cic = PlacementRequest(
         sharding=Sharding.Tensor,
         instance_meta=InstanceMeta.MlxJaccl,
-        command_id=CommandId(),
         model_card=model_card,
         min_nodes=3,
     )
@@ -823,7 +794,7 @@ def test_removal_events_cancels_running_tasks(
     tasks = {task.task_id: task}
 
     # act
-    events = removal_events(instance_id, "UserStopped", tasks)
+    events = removal_events(instance_id, "UserStopped", tasks, AT)
 
     # assert – cancellation event should come before the deletion event
     assert len(events) == 2
@@ -843,7 +814,7 @@ def test_removal_events_cancels_pending_tasks(
     tasks = {task.task_id: task}
 
     # act
-    events = removal_events(instance_id, "UserStopped", tasks)
+    events = removal_events(instance_id, "UserStopped", tasks, AT)
 
     # assert
     assert len(events) == 2
@@ -869,7 +840,7 @@ def test_removal_events_ignores_completed_tasks(
     }
 
     # act
-    events = removal_events(instance_id, "UserStopped", tasks)
+    events = removal_events(instance_id, "UserStopped", tasks, AT)
 
     # assert – only the InstanceDeleted event, no cancellations
     assert len(events) == 1
@@ -888,7 +859,7 @@ def test_removal_events_cancels_only_matching_tasks(
     tasks = {task_a.task_id: task_a, task_b.task_id: task_b}
 
     # act
-    events = removal_events(instance_id_a, "UserStopped", tasks)
+    events = removal_events(instance_id_a, "UserStopped", tasks, AT)
 
     # assert – only task_a should be cancelled
     cancel_events = [e for e in events if isinstance(e, TaskStatusUpdated)]
@@ -1168,10 +1139,9 @@ def test_mlx_jaccl_rejects_cuda_only_cycle(model_card: ModelCard):
     }
     node_backends = {n: [Backend.MlxCuda] for n in (node_a, node_b, node_c)}
 
-    cic = PlaceInstance(
+    cic = PlacementRequest(
         sharding=Sharding.Tensor,
         instance_meta=InstanceMeta.MlxJaccl,
-        command_id=CommandId(),
         model_card=model_card.model_copy(
             update={
                 "backends": [Backend.MlxMetal, Backend.MlxCuda],

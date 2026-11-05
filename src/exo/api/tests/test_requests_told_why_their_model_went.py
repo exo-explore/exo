@@ -112,7 +112,9 @@ async def test_a_request_is_told_why_its_model_went(
                 IndexedEvent(
                     idx=3,
                     event=InstanceDeleted(
-                        instance_id=instance.instance_id, reason=reason
+                        instance_id=instance.instance_id,
+                        reason=reason,
+                        at="2026-11-03T12:00:00+00:00",
                     ),
                 )
             )

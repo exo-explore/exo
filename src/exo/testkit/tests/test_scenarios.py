@@ -209,8 +209,9 @@ def test_killing_a_follower_ends_its_requests_with_a_clean_error(
     with an error (measured 3.6 s; bound 15 s: the supervisor checks every 5 s, and the API
     ends it once the node is Suspect, 2 s after its connection closes); the master removes
     the node and deletes the instance once it is Gone, the 30 s grace after that (measured
-    about 32 s; bound 45 s), and nothing places it again; a new chat for the model fails at
-    once. Before removal waited for Gone, it took 16 s on a silence timeout."""
+    about 32 s; bound 45 s). Before removal waited for Gone, it took 16 s on a silence
+    timeout. The model is then placed again on the nodes left, so a new chat for it is
+    served, or told to retry while it loads (503), never told it doesn't exist (404)."""
     cluster = make_cluster(3)
     roles = _roles(cluster)
     a, b = roles.followers
@@ -226,17 +227,13 @@ def test_killing_a_follower_ends_its_requests_with_a_clean_error(
     cluster.wait_until_consistent(timeout=45)
     assert _instance_gone(cluster, instance, via=roles.master)
     after = cluster.chat("after the loss", via=roles.master, timeout=10)
-    assert after.status_code == 404, after.summary()
+    assert after.status_code in (200, 503), after.summary()
 
 
 @pytest.mark.slow
-@pytest.mark.xfail(
-    strict=True,
-    raises=EXPECTED_FAILURES,
-    reason="A model that lost a node is never placed again (2 h of chaos on real Macs took "
-    "48 manual relaunches)",
-)
 def test_a_model_that_lost_a_node_is_placed_again(make_cluster: MakeCluster) -> None:
+    """Before deployments, a model that lost a node was never placed again (2 h of chaos on
+    real Macs took 48 manual relaunches)."""
     with _setup("a two-node instance on the followers"):
         cluster = make_cluster(3)
         roles = _roles(cluster)
@@ -390,10 +387,11 @@ def test_a_launch_sent_while_the_master_is_unreachable_is_placed(
 def test_quitting_a_follower_ends_its_requests_and_removes_it(
     make_cluster: MakeCluster,
 ) -> None:
-    """A follower holding half of a two-node instance quits (SIGINT). Main: it exits in a few
-    seconds; the in-flight chat and a chat sent after it left both end with an error
-    (measured 8.6 s; bound 20 s); the node leaves every view (at once since #2582, 14.5 s
-    before; bound 35 s)."""
+    """A follower holding half of a two-node instance quits (SIGINT). It exits in a few
+    seconds; the in-flight chat ends with an error (measured 8.6 s; bound 20 s); the node
+    leaves every view (at once since #2582, 14.5 s before; bound 35 s). The model is placed
+    again on the nodes left, so a chat sent after the quit is served, or told to retry while
+    the model loads (503), and never hangs."""
     cluster = make_cluster(3)
     roles = _roles(cluster)
     a, b = roles.followers
@@ -402,11 +400,15 @@ def test_quitting_a_follower_ends_its_requests_and_removes_it(
     quit_at = time.monotonic()
     assert cluster.quit(b) < 15
     late = cluster.chat_in_background(
-        "sent after the quit " + LONG, via=roles.master, timeout=60
+        "sent after the quit [stub tokens=20]", via=roles.master, timeout=60
     )
-    for result in (chat.result(60), late.result(60)):
-        _clean_error(result)
-        assert result.ended - quit_at < 20, result.summary()
+    result = chat.result(60)
+    _clean_error(result)
+    assert result.ended - quit_at < 20, result.summary()
+    after = late.result(60)
+    assert not after.timed_out, after.summary()
+    assert not after.problems(), after.problems()
+    assert after.ok or after.status_code == 503, after.summary()
     cluster.wait_until_consistent(timeout=35)
 
 
@@ -419,7 +421,8 @@ def test_a_node_that_quits_with_an_instance_leaves_no_task_behind(
     shutting down; its worker then plans bookkeeping tasks for its runner (a Shutdown, a
     CancelTask for the request it was serving). Between #2582 and #2587 these could reach
     the state and stay Pending in every node's state for good (1 run in 5); since #2587 a
-    task for an instance that is gone is never added."""
+    task for an instance that is gone is never added. The late chat is short: the model is
+    placed again on the nodes left, and may serve it."""
     with _setup("a two-node instance on the followers, streaming"):
         cluster = make_cluster(3)
         roles = _roles(cluster)
@@ -428,7 +431,7 @@ def test_a_node_that_quits_with_an_instance_leaves_no_task_behind(
         chat = _streaming(cluster, "quits while serving " + LONG, via=roles.master)
     cluster.quit(b)
     late = cluster.chat_in_background(
-        "sent after the quit " + LONG, via=roles.master, timeout=60
+        "sent after the quit [stub tokens=20]", via=roles.master, timeout=60
     )
     chat.result(60)
     late.result(60)
