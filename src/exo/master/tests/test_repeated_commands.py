@@ -16,6 +16,7 @@ from exo.master.tests.test_requests_to_deleted_instances import (
     instance_on,
     master_with,
 )
+from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import CreateInstance, DeleteInstance, ForwarderCommand
 from exo.shared.types.common import CommandId, SystemId
@@ -149,6 +150,8 @@ async def test_a_launch_on_a_node_the_master_dropped_waits_until_it_is_back() ->
     check. It isn't created, and since it changed nothing, the same launch sent again once
     the node is back is."""
     master, events = master_with_room()
+    membership = FakeMembership(master.node_id, NODE)
+    master.membership = membership
     launch = CreateInstance(instance=instance_on(LOST_NODE))
     commands_sender, master.command_receiver = channel[ForwarderCommand]()
     async with anyio.create_task_group() as tg:
@@ -157,7 +160,9 @@ async def test_a_launch_on_a_node_the_master_dropped_waits_until_it_is_back() ->
         await anyio.sleep(0.2)
         assert events.collect() == []
 
-        master.state.topology.add_node(LOST_NODE)  # it is back
+        # It is back: in the cluster, and reachable
+        master.state.topology.add_node(LOST_NODE)
+        membership.regain(LOST_NODE)
         await commands_sender.send(ForwarderCommand(origin=SystemId(), command=launch))
         with anyio.fail_after(5):
             created = await next_event(events, InstanceCreated)

@@ -20,6 +20,7 @@ import exo.master.main as master_main
 from exo.master.main import Master
 from exo.master.placement import memory_once_loaded
 from exo.routing.router import get_node_zid
+from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.apply import apply
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
@@ -216,6 +217,8 @@ async def running_master(state: State) -> AsyncIterator[RunningMaster]:
         global_event_sender=global_event_sender,
         snapshot_sender=snapshot_sender,
         download_command_sender=download_command_sender,
+        # Reaching every node the state lists
+        membership=FakeMembership(node_id, *state.topology.list_nodes()),
         initial_state=state,
     )
     async with anyio.create_task_group() as tg:

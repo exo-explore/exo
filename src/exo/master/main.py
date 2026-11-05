@@ -1,7 +1,6 @@
-import time
 from collections import deque
 from collections.abc import Set as AbstractSet
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from itertools import islice
 
 import anyio
@@ -20,11 +19,18 @@ from exo.routing.event_router import (
     EventRouterBrokenResourceError,
     EventRouterClosedResourceError,
 )
+from exo.routing.membership import (
+    MembershipReader,
+    MembershipView,
+    instance_is_reachable,
+    listed_nodes,
+    reachable_topology,
+)
 from exo.shared.apply import apply
 from exo.shared.constants import EXO_TRACING_ENABLED
 from exo.shared.model_readiness import instance_is_ready, instance_readiness
 from exo.shared.models.model_cards import ModelId
-from exo.shared.request_errors import INSTANCE_GONE_BEFORE_START
+from exo.shared.request_errors import DEVICE_UNREACHABLE, INSTANCE_GONE_BEFORE_START
 from exo.shared.types.chunks import ErrorChunk, ImageChunk
 from exo.shared.types.commands import (
     AddCustomModelCard,
@@ -89,18 +95,10 @@ from exo.utils.channels import Receiver, Sender
 from exo.utils.event_buffer import MultiSourceBuffer
 from exo.utils.task_group import TaskGroup
 
-# Every node reports its info about once a second. A node the master hasn't heard from for
-# this long is treated as gone (crashed, frozen, asleep or cut off), and its instances are
-# deleted so that requests on them end with an error instead of waiting. On four busy nodes
-# (800 events/s) a healthy node's reports were never more than 6.3 s apart.
-NODE_SILENCE_TIMEOUT = timedelta(seconds=15)
-# How often the master looks for silent nodes and for instances that lost a node
+# How often the master looks for nodes to remove and for instances that lost a node. Which
+# nodes are gone, and since when, is the membership's to say (rust/networking/src/
+# membership.rs owns every liveness timer); this only bounds how late the master acts on it.
 PLAN_INTERVAL = 1.0
-# A check this late means the master itself was stalled (frozen, asleep or overloaded) and
-# couldn't hear anyone. Nodes then get time to reconnect (discovery holds off for a while
-# after a stall) and a full NODE_SILENCE_TIMEOUT to report again before any is removed.
-MASTER_STALL = 5.0
-RECONNECT_ALLOWANCE = timedelta(seconds=15)
 # Recent events kept for nodes that missed a few. A node further behind than this
 # is sent a snapshot of the current state instead of the whole history.
 REPLAYABLE_EVENTS = 10_000
@@ -195,6 +193,35 @@ def _without_requests(state: State) -> State:
 PROCESSED_COMMANDS_KEPT = 100_000
 
 
+def nodes_to_remove(listed: AbstractSet[NodeId], view: MembershipView) -> set[NodeId]:
+    """The listed nodes the coordinator removes now, and whose instances it ends: those Gone in
+    its own membership view (Suspect for the grace period, or listed and never seen for as
+    long), as far as its quorum read allows. Never this node itself.
+
+    - Majority: all of them.
+    - Half (two nodes with one away, or an even split): none yet, and their instances stay. A
+      Mac whose lid closed for a minute or two then comes back to its models, if their ranks'
+      connections held; its requests fail fast meanwhile (every API checks reachability).
+      Once the node has been Gone for FORGET_AFTER (the split hold, SPLIT_HOLD) it stops
+      counting, the read is Majority, and it is removed. This is also where the models the
+      other side ran would be re-placed after SPLIT_HOLD, once exo re-places models itself.
+    - Minority: none. This node is most likely the one cut off, and the rest of the cluster
+      still runs what it can't see. Once the lost nodes have been Gone for FORGET_AFTER they
+      stop counting, the read is Majority of the nodes it reaches, and they are removed.
+
+    Suspect nodes are never removed: they may be back within the grace period.
+    """
+    if view.quorum != "Majority":
+        return set()
+    return {
+        member.node_id
+        for member in view.members
+        if member.state == "Gone"
+        and member.node_id in listed
+        and member.node_id != view.node_id
+    }
+
+
 class NoInstanceForModelError(Exception):
     """A request for a model with no instance that can serve it: none at all (one deleted after
     the API checked for it), or none ready. The request is ended with this error: dropping it
@@ -217,11 +244,15 @@ class Master:
         global_event_sender: Sender[GlobalForwarderEvent],
         snapshot_sender: Sender[StateSnapshot],
         download_command_sender: Sender[ForwarderDownloadCommand],
+        membership: MembershipReader,
         initial_state: State | None = None,
     ):
         """global_event_sender must never block (the router's channels are unbounded): the
         master sends each event as it indexes it, without awaiting."""
         self.node_id = node_id
+        # This node's view of which nodes are reachable and gone, and of how much of the
+        # cluster it reaches: what removals and the choice of instance go by
+        self.membership = membership
         self.session_id = session_id
         # A master elected in a running cluster carries on from the state its node already
         # has, so model instances survive the change of master. Its events are numbered on
@@ -242,12 +273,11 @@ class Master:
         self._replayable_events = REPLAYABLE_EVENTS
         self._replayable_image_bytes = REPLAYABLE_IMAGE_BYTES
         self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
-        # Since when the master has been able to hear nodes, and when it last checked on them
-        self._listening_since = time.monotonic()
-        self._last_check: float | None = None
         # Set when a node is removed, so its instances are deleted at once rather than at the
         # next check (created by the plan loop, which waits on it)
         self._node_removed: anyio.Event | None = None
+        # The gone nodes kept listed because this node's quorum read isn't Majority
+        self._held_back: frozenset[NodeId] = frozenset()
         self._processed_commands: set[CommandId] = set()
         self._processed_order: deque[CommandId] = deque()
         self._expected_ranks: dict[TaskId, set[int]] = {}
@@ -420,7 +450,9 @@ class Master:
                         case PlaceInstance():
                             placement = place_instance(
                                 command,
-                                self.state.topology,
+                                reachable_topology(
+                                    self.membership, self.state.topology
+                                ),
                                 self.state.instances,
                                 self.state.node_memory,
                                 self.state.node_network,
@@ -434,6 +466,17 @@ class Master:
                                 self.state.instances, placement, self.state.tasks
                             )
                             generated_events.extend(transition_events)
+                        case CreateInstance() if not instance_is_reachable(
+                            self.membership, command.instance
+                        ):
+                            # Its model couldn't load, and it would be ended as soon as the
+                            # node is removed. Refused, as PlaceInstance leaves such a node out:
+                            # the API sends a launch again until it shows, by when the node may
+                            # be back, and calls it off after CLUSTER_COMMAND_TIMEOUT.
+                            logger.warning(
+                                f"Not launching instance {command.instance.instance_id}: a "
+                                "node it needs can't be reached now"
+                            )
                         case CreateInstance():
                             try:
                                 placement = add_instance_to_placements(
@@ -545,9 +588,14 @@ class Master:
     ) -> InstanceId:
         """The ready instance of the model with the fewest requests in flight.
 
-        Instances that aren't ready (downloading, loading, failed) are left out: the API waits
-        for a model to be ready before sending a request, but with several instances of a
-        model, one may be ready and another not.
+        Instances with a node this node can't reach now, as its membership sees it, are left
+        out: their output can't arrive. The API that sent the request checked the same on its
+        own view; this is the backstop for views that differ. A request whose model has only
+        such instances ends at once.
+
+        So are instances that aren't ready (downloading, loading, failed): the API waits for
+        a model to be ready before sending a request, but with several instances of a model,
+        one may be ready and another not.
         """
         in_flight = {TaskStatus.Pending, TaskStatus.Running}
         of_model = [
@@ -560,15 +608,22 @@ class Master:
             # The API sends a request only for a model it saw an instance of, so the instance
             # was deleted (the model stopped, or a node lost) after the API looked
             raise NoInstanceForModelError(model, INSTANCE_GONE_BEFORE_START)
+        reachable = [
+            instance
+            for instance in of_model
+            if instance_is_reachable(self.membership, instance)
+        ]
+        if not reachable:
+            raise NoInstanceForModelError(model, DEVICE_UNREACHABLE)
         ready = [
             instance.instance_id
-            for instance in of_model
+            for instance in reachable
             if instance_is_ready(instance, self.state.runners)
         ]
         if not ready:
             not_ready = [
                 status
-                for instance in of_model
+                for instance in reachable
                 if (status := instance_readiness(self.state, instance)) is not None
             ]
             raise NoInstanceForModelError(
@@ -597,28 +652,21 @@ class Master:
                 await self._node_removed.wait()
 
     def _remove_silent_nodes_and_broken_instances(self) -> None:
-        check = time.monotonic()
-        if self._last_check is not None and check - self._last_check > MASTER_STALL:
-            logger.warning(
-                f"Master was unresponsive for {check - self._last_check:.0f}s; "
-                "giving nodes time to report before removing any"
-            )
-            self._listening_since = check + RECONNECT_ALLOWANCE.total_seconds()
-        self._last_check = check
-        # A node is silent only if the master was listening and didn't hear from it
-        listened = timedelta(seconds=check - self._listening_since)
-        now = datetime.now(tz=timezone.utc)
-        silent = {
-            node_id: now - seen
-            for node_id, seen in self.state.last_seen.items()
-            if min(now - seen, listened) > NODE_SILENCE_TIMEOUT
-        }
+        # Gone in this node's membership view, as far as its quorum read allows: a node that
+        # was stopped itself (frozen, or its Mac asleep) is Resuming for a while, and doesn't
+        # time the peers it lost meanwhile toward Gone, so it doesn't blame them for its stall
+        view = self.membership.view()
+        listed = listed_nodes(self.state)
+        gone = nodes_to_remove(listed, view)
+        self._note_held_back(listed, view)
+        members = {member.node_id: member for member in view.members}
         # Each removal is in the state as soon as it is made, so a node or an instance is
         # removed once
-        for node_id, silence in silent.items():
+        for node_id in gone:
+            member = members[node_id]
             logger.info(
-                f"Manually removing node {node_id} due to inactivity "
-                f"({silence.total_seconds():.0f}s without hearing from it)"
+                f"Removing node {node_id}: gone ({member.reason}) since "
+                f"{member.since.isoformat(timespec='seconds')}"
             )
             self._index(NodeTimedOut(node_id=node_id))
 
@@ -639,6 +687,35 @@ class Master:
         # Delete the instances it was part of now, not at the next check
         if self._node_removed is not None:
             self._node_removed.set()
+
+    def _note_held_back(
+        self, listed: AbstractSet[NodeId], view: MembershipView
+    ) -> None:
+        """Logs when the gone nodes kept listed because of this node's quorum read change"""
+        held_back = frozenset(
+            member.node_id
+            for member in view.members
+            if view.quorum != "Majority"
+            and member.state == "Gone"
+            and member.node_id in listed
+            and member.node_id != view.node_id
+        )
+        if held_back and held_back != self._held_back:
+            if view.quorum == "Minority":
+                logger.warning(
+                    f"Not removing {len(held_back)} gone node(s) or their instances: this "
+                    f"node reaches {view.reachable} of the {view.last_known} nodes it knows, "
+                    "so it is most likely the one cut off"
+                )
+            else:
+                logger.warning(
+                    f"Keeping {len(held_back)} gone node(s) and their instances: this node "
+                    f"reaches {view.reachable} of the {view.last_known} nodes it knows, "
+                    "exactly half, so it waits for the split hold before removing them"
+                )
+        elif self._held_back and not held_back:
+            logger.info("No longer holding back the removal of gone nodes")
+        self._held_back = held_back
 
     async def _event_processor(self) -> None:
         with self.local_event_receiver as local_events:

@@ -95,7 +95,7 @@ class MembershipSnapshot:
     @property
     def reachable(self) -> builtins.int:
         r"""
-        The Alive peers, plus this node unless it is Resuming
+        The counted Alive peers, plus this node unless it is Resuming
         """
     @property
     def last_known(self) -> builtins.int:
@@ -116,6 +116,16 @@ class NetworkingHandle:
     def members(self) -> MembershipSnapshot:
         r"""
         This node's view of the cluster right now: every node it knows of, and the quorum read
+        """
+    def heard_from(self, node: builtins.str) -> None:
+        r"""
+        exo on `node` reported (its periodic node info): the one sign that exo on a node whose
+        transport is up isn't wedged. Ignored for a node id that isn't valid.
+        """
+    def listed(self, node: builtins.str) -> None:
+        r"""
+        The cluster's state lists `node`: one this node has never seen is Suspect from now, and
+        Gone after the grace unless it shows up. Ignored for a node id that isn't valid.
         """
     def forget(self, node: builtins.str) -> None:
         r"""

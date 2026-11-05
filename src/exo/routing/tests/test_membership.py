@@ -31,16 +31,19 @@ from exo.routing.membership import (
 from exo.routing.router import Router
 from exo.routing.tests.fake_networking import FakeNetworking, no_snapshot
 from exo.routing.tests.fake_reachability import FakeReachability
+from exo.shared.topology import Topology
 from exo.shared.types.common import NodeId, SessionId, SystemId
 from exo.shared.types.events import (
     IndexedEvent,
     InstanceDeleted,
+    NodeGatheredInfo,
     NodeTimedOut,
     StateSnapshot,
 )
 from exo.shared.types.state import State
 from exo.shared.types.worker.instances import InstanceId
 from exo.utils.channels import Receiver, Sender, channel
+from exo.utils.info_gatherer.info_gatherer import MiscData
 
 ME = NodeId("ME")
 PEER = NodeId("PEER")
@@ -409,3 +412,72 @@ async def test_a_node_the_coordinator_removed_stops_counting_in_the_quorum() -> 
         members.close()
         events.close()
     assert networking.forgotten == [PEER, OTHER]
+
+
+async def told_by_the_cluster(
+    *items: IndexedEvent | StateSnapshot,
+) -> FakeNetworking:
+    """What a running Membership tells the networking layer for these cluster events"""
+    networking = FakeNetworking()
+    members, member_receiver = channel[Member]()
+    events, event_receiver = channel[IndexedEvent | StateSnapshot]()
+    membership = Membership(
+        ME,
+        member_receiver=member_receiver,
+        networking=networking,
+        cluster_events=event_receiver,
+    )
+    async with create_task_group() as tg:
+        tg.start_soon(membership.run)
+        for item in items:
+            await events.send(item)
+        await settle()
+        members.close()
+        events.close()
+    return networking
+
+
+async def test_a_report_shows_that_exo_on_the_node_runs_and_that_the_cluster_lists_it() -> (
+    None
+):
+    report = NodeGatheredInfo(
+        node_id=PEER,
+        when=str(datetime.now(tz=UTC)),
+        info=MiscData(friendly_name="a Mac"),
+    )
+    networking = await told_by_the_cluster(
+        IndexedEvent(idx=0, event=report),
+        IndexedEvent(idx=1, event=InstanceDeleted(instance_id=InstanceId("one"))),
+    )
+    assert (networking.heard, networking.listed_nodes) == ([PEER], [PEER])
+    assert networking.forgotten == []
+
+
+async def test_a_snapshot_lists_every_node_in_the_cluster_state() -> None:
+    topology = Topology()
+    topology.add_node(PEER)
+    state = State(
+        topology=topology, last_seen={OTHER: datetime.fromtimestamp(SINCE, tz=UTC)}
+    )
+    networking = await told_by_the_cluster(
+        StateSnapshot(
+            session=SessionId(master_node_id=OTHER, election_clock=1),
+            requester=SystemId(),
+            state=state,
+        )
+    )
+    assert sorted(networking.listed_nodes) == sorted([OTHER, PEER])
+    assert networking.heard == []
+
+
+async def test_a_change_says_why_the_node_wasnt_alive_before() -> None:
+    async with running_membership() as (membership, events):
+        changes = membership.changes()
+        await events.send(member(PEER, "Alive"))
+        await events.send(member(PEER, "Suspect", "Wedged"))
+        await events.send(member(PEER, "Alive"))
+        await settle()
+        reasons = [
+            (change.reason, change.previous_reason) for change in changes.collect()
+        ]
+        assert reasons == [(None, None), ("Wedged", None), (None, "Wedged")]

@@ -11,6 +11,7 @@ import pytest
 
 from exo.master.main import Master
 from exo.routing.router import get_node_zid
+from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import (
     Command,
@@ -69,6 +70,7 @@ async def test_a_request_from_before_a_master_change_can_still_end(ending: str):
         local_event_receiver=local_receiver,
         command_receiver=command_receiver,
         download_command_sender=download_sender,
+        membership=FakeMembership(node_id),
         snapshot_sender=snapshot_sender,
     )
     sent: list[Event] = []

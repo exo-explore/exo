@@ -163,7 +163,7 @@ pub struct PyMembershipSnapshot {
     /// This node first, then its peers
     members: Vec<PyMember>,
     quorum: PyQuorum,
-    /// The Alive peers, plus this node unless it is Resuming
+    /// The counted Alive peers, plus this node unless it is Resuming
     reachable: usize,
     /// This node and every peer seen Alive, except those that left
     last_known: usize,
@@ -325,6 +325,22 @@ impl PyNetworkingHandle {
         // Read without the GIL: the membership's own thread may hold the lock for a moment,
         // and must never wait for a thread that waits for it with the GIL held
         py.detach(|| self.members.snapshot()).into()
+    }
+
+    /// exo on `node` reported (its periodic node info): the one sign that exo on a node whose
+    /// transport is up isn't wedged. Ignored for a node id that isn't valid.
+    pub fn heard_from(&self, node: &str) {
+        if let Ok(zid) = node.parse() {
+            self.members.tell(FromExo::HeardFrom(zid));
+        }
+    }
+
+    /// The cluster's state lists `node`: one this node has never seen is Suspect from now, and
+    /// Gone after the grace unless it shows up. Ignored for a node id that isn't valid.
+    pub fn listed(&self, node: &str) {
+        if let Ok(zid) = node.parse() {
+            self.members.tell(FromExo::Listed(zid));
+        }
     }
 
     /// The coordinator removed `node` from the cluster: it stops counting in the quorum, unless

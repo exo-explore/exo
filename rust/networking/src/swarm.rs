@@ -78,6 +78,10 @@ pub struct Members {
 /// What exo tells the membership, that only exo knows
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FromExo {
+    /// exo on the node reported (its periodic node info): see `Membership::heard_from`
+    HeardFrom(ZenohId),
+    /// The cluster's state lists the node: see `Membership::listed`
+    Listed(ZenohId),
     /// The coordinator removed the node from the cluster
     Removed(ZenohId),
 }
@@ -275,13 +279,20 @@ async fn drive_membership(
                 }
             }
             Some(input) = from_exo.recv() => {
+                let now = Now::read();
                 match input {
+                    FromExo::HeardFrom(zid) => {
+                        members.with(|membership| membership.heard_from(zid, now)).into_iter().collect()
+                    }
+                    FromExo::Listed(zid) => {
+                        members.with(|membership| membership.listed(zid, now)).into_iter().collect()
+                    }
                     FromExo::Removed(zid) => {
                         log::info!("the coordinator removed {zid}");
                         members.with(|membership| membership.forget(zid));
+                        Vec::new()
                     }
                 }
-                Vec::new()
             }
             token = tokens.recv_async() => {
                 // The session is closed

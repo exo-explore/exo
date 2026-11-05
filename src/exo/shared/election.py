@@ -101,7 +101,13 @@ def connection_change(
     joined, rejoined, or is reachable again) is "connected" and one that leaves Alive (for
     Suspect, or Gone when it left) is "disconnected". Everything else starts nothing: a
     Suspect node becoming Gone, and this node resuming after a stall or being back from it.
+
+    Nor does a node becoming wedged (its transport up, no report from exo on it), or back from
+    being wedged: its connection didn't change, so elections never started a round for it, and
+    they handle a wedged master with their own silence timeout.
     """
+    if "Wedged" in (change.reason, change.previous_reason):
+        return None
     if change.became_alive:
         return "connected"
     if change.left_alive:

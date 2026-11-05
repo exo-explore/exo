@@ -10,6 +10,7 @@ import anyio
 
 from exo.master.main import Master
 from exo.routing.router import get_node_zid
+from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.model_readiness import model_readiness
 from exo.shared.models.model_cards import ModelId
 from exo.shared.topology import Topology
@@ -120,6 +121,7 @@ async def test_request_goes_to_the_downloading_instance_although_one_is_ready() 
         global_event_sender=global_event_sender,
         snapshot_sender=channel[StateSnapshot]()[0],
         download_command_sender=channel[ForwarderDownloadCommand]()[0],
+        membership=FakeMembership(node_id, READY_NODE, NEW_NODE),
         initial_state=state,
     )
     # _without_requests drops generation tasks from an initial state; put the busy one back

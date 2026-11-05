@@ -11,6 +11,7 @@ import pytest
 from exo.api.types import ImageGenerationTaskParams
 from exo.master.main import Master
 from exo.routing.router import get_node_zid
+from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.commands import (
@@ -67,6 +68,7 @@ async def test_a_request_for_a_model_with_no_instance_ends_with_an_error(
         global_event_sender=global_event_sender,
         snapshot_sender=channel[StateSnapshot]()[0],
         download_command_sender=channel[ForwarderDownloadCommand]()[0],
+        membership=FakeMembership(node_id),
     )
 
     async with anyio.create_task_group() as tg:
