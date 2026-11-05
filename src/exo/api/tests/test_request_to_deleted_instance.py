@@ -19,13 +19,14 @@ from exo.api.main import API
 from exo.api.recent_events import RecentEvents
 from exo.api.types import ChatCompletionMessage, ChatCompletionRequest
 from exo.master.main import Master
+from exo.master.tests.test_requests_to_deleted_instances import deployment_of
 from exo.routing.router import get_node_zid
 from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (
-    DeleteInstance,
+    DeleteDeployment,
     ForwarderCommand,
     ForwarderDownloadCommand,
 )
@@ -170,7 +171,9 @@ async def test_a_request_whose_task_was_not_added_ends_with_an_error() -> None:
                 IndexedEvent(
                     idx=2,
                     event=InstanceDeleted(
-                        instance_id=instance.instance_id, reason="UserStopped"
+                        instance_id=instance.instance_id,
+                        reason="UserStopped",
+                        at="2026-11-03T12:00:00+00:00",
                     ),
                 )
             )
@@ -200,13 +203,13 @@ async def test_a_request_whose_task_was_not_added_ends_with_an_error() -> None:
 
 
 async def test_a_chat_sent_just_after_deleting_its_instance_ends_promptly() -> None:
-    """The whole path: the API sends DeleteInstance and then a chat request, the master
+    """The whole path: the API sends a stop and then a chat request, the master
     handles both back to back, and the API applies what the master indexed. The request must
     end with an error, not hang.
 
     DELETE /instance answers only once the deletion has applied, so a chat from the same
     client comes too late for this race. A chat from another client, sent while the deletion
-    is on its way, still meets it: the DeleteInstance is sent here without waiting for it."""
+    is on its way, still meets it: the stop is sent here without waiting for it."""
     instance = instance_on(NODE)
     topology = Topology()
     topology.add_node(NODE)
@@ -215,6 +218,7 @@ async def test_a_chat_sent_just_after_deleting_its_instance_ends_promptly() -> N
         topology=topology,
         last_seen={NODE: datetime.now(tz=timezone.utc)},
         instances={instance.instance_id: instance},
+        deployments={instance.deployment_id: deployment_of(instance)},
         runners={
             runner: RunnerReady()
             for runner in instance.shard_assignments.runner_to_shard
@@ -253,7 +257,7 @@ async def test_a_chat_sent_just_after_deleting_its_instance_ends_promptly() -> N
             tg.start_soon(to_api)
             tg.start_soon(api._apply_state)
 
-            await api._send(DeleteInstance(instance_id=instance.instance_id))
+            await api._send(DeleteDeployment(deployment_id=instance.deployment_id))
             body = await read_body(await start_chat(api))
             tg.cancel_scope.cancel()
 

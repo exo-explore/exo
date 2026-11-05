@@ -45,6 +45,10 @@ class ModelId(Id):
         return self.split("/")[-1]
 
 
+class DeploymentId(Id):
+    """A model a user launched, which the cluster keeps running (exo.shared.types.deployments)"""
+
+
 class CommandId(Id):
     pass
 

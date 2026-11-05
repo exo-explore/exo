@@ -19,6 +19,7 @@ import pytest
 import exo.master.main as master_main
 from exo.master.main import Master
 from exo.master.placement import memory_once_loaded
+from exo.master.tests.test_requests_to_deleted_instances import deployment_of
 from exo.routing.router import get_node_zid
 from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.apply import apply
@@ -27,19 +28,19 @@ from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (
     Command,
-    CreateInstance,
-    DeleteInstance,
+    CreateDeployment,
+    DeleteDeployment,
     DeleteInstanceLink,
     ForwarderCommand,
     ForwarderDownloadCommand,
-    PlaceInstance,
     RequestEventLog,
     TaskCancelled,
     TaskFinished,
     TextGeneration,
 )
-from exo.shared.types.common import NodeId, SessionId, SystemId
+from exo.shared.types.common import DeploymentId, NodeId, SessionId, SystemId
 from exo.shared.types.events import (
+    DeploymentRemoved,
     Event,
     GlobalForwarderEvent,
     IndexedEvent,
@@ -63,14 +64,14 @@ from exo.shared.types.text_generation import (
     TextGenerationTaskParams,
 )
 from exo.shared.types.worker.downloads import DownloadOngoing, DownloadProgressData
-from exo.shared.types.worker.instances import InstanceId, InstanceMeta, MlxRingInstance
+from exo.shared.types.worker.instances import InstanceId, MlxRingInstance
 from exo.shared.types.worker.runners import (
     RunnerId,
     RunnerLoading,
     RunnerReady,
     ShardAssignments,
 )
-from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
+from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.utils.channels import Receiver, Sender, channel
 
 MODEL = ModelId("test-model")
@@ -133,6 +134,9 @@ def cluster(*instances: MlxRingInstance) -> State:
         },
         node_backends={NODE: [Backend.MlxMetal]},
         instances={instance.instance_id: instance for instance in instances},
+        deployments={
+            instance.deployment_id: deployment_of(instance) for instance in instances
+        },
         runners={
             runner: RunnerReady()
             for instance in instances
@@ -150,12 +154,15 @@ def chat_request() -> TextGeneration:
     )
 
 
-def place_model() -> PlaceInstance:
-    return PlaceInstance(
-        model_card=model_card(),
-        sharding=Sharding.Pipeline,
-        instance_meta=InstanceMeta.MlxRing,
-        min_nodes=1,
+def launch(instance: MlxRingInstance) -> CreateDeployment:
+    """A launch of a placement the API made (from the dashboard's preview, or for POST
+    /place_instance)."""
+    deployment_id = DeploymentId()
+    return CreateDeployment(
+        deployment_id=deployment_id,
+        spec=deployment_of(instance).spec,
+        model_card=model_card(instance.shard_assignments.model_id),
+        instance=instance.model_copy(update={"deployment_id": deployment_id}),
     )
 
 
@@ -236,28 +243,16 @@ async def running_master(state: State) -> AsyncIterator[RunningMaster]:
         tg.cancel_scope.cancel()
 
 
-async def test_two_launches_in_a_row_do_not_share_the_same_memory() -> None:
-    """The second launch sees the first one's instance, still loading, and the memory it will
-    take. It used to see the memory free and put a second copy in it."""
-    async with running_master(cluster()) as running:
-        await running.send(place_model(), place_model())
-        sent = await running.all_handled()
-
-        assert len([event for event in sent if isinstance(event, InstanceCreated)]) == 1
-        assert len(running.master.state.instances) == 1
-
-
 async def test_two_given_placements_sent_together_do_not_share_the_same_memory() -> (
     None
 ):
-    """The same for CreateInstance, which launches a placement the API made (from the
-    dashboard's preview, or for POST /place_instance): the API checks it against its own state,
-    which doesn't show the other launch yet, so the master checks it again."""
+    """The same for a launch of a placement the API made (from the dashboard's preview, or
+    for POST /place_instance): the API checks it against its own state, which doesn't show
+    the other launch yet, so the master checks it again. The refused launch records no
+    deployment."""
     first, second = ready_instance(), ready_instance()
     async with running_master(cluster()) as running:
-        await running.send(
-            CreateInstance(instance=first), CreateInstance(instance=second)
-        )
+        await running.send(launch(first), launch(second))
         sent = await running.all_handled()
 
         assert [
@@ -266,6 +261,7 @@ async def test_two_given_placements_sent_together_do_not_share_the_same_memory()
             if isinstance(event, InstanceCreated)
         ] == [first.instance_id]
         assert list(running.master.state.instances) == [first.instance_id]
+        assert len(running.master.state.deployments) == 1
 
 
 def first_model_finishing_its_load(free_mb: int) -> tuple[State, MlxRingInstance]:
@@ -309,7 +305,7 @@ async def test_a_model_launched_as_another_finishes_loading(
         model_card(ModelId("second-model"), Memory.from_mb(size_mb))
     )
     async with running_master(state) as running:
-        await running.send(CreateInstance(instance=second))
+        await running.send(launch(second))
         await running.all_handled()
 
         assert (second.instance_id in running.master.state.instances) is placed
@@ -319,10 +315,9 @@ async def test_a_launch_sent_again_changes_nothing() -> None:
     """The API sends a launch again until it shows: a copy of one already applied is not
     refused for the memory the instance itself takes."""
     instance = ready_instance()
+    command = launch(instance)
     async with running_master(cluster()) as running:
-        await running.send(
-            CreateInstance(instance=instance), CreateInstance(instance=instance)
-        )
+        await running.send(command, command)
         sent = await running.all_handled()
 
         assert len([event for event in sent if isinstance(event, InstanceCreated)]) == 1
@@ -375,7 +370,7 @@ async def test_a_command_that_fails_to_apply_changes_nothing(
         before = running.master.state
         monkeypatch.setattr(master_main, "apply", failing_on_deletion)
 
-        await running.send(DeleteInstance(instance_id=instance.instance_id))
+        await running.send(DeleteDeployment(deployment_id=instance.deployment_id))
         sent = await running.all_handled()
 
         assert [type(event) for event in sent] == [TaskCreated, InstanceLinkDeleted]
@@ -438,15 +433,11 @@ async def test_a_node_applying_what_the_master_sends_ends_with_its_state(
                     )
                 )
             elif roll < 0.72:
-                await running.send(
-                    rng.choice(
-                        [place_model(), CreateInstance(instance=ready_instance())]
-                    )
-                )
+                await running.send(launch(ready_instance()))
             elif roll < 0.78:
-                if instances := list(running.master.state.instances):
+                if deployments := list(running.master.state.deployments):
                     await running.send(
-                        DeleteInstance(instance_id=rng.choice(instances))
+                        DeleteDeployment(deployment_id=rng.choice(deployments))
                     )
             elif roll < 0.85:
                 await running.send(RequestEventLog(since_idx=rng.randrange(0, 50)))
@@ -472,13 +463,12 @@ async def test_a_node_applying_what_the_master_sends_ends_with_its_state(
 
 
 async def test_an_instance_deleted_twice_in_a_row_is_deleted_once() -> None:
-    """A second DeleteInstance (the user stops a model twice, or a worker gives up on it as
-    the user stops it) finds the instance gone."""
+    """A second stop (the user stops a model twice, from two tabs) finds it gone."""
     instance = ready_instance()
     async with running_master(cluster(instance)) as running:
         await running.send(
-            DeleteInstance(instance_id=instance.instance_id),
-            DeleteInstance(instance_id=instance.instance_id),
+            DeleteDeployment(deployment_id=instance.deployment_id),
+            DeleteDeployment(deployment_id=instance.deployment_id),
         )
         sent = await running.all_handled()
 
@@ -508,16 +498,17 @@ async def test_own_and_node_events_share_one_sequence() -> None:
         await from_node(0)
         await running.send(chat_request())
         await from_node(1)
-        await running.send(DeleteInstance(instance_id=instance.instance_id))
+        await running.send(DeleteDeployment(deployment_id=instance.deployment_id))
         await from_node(2)
-        live = list(await running.sent_until(lambda sent: len(sent) == 6))
+        live = list(await running.sent_until(lambda sent: len(sent) == 7))
         await anyio.sleep(0.05)
         assert running.broadcast.collect() == []
 
-        assert [message.origin_idx for message in live] == list(range(6))
+        assert [message.origin_idx for message in live] == list(range(7))
         kinds = [type(message.event) for message in live]
         assert sorted(kinds, key=lambda kind: kind.__name__) == sorted(
-            [TestEvent] * 3 + [TaskCreated, TaskStatusUpdated, InstanceDeleted],
+            [TestEvent] * 3
+            + [TaskCreated, TaskStatusUpdated, InstanceDeleted, DeploymentRemoved],
             key=lambda kind: kind.__name__,
         )
         # The deletion cancels the request first, then deletes the instance, in two indices
@@ -525,13 +516,13 @@ async def test_own_and_node_events_share_one_sequence() -> None:
         cancelled = kinds.index(TaskStatusUpdated)
         assert kinds[cancelled + 1] is InstanceDeleted
         assert kinds.index(TaskCreated) < cancelled
-        assert running.master.state.last_event_applied_idx == 5
+        assert running.master.state.last_event_applied_idx == 6
         assert instance.instance_id not in running.master.state.instances
 
         # A node that missed them is sent the same events again, with the same indices
         running.sent.clear()
         await running.send(RequestEventLog(since_idx=0))
-        replayed = await running.sent_until(lambda sent: len(sent) == 6)
+        replayed = await running.sent_until(lambda sent: len(sent) == 7)
         assert [(m.origin_idx, m.event) for m in replayed] == [
             (m.origin_idx, m.event) for m in live
         ]
@@ -544,5 +535,5 @@ async def test_own_and_node_events_share_one_sequence() -> None:
         with anyio.fail_after(5):
             snapshot = await running.snapshots.receive()
         assert snapshot.requester == requester
-        assert snapshot.state.last_event_applied_idx == 5
+        assert snapshot.state.last_event_applied_idx == 6
         assert snapshot.state is running.master.state

@@ -17,6 +17,8 @@ from exo.worker.tests.unittests.conftest import (
 
 MODEL = ModelId("test-model")
 
+AT = "2026-11-03T12:00:00+00:00"
+
 
 def instance_with(*runner_ids: RunnerId) -> Instance:
     return get_mlx_ring_instance(
@@ -69,7 +71,8 @@ def test_deleting_an_instance_forgets_its_runners():
     )
 
     new_state = apply_instance_deleted(
-        InstanceDeleted(instance_id=deleted.instance_id, reason="NodeLost"), state
+        InstanceDeleted(instance_id=deleted.instance_id, reason="NodeLost", at=AT),
+        state,
     )
 
     assert dict(new_state.runners) == {kept: RunnerReady()}

@@ -2,7 +2,7 @@
 
 The master's state used to change only when its own events came back indexed, a few
 milliseconds after it sent them. A request that reached it in that window, just after the
-instance was deleted (by a DeleteInstance, or because a node was lost), got a task on the
+instance was deleted (by a user's stop, or because a node was lost), got a task on the
 deleted instance. Nothing ran that task and nothing ended its request: the stream got
 keepalives until the client gave up. The master now applies its own events as it decides on
 them, so the next command it handles sees the deletion.
@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 import anyio
 
+from exo.master.deployments import spec_of
 from exo.master.main import Master
 from exo.routing.router import get_node_zid
 from exo.routing.tests.fake_membership import FakeMembership
@@ -21,12 +22,14 @@ from exo.shared.types.backends import Backend
 from exo.shared.types.chunks import ErrorChunk
 from exo.shared.types.commands import (
     Command,
-    DeleteInstance,
+    CreateDeployment,
+    DeleteDeployment,
     ForwarderCommand,
     ForwarderDownloadCommand,
     TextGeneration,
 )
-from exo.shared.types.common import NodeId, SessionId, SystemId
+from exo.shared.types.common import DeploymentId, NodeId, SessionId, SystemId
+from exo.shared.types.deployments import Deployment
 from exo.shared.types.events import (
     ChunkGenerated,
     Event,
@@ -45,7 +48,7 @@ from exo.shared.types.text_generation import (
     InputMessageContent,
     TextGenerationTaskParams,
 )
-from exo.shared.types.worker.instances import InstanceId, MlxRingInstance
+from exo.shared.types.worker.instances import Instance, InstanceId, MlxRingInstance
 from exo.shared.types.worker.runners import (
     RunnerId,
     RunnerLoading,
@@ -92,6 +95,29 @@ def instance_on(node: NodeId) -> MlxRingInstance:
     )
 
 
+def deployment_of(instance: Instance) -> Deployment:
+    """The deployment an instance runs, as the master records it when it places one."""
+    shard = next(iter(instance.shard_assignments.runner_to_shard.values()))
+    return Deployment(
+        deployment_id=instance.deployment_id,
+        spec=spec_of(instance),
+        model_card=shard.model_card,
+    )
+
+
+def launch_of(instance: MlxRingInstance) -> CreateDeployment:
+    """A launch of the placement, as the API sends it"""
+    deployment_id = DeploymentId()
+    instance = instance.model_copy(update={"deployment_id": deployment_id})
+    shard = next(iter(instance.shard_assignments.runner_to_shard.values()))
+    return CreateDeployment(
+        deployment_id=deployment_id,
+        spec=spec_of(instance),
+        model_card=shard.model_card,
+        instance=instance,
+    )
+
+
 def chat_request() -> TextGeneration:
     return TextGeneration(
         task_params=TextGenerationTaskParams(
@@ -123,6 +149,10 @@ def master_with(
             topology=topology,
             last_seen={NODE: datetime.now(tz=timezone.utc)},
             instances={instance.instance_id: instance for instance in instances},
+            deployments={
+                instance.deployment_id: deployment_of(instance)
+                for instance in instances
+            },
             runners={
                 runner: RunnerReady()
                 for instance in instances
@@ -165,7 +195,10 @@ async def test_a_request_right_after_its_instance_was_deleted_ends_with_an_error
     request = chat_request()
 
     output = await process(
-        master, broadcast, DeleteInstance(instance_id=instance.instance_id), request
+        master,
+        broadcast,
+        DeleteDeployment(deployment_id=instance.deployment_id),
+        request,
     )
 
     assert [
@@ -187,7 +220,7 @@ async def test_a_request_right_after_a_deletion_goes_to_another_instance() -> No
     output = await process(
         master,
         broadcast,
-        DeleteInstance(instance_id=deleted.instance_id),
+        DeleteDeployment(deployment_id=deleted.deployment_id),
         chat_request(),
     )
 
@@ -206,7 +239,7 @@ async def test_a_request_just_before_its_instance_was_deleted_is_cancelled_with_
         master,
         broadcast,
         chat_request(),
-        DeleteInstance(instance_id=instance.instance_id),
+        DeleteDeployment(deployment_id=instance.deployment_id),
         until=(InstanceDeleted,),
     )
 

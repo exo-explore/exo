@@ -13,7 +13,7 @@ from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask, card_cache
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
-from exo.shared.types.commands import CreateInstance, ForwarderCommand
+from exo.shared.types.commands import CreateDeployment, ForwarderCommand
 from exo.shared.types.common import NodeId, SystemId
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import MemoryUsage, NodeIdentity
@@ -160,4 +160,4 @@ async def test_an_instance_every_node_can_hold_is_created() -> None:
         lambda: api.create_instance(CreateInstanceParams(instance=pipeline)),
     )
 
-    assert [type(command) for command in sent] == [CreateInstance]
+    assert [type(command) for command in sent] == [CreateDeployment]

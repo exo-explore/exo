@@ -105,6 +105,7 @@ _PREFIX_CODES: tuple[tuple[str, GenerationErrorCode], ...] = (
 _REMOVAL_MESSAGES: dict[InstanceRemovalReason, str] = {
     "NodeLost": DEVICE_LEFT,
     "UserStopped": MODEL_STOPPED,
+    "Duplicate": INTERRUPTED,
     "StartFailed": MODEL_FAILED,
 }
 

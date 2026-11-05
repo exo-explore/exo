@@ -6,16 +6,16 @@ from exo.api.types import (
 )
 from exo.shared.models.model_cards import ModelCard, ModelId
 from exo.shared.types.chunks import InputImageChunk
-from exo.shared.types.common import CommandId, NodeId, SystemId
+from exo.shared.types.common import CommandId, DeploymentId, NodeId, SystemId
+from exo.shared.types.deployments import DeploymentSpec
 from exo.shared.types.instance_link import InstanceLinkId
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.instances import (
     BrokenInstanceReason,
     Instance,
     InstanceId,
-    InstanceMeta,
 )
-from exo.shared.types.worker.shards import Sharding, ShardMetadata
+from exo.shared.types.worker.shards import ShardMetadata
 from exo.utils.pydantic_ext import FrozenModel, TaggedModel
 
 
@@ -39,21 +39,32 @@ class ImageEdits(BaseCommand):
     task_params: ImageEditsTaskParams
 
 
-class PlaceInstance(BaseCommand):
+class CreateDeployment(BaseCommand):
+    """Launch a model, as a deployment the cluster keeps running. Idempotent: a deployment id
+    the master already has, or had, changes nothing."""
+
+    deployment_id: DeploymentId
+    spec: DeploymentSpec
     model_card: ModelCard
-    sharding: Sharding
-    instance_meta: InstanceMeta
-    min_nodes: int
-
-
-class CreateInstance(BaseCommand):
+    # Where it runs: the placement the API made, or the preview the user picked. Its
+    # deployment_id must be deployment_id.
     instance: Instance
 
 
-class DeleteInstance(BaseCommand):
-    """A user stops an instance."""
+class DeleteDeployment(BaseCommand):
+    """A user stops a model."""
 
-    instance_id: InstanceId
+    deployment_id: DeploymentId
+
+
+class ResumeDeployment(BaseCommand):
+    """Place a deployment now: clears a hold, or a wait for devices that may come back.
+
+    `revision` is the deployment's when the user resumed it. Resuming bumps it, so a copy of
+    the command that arrives again (it is sent until its effect shows) changes nothing."""
+
+    deployment_id: DeploymentId
+    revision: int
 
 
 class InstanceBroken(BaseCommand):
@@ -130,9 +141,9 @@ Command = (
     | TextGeneration
     | ImageGeneration
     | ImageEdits
-    | PlaceInstance
-    | CreateInstance
-    | DeleteInstance
+    | CreateDeployment
+    | DeleteDeployment
+    | ResumeDeployment
     | InstanceBroken
     | TaskCancelled
     | TaskFinished

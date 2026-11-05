@@ -24,6 +24,7 @@ class FakeMembership(MembershipReader):
     ) -> None:
         self.node_id = node_id
         self.quorum: Quorum = quorum
+        self.self_state: MemberState = "Alive"
         self._members: dict[NodeId, MemberView] = {}
         self._watchers: list[Sender[NodeId]] = []
         for node in nodes:
@@ -75,7 +76,7 @@ class FakeMembership(MembershipReader):
         ]
         return MembershipView(
             node_id=self.node_id,
-            self_state="Alive",
+            self_state=self.self_state,
             quorum=self.quorum,
             reachable=1 + sum(1 for member in peers if member.state == "Alive"),
             last_known=1 + len(peers),

@@ -16,9 +16,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from exo.api.main import API
+from exo.master.deployments import spec_of
 from exo.shared.apply import apply
-from exo.shared.types.common import CommandId, ModelId, NodeId
+from exo.shared.types.common import CommandId, DeploymentId, ModelId, NodeId
+from exo.shared.types.deployments import Deployment
 from exo.shared.types.events import (
+    DeploymentCreated,
     Event,
     IndexedEvent,
     InstanceCreated,
@@ -45,7 +48,7 @@ from exo.shared.types.worker.downloads import (
     DownloadPending,
     DownloadProgressData,
 )
-from exo.shared.types.worker.instances import InstanceId
+from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import (
     RunnerId,
     RunnerIdle,
@@ -74,6 +77,22 @@ FIXTURE = (
 )
 
 _WHEN = "2026-01-01T00:00:00+00:00"
+
+
+def _launched(deployment_id: DeploymentId, instance: Instance) -> list[Event]:
+    """The events of a model launched as this instance."""
+    instance = instance.model_copy(update={"deployment_id": deployment_id})
+    shard_metadata = next(iter(instance.shard_assignments.runner_to_shard.values()))
+    return [
+        DeploymentCreated(
+            deployment=Deployment(
+                deployment_id=deployment_id,
+                spec=spec_of(instance),
+                model_card=shard_metadata.model_card,
+            )
+        ),
+        InstanceCreated(instance=instance),
+    ]
 
 
 def _progress(downloaded: int, total: int) -> DownloadProgressData:
@@ -167,18 +186,20 @@ def _state() -> State:
                 ),
             )
         ),
-        InstanceCreated(
-            instance=get_mlx_ring_instance(
+        *_launched(
+            DeploymentId("d1"),
+            get_mlx_ring_instance(
                 InstanceId("i1"),
                 llama,
                 {this: r1, other: r2},
                 {r1: shard(llama, 0, 2), r2: shard(llama, 1, 2)},
-            )
+            ),
         ),
-        InstanceCreated(
-            instance=get_mlx_ring_instance(
+        *_launched(
+            DeploymentId("d2"),
+            get_mlx_ring_instance(
                 InstanceId("i2"), qwen, {other: r3}, {r3: shard(qwen)}
-            )
+            ),
         ),
         RunnerStatusUpdated(runner_id=r1, runner_status=RunnerReady()),
         RunnerStatusUpdated(runner_id=r2, runner_status=RunnerRunning()),

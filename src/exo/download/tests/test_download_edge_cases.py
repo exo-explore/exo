@@ -121,7 +121,7 @@ async def test_failed_download_does_not_come_back_after_its_instance_is_deleted(
     hub: FakeHub, repo: FakeRepo, tmp_path: Path
 ) -> None:
     """The master cancels downloads no instance needs (cancel_unnecessary_downloads,
-    on DeleteInstance), but only those it sees as DownloadOngoing. A download that
+    on a stop), but only those it sees as DownloadOngoing. A download that
     is DownloadFailed at that moment is not cancelled; it must not then restart on
     its own and fetch the whole model."""
     hub.bandwidth = 2_000_000

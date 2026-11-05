@@ -1,9 +1,9 @@
 from collections.abc import Mapping
+from datetime import datetime, timezone
 
 import pytest
 
 from exo.master.placement import (
-    get_transition_events,
     memory_once_loaded,
     place_instance,
     removal_events,
@@ -19,7 +19,6 @@ from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
 from exo.shared.types.common import CommandId, NodeId
 from exo.shared.types.events import (
-    InstanceCreated,
     InstanceDeleted,
     TaskStatusUpdated,
 )
@@ -67,6 +66,8 @@ from exo.shared.types.worker.runners import (
     ShardAssignments,
 )
 from exo.shared.types.worker.shards import PipelineShardMetadata, Sharding
+
+AT = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture
@@ -425,42 +426,16 @@ def test_placement_says_when_nodes_have_not_reported_their_memory() -> None:
     assert str(error.value) == "Waiting for the nodes to report their memory"
 
 
-def test_get_transition_events_no_change(instance: Instance):
-    # arrange
-    instance_id = InstanceId()
-    current_instances = {instance_id: instance}
-    target_instances = {instance_id: instance}
-
-    # act
-    events = get_transition_events(current_instances, target_instances)
-
-    # assert
-    assert len(events) == 0
-
-
-def test_get_transition_events_create_instance(instance: Instance):
-    # arrange
-    instance_id = InstanceId()
-    current_instances: dict[InstanceId, Instance] = {}
-    target_instances: dict[InstanceId, Instance] = {instance_id: instance}
-
-    # act
-    events = get_transition_events(current_instances, target_instances)
-
-    # assert
-    assert len(events) == 1
-    assert isinstance(events[0], InstanceCreated)
-
-
 def test_removal_events_remove_the_instance_with_its_reason():
     instance_id = InstanceId()
 
-    events = removal_events(instance_id, "StartFailed", {})
+    events = removal_events(instance_id, "StartFailed", {}, AT)
 
     assert events == [
         InstanceDeleted(
             instance_id=instance_id,
             reason="StartFailed",
+            at=AT.isoformat(),
             event_id=events[0].event_id,
         )
     ]
@@ -819,7 +794,7 @@ def test_removal_events_cancels_running_tasks(
     tasks = {task.task_id: task}
 
     # act
-    events = removal_events(instance_id, "UserStopped", tasks)
+    events = removal_events(instance_id, "UserStopped", tasks, AT)
 
     # assert – cancellation event should come before the deletion event
     assert len(events) == 2
@@ -839,7 +814,7 @@ def test_removal_events_cancels_pending_tasks(
     tasks = {task.task_id: task}
 
     # act
-    events = removal_events(instance_id, "UserStopped", tasks)
+    events = removal_events(instance_id, "UserStopped", tasks, AT)
 
     # assert
     assert len(events) == 2
@@ -865,7 +840,7 @@ def test_removal_events_ignores_completed_tasks(
     }
 
     # act
-    events = removal_events(instance_id, "UserStopped", tasks)
+    events = removal_events(instance_id, "UserStopped", tasks, AT)
 
     # assert – only the InstanceDeleted event, no cancellations
     assert len(events) == 1
@@ -884,7 +859,7 @@ def test_removal_events_cancels_only_matching_tasks(
     tasks = {task_a.task_id: task_a, task_b.task_id: task_b}
 
     # act
-    events = removal_events(instance_id_a, "UserStopped", tasks)
+    events = removal_events(instance_id_a, "UserStopped", tasks, AT)
 
     # assert – only task_a should be cancelled
     cancel_events = [e for e in events if isinstance(e, TaskStatusUpdated)]

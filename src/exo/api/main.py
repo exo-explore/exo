@@ -91,6 +91,7 @@ from exo.api.types import (
     DeleteInstanceResponse,
     DeleteTracesRequest,
     DeleteTracesResponse,
+    DeploymentConstraints,
     DevicesOnOtherVersionsResponse,
     ErrorInfo,
     ErrorResponse,
@@ -112,6 +113,7 @@ from exo.api.types import (
     PlaceInstanceParams,
     PlacementPreview,
     PlacementPreviewResponse,
+    ResumeDeploymentResponse,
     StartDownloadParams,
     StartDownloadResponse,
     ToolCall,
@@ -146,6 +148,7 @@ from exo.api.types.openai_responses import (
     ResponsesRequest,
     ResponsesResponse,
 )
+from exo.master.deployments import spec_of
 from exo.master.image_store import ImageStore
 from exo.master.placement import (
     instance_beyond_memory,
@@ -180,6 +183,7 @@ from exo.shared.logging import InterceptLogger
 from exo.shared.model_readiness import (
     MODEL_READY_WAIT_SECONDS,
     NotReady,
+    is_launched,
     model_readiness,
 )
 from exo.shared.models import model_cards
@@ -209,16 +213,17 @@ from exo.shared.types.commands import (
     AddCustomModelCard,
     CancelDownload,
     Command,
-    CreateInstance,
+    CreateDeployment,
     DeleteCustomModelCard,
+    DeleteDeployment,
     DeleteDownload,
-    DeleteInstance,
     DeleteInstanceLink,
     DownloadCommand,
     ForwarderCommand,
     ForwarderDownloadCommand,
     ImageEdits,
     ImageGeneration,
+    ResumeDeployment,
     SendInputChunk,
     SetInstanceLink,
     StartDownload,
@@ -226,7 +231,15 @@ from exo.shared.types.commands import (
     TaskFinished,
     TextGeneration,
 )
-from exo.shared.types.common import CommandId, Id, NodeId, SessionId, SystemId
+from exo.shared.types.common import (
+    CommandId,
+    DeploymentId,
+    Id,
+    NodeId,
+    SessionId,
+    SystemId,
+)
+from exo.shared.types.deployments import DeploymentSpec
 from exo.shared.types.events import (
     ChunkGenerated,
     InstanceDeleted,
@@ -546,6 +559,7 @@ class API:
         self.app.get("/instance/await", response_model=None)(self.await_instance)
         self.app.get("/instance/{instance_id}")(self.get_instance)
         self.app.delete("/instance/{instance_id}")(self.delete_instance)
+        self.app.post("/deployments/{deployment_id}/resume")(self.resume_deployment)
         self.app.get("/v1/instance-links")(self.list_instance_links)
         self.app.post("/v1/instance-links")(self.create_instance_link)
         self.app.put("/v1/instance-links/{link_id}")(self.update_instance_link)
@@ -641,33 +655,21 @@ class API:
             payload.instance_meta,
             payload.min_nodes,
         )
+        model_card = await ModelCard.load(payload.model_id)
+        deployment_id = DeploymentId()
         # The placement made here is launched as it is, rather than asking the master to
-        # place the model again: an instance with a known id can be sent again until it shows
+        # place the model again: a launch with a known id can be sent again until it shows
         # up (to a new master, say) without ever starting two.
-        command = CreateInstance(instance=placement)
-        await self._apply_cluster_command(command)
-
-        return CreateInstanceResponse(
-            message="Command received.",
-            command_id=command.command_id,
-            model_card=await ModelCard.load(payload.model_id),
-        )
-
-    async def create_instance(
-        self, payload: CreateInstanceParams
-    ) -> CreateInstanceResponse:
-        instance = payload.instance
-        model_card = await ModelCard.load(instance.shard_assignments.model_id)
-        # Sent, it would be refused (the master doesn't launch onto a node it can't reach),
-        # and the API would wait for it to show until CLUSTER_COMMAND_TIMEOUT
-        if not instance_is_reachable(self.membership, instance):
-            raise ModelUnreachableError(LAUNCH_UNREACHABLE_MESSAGE)
-        # Each node has to hold its own shard: memory free elsewhere is no use to it
-        if (shortfall := instance_beyond_memory(instance, self.state)) is not None:
-            raise HTTPException(status_code=400, detail=shortfall)
-
-        command = CreateInstance(
-            instance=instance,
+        command = CreateDeployment(
+            deployment_id=deployment_id,
+            spec=DeploymentSpec(
+                model_id=payload.model_id,
+                sharding=payload.sharding,
+                instance_meta=payload.instance_meta,
+                min_nodes=payload.min_nodes,
+            ),
+            model_card=model_card,
+            instance=placement.model_copy(update={"deployment_id": deployment_id}),
         )
         await self._apply_cluster_command(command)
 
@@ -675,6 +677,54 @@ class API:
             message="Command received.",
             command_id=command.command_id,
             model_card=model_card,
+            deployment_id=deployment_id,
+        )
+
+    async def create_instance(
+        self, payload: CreateInstanceParams
+    ) -> CreateInstanceResponse:
+        instance = payload.instance
+        model_card = await ModelCard.load(instance.shard_assignments.model_id)
+        # The same placement posted again (a double click, a client's retry) needs no check:
+        # it is answered once it runs, for the deployment it runs for
+        if instance.instance_id not in self.state.instances:
+            # Sent, it would be refused (the master doesn't launch onto a node it can't
+            # reach), and the API would wait for it to show until CLUSTER_COMMAND_TIMEOUT
+            if not instance_is_reachable(self.membership, instance):
+                raise ModelUnreachableError(LAUNCH_UNREACHABLE_MESSAGE)
+            # Each node has to hold its own shard: memory free elsewhere is no use to it
+            if (shortfall := instance_beyond_memory(instance, self.state)) is not None:
+                raise HTTPException(status_code=400, detail=shortfall)
+
+        constraints = payload.constraints or DeploymentConstraints()
+        # A retry of a placement whose launch was called off after a 503 launches it under
+        # the same deployment, so that a late copy of the first launch is the same launch,
+        # and a stop of it covers both. Unless that late copy already applied and is being
+        # undone: the retry then waits for the undo, and is a new launch. Decided with nothing
+        # awaited before the command is sent, which takes the called-off launch over.
+        withdrawn = self._withdrawn_cluster_commands.get(instance.instance_id)
+        deployment_id = (
+            withdrawn.command.deployment_id
+            if withdrawn is not None
+            and withdrawn.undo_finished is None
+            and isinstance(withdrawn.command, CreateDeployment)
+            else DeploymentId()
+        )
+        command = CreateDeployment(
+            deployment_id=deployment_id,
+            spec=spec_of(instance, constraints.min_nodes, constraints.pinned_nodes),
+            model_card=model_card,
+            instance=instance.model_copy(update={"deployment_id": deployment_id}),
+        )
+        await self._apply_cluster_command(command)
+        # The same placement may have been posted twice at once: it runs for whichever
+        # launch the master took first
+        running = self.state.instances.get(instance.instance_id)
+        return CreateInstanceResponse(
+            message="Command received.",
+            command_id=command.command_id,
+            model_card=model_card,
+            deployment_id=deployment_id if running is None else running.deployment_id,
         )
 
     async def get_placement(
@@ -902,12 +952,16 @@ class API:
         )
 
     async def delete_instance(self, instance_id: InstanceId) -> DeleteInstanceResponse:
-        if instance_id not in self.state.instances:
+        """Stop a model: by the id of its instance, or of its deployment (which also stops
+        one that waits to be placed again)."""
+        if (instance := self.state.instances.get(instance_id)) is not None:
+            deployment_id = instance.deployment_id
+        elif DeploymentId(instance_id) in self.state.deployments:
+            deployment_id = DeploymentId(instance_id)
+        else:
             raise HTTPException(status_code=404, detail="Instance not found")
 
-        command = DeleteInstance(
-            instance_id=instance_id,
-        )
+        command = DeleteDeployment(deployment_id=deployment_id)
         await self._apply_cluster_command(command)
         return DeleteInstanceResponse(
             message="Command received.",
@@ -922,6 +976,23 @@ class API:
             wire_version=WIRE_VERSION,
             build_id=build_id(),
             devices=self._devices_on_other_versions(),
+        )
+
+    async def resume_deployment(
+        self, deployment_id: DeploymentId
+    ) -> ResumeDeploymentResponse:
+        """Place a held or waiting model now."""
+        if deployment_id not in self.state.deployments:
+            raise HTTPException(status_code=404, detail="Deployment not found")
+        command = ResumeDeployment(
+            deployment_id=deployment_id,
+            revision=self.state.deployments[deployment_id].revision,
+        )
+        await self._apply_cluster_command(command)
+        return ResumeDeploymentResponse(
+            message="Command received.",
+            command_id=command.command_id,
+            deployment_id=deployment_id,
         )
 
     async def get_feature_flags(self) -> dict[str, bool]:
@@ -1244,25 +1315,41 @@ class API:
     def _reachable_model_readiness(self, model_id: ModelId) -> NotReady | None:
         """Whether an instance of the model that this node reaches is ready (see
         model_readiness). One with a device this node can't reach now (Suspect or Gone in its
-        membership view) can't serve the request, so if every instance has one the request
-        ends at once, with ModelUnreachableError, rather than be sent and wait."""
-        reachable = {
+        membership view) can't serve the request, and its deployment isn't placed again while
+        the master keeps it for that device. So if the model has nothing else (an instance it
+        reaches, or a deployment being placed again), the request ends at once, with
+        ModelUnreachableError, rather than be sent and wait."""
+        cut_off = {
             instance_id: instance
             for instance_id, instance in self.state.instances.items()
             if instance.shard_assignments.model_id == model_id
-            and instance_is_reachable(self.membership, instance)
+            and not instance_is_reachable(self.membership, instance)
         }
-        if not reachable:
-            raise ModelUnreachableError()
-        return model_readiness(
-            self.state.model_copy(update={"instances": reachable}), model_id
+        if not cut_off:
+            return model_readiness(self.state, model_id)
+        cut_off_deployments = {instance.deployment_id for instance in cut_off.values()}
+        rest = self.state.model_copy(
+            update={
+                "instances": {
+                    instance_id: instance
+                    for instance_id, instance in self.state.instances.items()
+                    if instance_id not in cut_off
+                },
+                "deployments": {
+                    deployment_id: deployment
+                    for deployment_id, deployment in self.state.deployments.items()
+                    if deployment_id not in cut_off_deployments
+                },
+            }
         )
+        if not is_launched(rest, model_id):
+            raise ModelUnreachableError()
+        return model_readiness(rest, model_id)
 
     async def _validate_model_has_any_instance(self, model_id: ModelId) -> None:
-        if not any(
-            instance.shard_assignments.model_id == model_id
-            for instance in self.state.instances.values()
-        ):
+        # A model whose instance is being placed again, or waits, gets a 503 with
+        # Retry-After (model_readiness), not a 404: clients retry a 503
+        if not is_launched(self.state, model_id):
             # Check if model is actually downloaded
             model_is_downloaded = any(
                 isinstance(download, DownloadCompleted)
@@ -2433,17 +2520,22 @@ class API:
     @functools.cached_property
     def _applied_cluster_commands(
         self,
-    ) -> dict[InstanceId | InstanceLinkId | ModelId, AppliedClusterCommand]:
+    ) -> dict[
+        DeploymentId | InstanceId | InstanceLinkId | ModelId, AppliedClusterCommand
+    ]:
         """The changes this node's requests made recently, by what they change: the latest
-        request about each instance, link or card. See _changes_lost_with_old_master."""
+        request about each deployment, instance, link or card. See
+        _changes_lost_with_old_master."""
         return {}
 
     @functools.cached_property
     def _withdrawn_cluster_commands(
         self,
-    ) -> dict[InstanceId | InstanceLinkId | ModelId, WithdrawnClusterCommand]:
+    ) -> dict[
+        DeploymentId | InstanceId | InstanceLinkId | ModelId, WithdrawnClusterCommand
+    ]:
         """Launches and new links answered 503, by what they change, to undo should they still
-        apply. Kept until then, or until a request about the same instance or link."""
+        apply. Kept until then, or until a request about the same deployment or link."""
         return {}
 
     @functools.cached_property
@@ -2577,7 +2669,7 @@ class API:
         raise HTTPException(
             status_code=503,
             detail=_LAUNCH_WITHDRAWN_MESSAGE
-            if isinstance(command, CreateInstance)
+            if isinstance(command, CreateDeployment)
             else _WITHDRAWN_MESSAGE,
         )
 

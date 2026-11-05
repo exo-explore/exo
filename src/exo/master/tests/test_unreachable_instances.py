@@ -5,6 +5,7 @@ on such a device."""
 
 import anyio
 
+from exo.master.tests.test_requests_to_deleted_instances import launch_of
 from exo.master.tests.test_silent_nodes import (
     MASTER,
     PEER_A,
@@ -16,7 +17,7 @@ from exo.master.tests.test_silent_nodes import (
 )
 from exo.shared.request_errors import DEVICE_UNREACHABLE
 from exo.shared.types.chunks import ErrorChunk
-from exo.shared.types.commands import CreateInstance, ForwarderCommand, TextGeneration
+from exo.shared.types.commands import ForwarderCommand, TextGeneration
 from exo.shared.types.common import NodeId, SystemId
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -95,7 +96,7 @@ async def test_a_request_goes_to_an_instance_it_can_reach() -> None:
 
 
 async def test_a_launch_onto_a_node_it_cant_reach_is_refused() -> None:
-    """A launch with its nodes given (CreateInstance) onto a node this master can't reach now:
+    """A launch with its nodes given (a placement) onto a node this master can't reach now:
     its model couldn't load there, and the instance would end once the node is removed.
     Refused, as a placement leaves such a node out (the API sends a launch again until it
     shows). One onto the nodes it reaches is launched."""
@@ -119,15 +120,14 @@ async def test_a_launch_onto_a_node_it_cant_reach_is_refused() -> None:
         tg.start_soon(master._command_processor)  # pyright: ignore[reportPrivateUsage]
         for instance in (unreachable, reachable):
             await command_sender.send(
-                ForwarderCommand(
-                    origin=SystemId(), command=CreateInstance(instance=instance)
-                )
+                ForwarderCommand(origin=SystemId(), command=launch_of(instance))
             )
         with anyio.fail_after(5):
-            launched.append((await broadcast.receive()).event)
+            while not any(isinstance(event, InstanceCreated) for event in launched):
+                launched.append((await broadcast.receive()).event)
         tg.cancel_scope.cancel()
 
-    (event,) = launched
-    assert isinstance(event, InstanceCreated)
+    (event,) = [event for event in launched if isinstance(event, InstanceCreated)]
     assert event.instance.instance_id == reachable.instance_id
     assert unreachable.instance_id not in master.state.instances
+    assert len(master.state.deployments) == 1

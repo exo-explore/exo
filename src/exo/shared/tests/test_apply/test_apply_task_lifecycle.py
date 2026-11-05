@@ -49,6 +49,8 @@ INSTANCE_CREATED = InstanceCreated(
     )
 )
 
+AT = "2026-11-03T12:00:00+00:00"
+
 
 def run(*events: Event) -> State:
     state = State()
@@ -136,7 +138,7 @@ def test_deleting_an_instance_drops_its_bookkeeping_tasks() -> None:
         TaskStatusUpdated(task_id=failed_load.task_id, task_status=TaskStatus.Failed),
         created(request),
         created(other),
-        InstanceDeleted(instance_id=INSTANCE, reason="UserStopped"),
+        InstanceDeleted(instance_id=INSTANCE, reason="UserStopped", at=AT),
     )
     assert failed_load.task_id not in state.tasks
     # The API still needs the request's task to end its stream
@@ -151,7 +153,7 @@ def test_a_request_for_a_deleted_instance_is_not_added() -> None:
     request = generation()
     state = run(
         INSTANCE_CREATED,
-        InstanceDeleted(instance_id=INSTANCE, reason="UserStopped"),
+        InstanceDeleted(instance_id=INSTANCE, reason="UserStopped", at=AT),
         created(request),
     )
     assert request.task_id not in state.tasks
@@ -174,7 +176,7 @@ def test_a_cancellation_for_a_deleted_instance_is_not_added() -> None:
     )
     state = run(
         INSTANCE_CREATED,
-        InstanceDeleted(instance_id=INSTANCE, reason="UserStopped"),
+        InstanceDeleted(instance_id=INSTANCE, reason="UserStopped", at=AT),
         created(cancel),
     )
     assert cancel.task_id not in state.tasks
@@ -192,7 +194,7 @@ def test_a_runner_shutdown_for_a_deleted_instance_is_not_added_and_its_end_is_ha
     )
     state = run(
         INSTANCE_CREATED,
-        InstanceDeleted(instance_id=INSTANCE, reason="UserStopped"),
+        InstanceDeleted(instance_id=INSTANCE, reason="UserStopped", at=AT),
         created(shutdown),
         TaskStatusUpdated(task_id=shutdown.task_id, task_status=TaskStatus.Complete),
     )
@@ -221,12 +223,12 @@ def test_a_normal_stops_shutdown_is_not_a_warning_but_a_raced_request_is() -> No
     )
     assert levels_logged_while(
         INSTANCE_CREATED,
-        InstanceDeleted(instance_id=INSTANCE, reason="UserStopped"),
+        InstanceDeleted(instance_id=INSTANCE, reason="UserStopped", at=AT),
         created(shutdown),
     ) == ["DEBUG"]
     assert levels_logged_while(
         INSTANCE_CREATED,
-        InstanceDeleted(instance_id=INSTANCE, reason="UserStopped"),
+        InstanceDeleted(instance_id=INSTANCE, reason="UserStopped", at=AT),
         created(generation()),
     ) == ["WARNING"]
 
@@ -253,7 +255,7 @@ def test_a_departed_nodes_runner_tasks_never_stay_pending(order: str) -> None:
     tasks = runner_tasks()
     departure: list[Event] = [
         NodeTimedOut(node_id=NodeId("node")),
-        InstanceDeleted(instance_id=INSTANCE, reason="NodeLost"),
+        InstanceDeleted(instance_id=INSTANCE, reason="NodeLost", at=AT),
     ]
     created_tasks: list[Event] = [created(task) for task in tasks]
     events = (

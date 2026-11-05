@@ -12,6 +12,8 @@ from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.state import State
 from exo.shared.types.worker.instances import InstanceId
 
+AT = "2026-11-03T12:00:00+00:00"
+
 
 def _link(
     prefill: list[InstanceId],
@@ -58,7 +60,7 @@ def test_instance_deleted_strips_from_links() -> None:
     state = State(instance_links={link.link_id: link})
 
     new_state = apply_instance_deleted(
-        InstanceDeleted(instance_id=a, reason="UserStopped"), state
+        InstanceDeleted(instance_id=a, reason="UserStopped", at=AT), state
     )
     remaining = new_state.instance_links[link.link_id]
     assert remaining.prefill_instances == [c]
@@ -71,6 +73,6 @@ def test_instance_deleted_drops_link_when_role_empties() -> None:
     state = State(instance_links={link.link_id: link})
 
     new_state = apply_instance_deleted(
-        InstanceDeleted(instance_id=a, reason="UserStopped"), state
+        InstanceDeleted(instance_id=a, reason="UserStopped", at=AT), state
     )
     assert link.link_id not in new_state.instance_links
