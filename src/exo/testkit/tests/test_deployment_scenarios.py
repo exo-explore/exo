@@ -1,4 +1,4 @@
-"""Deployments on a real cluster: what a user launched keeps running through cuts, sleeps, a change of master and a full restart, and only the user
+"""Deployments on a real cluster: what a user launched keeps running through cuts, sleeps, a change of master, a quit and a full restart, and only the user
 stops it.
 
 The membership's timers these depend on: a lost node is Suspect after zenoh's 10 s lease (or the
@@ -344,3 +344,101 @@ def test_after_a_full_restart_a_model_waits_for_the_user(
         what="the model to load once resumed",
     )
     _ok(cluster, "after the restart", via=0)
+
+
+# --- a node quits ------------------------------------------------------------------------
+
+
+def test_a_follower_that_quits_has_its_model_moved_after_the_grace(
+    make_cluster: MakeCluster,
+) -> None:
+    """The follower running the model quits for good: its models wait LEAVE_GRACE (the 30 s
+    grace), then move to the master's node, though the master's node reads half of the cluster
+    (it counts the quitter until the split hold). Measured 31 s after the quit; bound: not before
+    25 s, within 75 s."""
+    cluster = make_cluster(2)
+    master = cluster.wait_for_master(timeout=60)
+    follower = 1 - master
+    cluster.launch(on=(follower,), via=master)
+    quit_at = time.monotonic()
+    cluster.quit(follower)
+    on_master = frozenset({cluster.nodes[master].node_id})
+    cluster.wait_for(
+        lambda: serving(cluster, via=master) == [on_master],
+        timeout=75,
+        what="the model to move to the master's node",
+    )
+    assert time.monotonic() - quit_at > 25, "it moved without waiting for the grace"
+
+
+def test_a_master_that_quits_has_its_model_moved_after_the_grace(
+    make_cluster: MakeCluster,
+) -> None:
+    """The master's node runs the model and quits: it announces its departure and removes its
+    own instance before it exits, so the new master knows it left and the model waits the
+    grace, not the 5-minute split hold of a lost node. Measured 31.5 s after the quit; bound
+    90 s."""
+    cluster = make_cluster(2)
+    master = cluster.wait_for_master(timeout=60)
+    other = 1 - master
+    cluster.launch(on=(master,), via=other)
+    cluster.quit(master)
+    cluster.wait_for_master(timeout=60, other_than=master)
+    on_other = frozenset({cluster.nodes[other].node_id})
+    cluster.wait_for(
+        lambda: serving(cluster, via=other) == [on_other],
+        timeout=90,
+        what="the model to move to the other node",
+    )
+
+
+def test_a_follower_that_quits_and_restarts_under_a_new_id_serves_its_model_again(
+    make_cluster: MakeCluster,
+) -> None:
+    """What exo does today: the follower running the model quits and starts again at once,
+    under a new id. The old id never comes back, so the model is placed again when the grace
+    ends, with the restarted node there to be chosen. Measured 31 s after the quit; bound: not
+    before 25 s, within 75 s."""
+    cluster = make_cluster(2)
+    master = cluster.wait_for_master(timeout=60)
+    follower = 1 - master
+    cluster.launch(on=(follower,), via=master)
+    old_id = cluster.nodes[follower].node_id
+    quit_at = time.monotonic()
+    cluster.quit(follower)
+    cluster.restart(follower)
+    assert cluster.nodes[follower].node_id != old_id
+    cluster.wait_for(
+        lambda: serving(cluster, via=master) != [],
+        timeout=75,
+        what="the model to serve again",
+    )
+    assert time.monotonic() - quit_at > 25, "it moved without waiting for the grace"
+    placed = serving(cluster, via=master)
+    assert old_id not in {node for nodes in placed for node in nodes}
+    cluster.note(f"placed again on {placed}")
+    cluster.wait_serving(via=master, timeout=30)
+
+
+def test_a_follower_that_quits_and_restarts_with_its_id_gets_its_model_back(
+    make_cluster: MakeCluster,
+) -> None:
+    """The follower running the model quits and starts again at once with the id it had (the
+    harness can keep a node's id; exo itself gives a new one at each start): within the grace,
+    so its model comes back on it rather than moving. Measured 10-13 s after the quit; bound
+    60 s, and never on the master's node."""
+    cluster = make_cluster(2)
+    master = cluster.wait_for_master(timeout=60)
+    follower = 1 - master
+    cluster.launch(on=(follower,), via=master)
+    cluster.quit(follower)
+    cluster.restart(follower, new_identity=False)
+    on_follower = frozenset({cluster.nodes[follower].node_id})
+    seen = placements_while(
+        cluster,
+        master,
+        lambda: serving(cluster, via=master) == [on_follower],
+        timeout=60,
+        what="the model back on the restarted node",
+    )
+    assert all(nodes == on_follower for nodes in seen), f"moved: {seen}"

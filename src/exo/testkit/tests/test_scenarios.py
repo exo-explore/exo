@@ -156,7 +156,10 @@ def test_every_node_serves_every_token(make_cluster: MakeCluster) -> None:
     ]
     for handle in handles:
         _ok(handle.result(60))
-    assert cluster.violations() == []
+    # A chat's task leaves every node's state just after its reply ends (the API's finish, then
+    # each node applies the master's deletion), and a busy follower is a little behind. A task
+    # that leaked never leaves, so this still fails on one.
+    cluster.wait_until_consistent(timeout=10)
 
 
 # --- the harness itself ----------------------------------------------------------------
@@ -196,7 +199,8 @@ def test_two_clusters_on_one_machine_never_meet(make_cluster: MakeCluster) -> No
     for handle in handles:
         _ok(handle.result(60))
     for cluster in clusters:
-        assert cluster.violations() == []
+        # As above: the chats' tasks leave every node's state just after their replies end
+        cluster.wait_until_consistent(timeout=10)
 
 
 # --- a follower dies -------------------------------------------------------------------

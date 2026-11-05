@@ -78,6 +78,7 @@ from exo.shared.types.events import (
     InstanceLinkDeleted,
     LocalForwarderEvent,
     NodeGatheredInfo,
+    NodeLeft,
     NodeTimedOut,
     StateSnapshot,
     TaskCreated,
@@ -113,6 +114,11 @@ from exo.utils.task_group import TaskGroup
 # links within the 10 s between connection checks. As long as the membership waits for a lost
 # node to come back.
 MERGED_LAUNCH_WAIT = GRACE
+# A quit is usually a quick restart (an app update), and loading a large model can take minutes:
+# a quitting node's models wait this long before they are placed again, so that they aren't
+# loaded on the other nodes just before it is back. As long as the membership waits for a lost
+# node to come back.
+LEAVE_GRACE = GRACE
 # How often the master looks for nodes to remove and for instances that lost a node. Which
 # nodes are gone, and since when, is the membership's to say (rust/networking/src/
 # membership.rs owns every liveness timer); this only bounds how late the master acts on it.
@@ -294,6 +300,8 @@ class Master:
         # Deployments that didn't fit, and what they were tried with: tried again only when
         # that changes
         self._unfit: dict[DeploymentId, Hashable] = {}
+        # Nodes that announced they were quitting, and when
+        self._left: dict[NodeId, datetime] = {}
         # Set when a node is removed, so its instances are deleted at once rather than at the
         # next check (created by the plan loop, which waits on it)
         self._node_removed: anyio.Event | None = None
@@ -838,6 +846,13 @@ class Master:
         gone = nodes_to_remove(listed, view)
         self._note_held_back(listed, view)
         members = {member.node_id: member for member in view.members}
+        # Nodes that said they were leaving and haven't come back
+        present = set(self.state.topology.list_nodes())
+        self._left = {
+            node_id: at
+            for node_id, at in self._left.items()
+            if node_id not in present and now - at < 2 * LEAVE_GRACE
+        }
         # Each removal is in the state as soon as it is made, so a node or an instance is
         # removed once
         for node_id in gone:
@@ -859,8 +874,24 @@ class Master:
                 node_id not in connected
                 for node_id in instance.shard_assignments.node_to_runner
             ):
+                # A node that left isn't on another side of a split, serving anything: the
+                # user quit exo on that device. Its models wait LEAVE_GRACE for it, whatever
+                # the quorum read says (in a pair of Macs, the one that stays counts the
+                # quitter until its split hold)
+                left = [
+                    self._left[node_id]
+                    for node_id in instance.shard_assignments.node_to_runner
+                    if node_id in self._left
+                ]
                 self._index(
                     InstanceDeleted(
+                        instance_id=instance_id,
+                        reason="NodeLeft",
+                        at=now.isoformat(),
+                        not_before=(max(left) + LEAVE_GRACE).isoformat(),
+                    )
+                    if left
+                    else InstanceDeleted(
                         instance_id=instance_id, reason="NodeLost", at=now.isoformat()
                     )
                 )
@@ -880,9 +911,9 @@ class Master:
                     self._index(event)
 
     def _on_node_removed(self, node_id: NodeId) -> None:
-        # Only for a removal a node sent: it announced it was leaving. The ones this master
-        # makes are in its state at once, and the check that made them deletes the node's
-        # instances in the same pass.
+        # Only for a departure a node sent: it announced it was leaving. The removals this
+        # master makes are in its state at once, and the check that made them deletes the
+        # node's instances in the same pass.
         logger.info(f"Node {node_id} left the cluster")
         # Delete the instances it was part of now, not at the next check
         if self._node_removed is not None:
@@ -934,8 +965,16 @@ class Master:
                         continue
 
                     logger.debug(f"Master indexing event: {str(event)[:100]}")
+                    if isinstance(event, NodeLeft):
+                        logger.info(f"Node {event.node_id} is leaving the cluster")
+                        self._left[event.node_id] = datetime.now(tz=timezone.utc)
                     self._index(event)
-                    if isinstance(event, NodeTimedOut):
+                    # A departure: the node's instances go now, not at the next check. A
+                    # quitting master waits only LEAVE_FLUSH for this, and a new master has no
+                    # record of a departure it didn't see: it would take the instances for
+                    # lost (kept for the split hold in a pair, placed elsewhere at once
+                    # otherwise)
+                    if isinstance(event, NodeLeft):
                         self._on_node_removed(event.node_id)
 
     def _index(self, *events: Event) -> None:

@@ -9,7 +9,7 @@ with deterministic tokens, so a test can check every token a client receives.
 
 ```bash
 uv run pytest -m "cluster and not slow"        # fast set, as CI runs on Linux: ~5 min
-uv run pytest src/exo/testkit -m ""            # every scenario, as the nightly runs: ~15 min
+uv run pytest src/exo/testkit -m ""            # every scenario, as the nightly runs: ~30 min
 uv run pytest                                  # the default run skips cluster tests
 ```
 

@@ -18,7 +18,7 @@ from exo.shared.types.events import (
     GlobalForwarderEvent,
     InstanceDeleted,
     LocalForwarderEvent,
-    NodeTimedOut,
+    NodeLeft,
     StateSnapshot,
 )
 from exo.shared.types.state import State
@@ -31,6 +31,10 @@ LEAVING = NodeId("leaving-node")
 async def test_a_departed_node_and_its_instances_are_removed_without_waiting_for_a_check(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A quitting master waits only LEAVE_FLUSH after its departure is applied: if its plan
+    loop waited for its next round, the new master would see the instances lost, with no
+    record of the departure, and keep them for the split hold (in a pair) or place their
+    models elsewhere at once, instead of after LEAVE_GRACE."""
     # Checks so rare that only an immediate reaction to the departure can pass
     monkeypatch.setattr(master_main, "PLAN_INTERVAL", 60.0)
     session = SessionId(master_node_id=MASTER, election_clock=0)
@@ -77,7 +81,7 @@ async def test_a_departed_node_and_its_instances_are_removed_without_waiting_for
                 origin=SystemId(),
                 origin_idx=0,
                 session=session,
-                event=NodeTimedOut(node_id=LEAVING),
+                event=NodeLeft(node_id=LEAVING),
             )
         )
         with anyio.fail_after(2):
@@ -85,9 +89,9 @@ async def test_a_departed_node_and_its_instances_are_removed_without_waiting_for
                 indexed.append((await global_events.receive()).event)
         tg.cancel_scope.cancel()
 
-    assert [type(e) for e in indexed] == [NodeTimedOut, InstanceDeleted]
+    assert [type(e) for e in indexed] == [NodeLeft, InstanceDeleted]
     deleted = next(e for e in indexed if isinstance(e, InstanceDeleted))
-    assert deleted.instance_id == on_leaving.instance_id
+    assert (deleted.instance_id, deleted.reason) == (on_leaving.instance_id, "NodeLeft")
     assert LEAVING not in master.state.last_seen
     assert not master.state.topology.contains_node(LEAVING)
     assert set(master.state.instances) == {elsewhere.instance_id}

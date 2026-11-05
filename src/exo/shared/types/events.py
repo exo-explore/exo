@@ -85,6 +85,9 @@ class InstanceDeleted(BaseEvent):
     reason: InstanceRemovalReason
     # When, as an ISO 8601 time (a datetime field in an event can't be read back from JSON)
     at: str
+    # For a node that left: don't place its deployment again before this ISO time, unless
+    # its nodes are back
+    not_before: str | None = None
 
 
 class DeploymentCreated(BaseEvent):
@@ -136,6 +139,14 @@ class RunnerStatusUpdated(BaseEvent):
 
 
 class NodeTimedOut(BaseEvent):
+    node_id: NodeId
+
+
+class NodeLeft(BaseEvent):
+    """A node announced that it is quitting. It is removed as a node the master stopped
+    hearing from is, but its models wait for it to come back (a restart) for a while before
+    they are placed elsewhere."""
+
     node_id: NodeId
 
 
@@ -224,6 +235,7 @@ Event = Annotated[
     | DeploymentStatus
     | RunnerStatusUpdated
     | NodeTimedOut
+    | NodeLeft
     | NodeGatheredInfo
     | NodeDownloadProgress
     | ChunkGenerated

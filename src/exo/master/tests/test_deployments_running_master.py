@@ -9,7 +9,7 @@ churn on a 5-node cluster.
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import anyio
 import pytest
@@ -47,6 +47,7 @@ from exo.shared.types.events import (
     LocalForwarderEvent,
     NodeDownloadProgress,
     NodeGatheredInfo,
+    NodeLeft,
     StateSnapshot,
     TopologyEdgeCreated,
 )
@@ -750,3 +751,87 @@ async def test_after_a_full_restart_models_wait_for_the_user() -> None:
             )
         )
         await wait_until(lambda: running.model_nodes() != [])
+
+
+async def test_a_node_that_quits_and_comes_back_soon_gets_its_model_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A quit announces the node is leaving: its model ends at once, but is only placed
+    elsewhere after LEAVE_GRACE. A node back within it, with its id, gets its model back."""
+    monkeypatch.setattr(master_main, "LEAVE_GRACE", timedelta(seconds=3))
+    initial = cluster(deployed(instance_on(LEAVES)), STAYS, LEAVES, BYSTANDER)
+    async with running_master(initial) as running:
+        await running.send([NodeLeft(node_id=LEAVES)])
+        await wait_until(lambda: running.state.instances == {})
+        # It is gone from the membership once the departure is applied
+        running.lose(LEAVES)
+        deployment = running.deployment()
+        assert deployment.not_before is not None and deployment.losses == []
+        # STAYS has the files and room, but the model waits for LEAVES
+        await anyio.sleep(1)
+        assert running.model_nodes() == []
+
+        await running.join(LEAVES, STAYS)
+        await wait_until(lambda: running.model_nodes() == [frozenset({LEAVES})])
+
+
+async def test_a_two_node_model_comes_back_on_both_when_its_quitters_links_come_late(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The model on two nodes of a pair. One quits and is back within the grace with its id: it
+    reports its files at once, its links only as the connection checks find them. Placed in
+    between, the model came back on one node."""
+    monkeypatch.setattr(master_main, "LEAVE_GRACE", timedelta(seconds=3))
+    initial = cluster(deployed(instance_on(STAYS, LEAVES)), STAYS, LEAVES)
+    (original,) = initial.instances
+    async with running_master(initial) as running:
+        await running.send([NodeLeft(node_id=LEAVES)])
+        await wait_until(lambda: original not in running.state.instances)
+        await running.join(LEAVES)
+        await anyio.sleep(0.5)
+        assert running.model_nodes() == []
+
+        await running.send(edges_between(STAYS, LEAVES))
+        await wait_until(lambda: running.model_nodes() != [])
+        assert running.model_nodes() == [frozenset({STAYS, LEAVES})]
+
+
+async def test_a_node_that_quits_for_good_has_its_model_moved_after_the_grace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(master_main, "LEAVE_GRACE", timedelta(seconds=1))
+    initial = cluster(deployed(instance_on(LEAVES)), STAYS, LEAVES, BYSTANDER)
+    async with running_master(initial) as running:
+        await running.send([NodeLeft(node_id=LEAVES)])
+        await wait_until(lambda: running.state.instances == {})
+        running.lose(LEAVES)
+
+        await wait_until(lambda: running.model_nodes() == [frozenset({STAYS})])
+
+
+@pytest.mark.parametrize("announced", [True, False], ids=["quit", "lost"])
+async def test_in_a_two_node_pair_a_quit_moves_the_model_after_the_grace(
+    monkeypatch: pytest.MonkeyPatch, announced: bool
+) -> None:
+    """The user quit exo on one Mac of two: its model moves after LEAVE_GRACE, though the Mac
+    that stays reads half of the cluster (it counts the quitter until its split hold). The
+    node that quit isn't serving anything on the other side of a cut. A node that was lost
+    without a word is kept, with its model, for the split hold: the other side may be
+    serving the model."""
+    monkeypatch.setattr(master_main, "LEAVE_GRACE", timedelta(seconds=1))
+    initial = cluster(deployed(instance_on(LEAVES)), STAYS, LEAVES)
+    (original,) = initial.instances
+    async with running_master(initial) as running:
+        if not announced:
+            running.lose(LEAVES, quorum="Half")
+            await anyio.sleep(3)
+            assert list(running.state.instances) == [original]
+            return
+        await running.send([NodeLeft(node_id=LEAVES)])
+        await wait_until(lambda: running.state.instances == {})
+        removed = anyio.current_time()
+        running.lose(LEAVES, quorum="Half")
+
+        await wait_until(lambda: running.model_nodes() == [frozenset({STAYS})])
+        moved_after = anyio.current_time() - removed
+    assert 0.5 < moved_after < 3, f"moved {moved_after:.1f} s after the quit"

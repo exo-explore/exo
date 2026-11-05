@@ -104,6 +104,7 @@ _PREFIX_CODES: tuple[tuple[str, GenerationErrorCode], ...] = (
 # What a request in flight is told when its instance is removed, by the removal's reason
 _REMOVAL_MESSAGES: dict[InstanceRemovalReason, str] = {
     "NodeLost": DEVICE_LEFT,
+    "NodeLeft": DEVICE_LEFT,
     "UserStopped": MODEL_STOPPED,
     "Duplicate": INTERRUPTED,
     "StartFailed": MODEL_FAILED,

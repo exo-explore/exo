@@ -48,6 +48,11 @@ from exo.shared.types.worker.runners import RunnerReady
             "device_left",
         ),
         (
+            "NodeLeft",
+            "A device serving this model left the cluster before the reply finished.",
+            "device_left",
+        ),
+        (
             "UserStopped",
             "The model was stopped before the reply finished.",
             "model_stopped",

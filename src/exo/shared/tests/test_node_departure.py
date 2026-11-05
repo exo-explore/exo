@@ -29,7 +29,7 @@ from exo.shared.types.events import (
     Event,
     GlobalForwarderEvent,
     IndexedEvent,
-    NodeTimedOut,
+    NodeLeft,
     TestEvent,
 )
 from exo.shared.types.memory import Memory
@@ -116,7 +116,8 @@ async def test_a_quitting_node_announces_its_departure_before_stopping() -> None
     async def master() -> None:
         # The master receives the departure and the node sees itself removed
         event = await router.events.receive()
-        assert event == NodeTimedOut(node_id=NODE, event_id=event.event_id)
+        # A departure, not a silence: the master gives the node LEAVE_GRACE to come back
+        assert event == NodeLeft(node_id=NODE, event_id=event.event_id)
         assert not worker.reporting, "the worker could add the node back"
         assert during == [], "the node stopped before its departure was applied"
         during.append("departure applied")
@@ -220,7 +221,7 @@ async def test_a_departed_node_leaves_no_download_entries_behind() -> None:
                 cluster = apply(cluster, IndexedEvent(idx=index, event=event))
                 index += 1
                 worker.state = cluster
-                if isinstance(event, NodeTimedOut):
+                if isinstance(event, NodeLeft):
                     await download_commands.send(
                         ForwarderDownloadCommand(
                             origin=SystemId(),
@@ -336,7 +337,7 @@ async def test_the_departure_a_quitting_master_indexed_leaves_within_the_flush()
             origin_idx=index, origin=NODE, session=session, event=event
         )
 
-    departure = indexed(QUEUED_AHEAD, NodeTimedOut(node_id=NODE))
+    departure = indexed(QUEUED_AHEAD, NodeLeft(node_id=NODE))
     departure_sent = topics.GLOBAL_EVENTS.serialize(departure)
     with anyio.fail_after(5):
         async with anyio.create_task_group() as tg:

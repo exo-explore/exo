@@ -37,6 +37,7 @@ from exo.shared.types.events import (
     IndexedEvent,
     InstanceDeleted,
     NodeGatheredInfo,
+    NodeLeft,
     NodeTimedOut,
     StateSnapshot,
 )
@@ -48,6 +49,7 @@ from exo.utils.info_gatherer.info_gatherer import MiscData
 ME = NodeId("ME")
 PEER = NodeId("PEER")
 OTHER = NodeId("OTHER")
+QUITTER = NodeId("QUITTER")
 SINCE = 1_800_000_000.0
 
 
@@ -381,8 +383,8 @@ async def test_membership_gives_the_quorum_read_now() -> None:
 
 async def test_a_node_the_coordinator_removed_stops_counting_in_the_quorum() -> None:
     """A node that restarts comes back under a new id: its old one must stop counting, or a
-    healthy pair reads Half, then Minority. The coordinator removes it (NodeTimedOut, which is
-    also how a quitting node's departure arrives), and every node then forgets it."""
+    healthy pair reads Half, then Minority. The coordinator removes it (NodeTimedOut), or it
+    left (NodeLeft, a quitting node's departure), and every node then forgets it."""
     networking = FakeNetworking()
     members, member_receiver = channel[Member]()
     events, event_receiver = channel[IndexedEvent | StateSnapshot]()
@@ -413,10 +415,11 @@ async def test_a_node_the_coordinator_removed_stops_counting_in_the_quorum() -> 
             )
         )
         await events.send(IndexedEvent(idx=2, event=NodeTimedOut(node_id=OTHER)))
+        await events.send(IndexedEvent(idx=3, event=NodeLeft(node_id=QUITTER)))
         await settle()
         members.close()
         events.close()
-    assert networking.forgotten == [PEER, OTHER]
+    assert networking.forgotten == [PEER, OTHER, QUITTER]
 
 
 async def told_by_the_cluster(
