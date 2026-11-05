@@ -90,6 +90,55 @@
       "x-extra": "ignore",
       "x-strict": false
     },
+    "AnnounceDeployments": {
+      "additionalProperties": false,
+      "properties": {
+        "AnnounceDeployments": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "deployments": {
+              "items": {
+                "$ref": "#/$defs/DeploymentRecord"
+              },
+              "type": "array"
+            },
+            "removed": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "restored": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "running": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "deployments",
+            "removed",
+            "restored"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "AnnounceDeployments"
+      ],
+      "type": "object"
+    },
     "Backend": {
       "enum": [
         "MlxMetal",
@@ -756,6 +805,16 @@
         "model_card": {
           "$ref": "#/$defs/ModelCard"
         },
+        "not_before": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "note": {
           "anyOf": [
             {
@@ -848,12 +907,46 @@
       ],
       "type": "object"
     },
+    "DeploymentRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "deployment_id": {
+          "type": "string"
+        },
+        "last_nodes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "model_card": {
+          "$ref": "#/$defs/ModelCard"
+        },
+        "revision": {
+          "type": "integer"
+        },
+        "spec": {
+          "$ref": "#/$defs/DeploymentSpec"
+        }
+      },
+      "required": [
+        "deployment_id",
+        "model_card",
+        "spec"
+      ],
+      "type": "object",
+      "x-extra": "forbid",
+      "x-strict": true
+    },
     "DeploymentRemoved": {
       "additionalProperties": false,
       "properties": {
         "DeploymentRemoved": {
           "additionalProperties": false,
           "properties": {
+            "at": {
+              "type": "string"
+            },
             "deployment_id": {
               "type": "string"
             },
@@ -862,6 +955,7 @@
             }
           },
           "required": [
+            "at",
             "deployment_id"
           ],
           "type": "object",
@@ -882,6 +976,9 @@
           "properties": {
             "at": {
               "type": "string"
+            },
+            "by_user": {
+              "type": "boolean"
             },
             "deployment_id": {
               "type": "string"
@@ -1396,6 +1493,9 @@
               "$ref": "#/$defs/InstanceBroken"
             },
             {
+              "$ref": "#/$defs/AnnounceDeployments"
+            },
+            {
               "$ref": "#/$defs/TaskCancelled"
             },
             {
@@ -1611,7 +1711,8 @@
           "enum": [
             "CrashLoop",
             "StartFailed",
-            "WaitedTooLong"
+            "WaitedTooLong",
+            "Restored"
           ],
           "type": "string"
         },
@@ -4440,6 +4541,12 @@
           },
           "type": "object"
         },
+        "removed_deployments": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
         "runners": {
           "additionalProperties": {
             "anyOf": [
@@ -5774,6 +5881,16 @@
           "anyOf": [
             {
               "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "until": {
+          "anyOf": [
+            {
+              "type": "string"
             },
             {
               "type": "null"
