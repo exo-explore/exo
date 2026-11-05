@@ -29,6 +29,7 @@ from exo.shared.types.events import (
     InstanceLinkDeleted,
     NodeDownloadProgress,
     NodeGatheredInfo,
+    NodeLeft,
     NodeTimedOut,
     RunnerStatusUpdated,
     TaskAcknowledged,
@@ -156,7 +157,7 @@ def event_apply(event: Event, state: State) -> State:
                 event.deployment_id,
                 lambda _: {"waiting": event.waiting, "note": event.note},
             )
-        case NodeTimedOut():
+        case NodeTimedOut() | NodeLeft():
             return apply_node_timed_out(event, state)
         case NodeDownloadProgress():
             return apply_node_download_progress(event, state)
@@ -459,6 +460,7 @@ def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
         deleted.deployment_id,
         lambda deployment: {
             "last_nodes": list(deleted.shard_assignments.node_to_runner),
+            "not_before": event.not_before,
             "lost_at": event.at,
             "losses": _losses_after(deployment, event)
             if event.reason == "NodeLost"
@@ -518,7 +520,7 @@ def apply_runner_status_updated(event: RunnerStatusUpdated, state: State) -> Sta
     return state.model_copy(update=update)
 
 
-def apply_node_timed_out(event: NodeTimedOut, state: State) -> State:
+def apply_node_timed_out(event: NodeTimedOut | NodeLeft, state: State) -> State:
     topology = copy.deepcopy(state.topology)
     topology.remove_node(event.node_id)
     last_seen = {

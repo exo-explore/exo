@@ -7,7 +7,8 @@ is placed again here, and only here:
 - only on nodes that already have the model's files, so it never starts a download by itself;
 - not while the master's node is Resuming after it was stopped (its peers are still
   reconnecting), and not before its `not_before` (a launch the master learned of from a node
-  waits for the nodes it last ran on) unless those nodes are back;
+  waits for the nodes it last ran on, a model whose node quit waits for it) unless those nodes
+  are back;
 - an RDMA instance comes back as a TCP ring when the RDMA-linked nodes aren't all there.
 A deployment that keeps losing its devices is paused instead (CRASH_LOOP_LIMIT).
 

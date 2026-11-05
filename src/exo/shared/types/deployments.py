@@ -67,8 +67,8 @@ class Hold(FrozenModel):
 
 # Why a deployment can't be placed yet. Coarse on purpose: it changes only when the situation
 # does, not each time a node's free memory moves, and each change is an event every node gets.
-# DeviceAway: a device it is pinned to isn't here, or (with `until`) a launch the master learned
-# of from a node waits for the devices it last ran on.
+# DeviceAway: a device it is pinned to isn't here, or (with `until`) it waits for the devices it
+# last ran on: a launch the master learned of from a node, or a model whose device quit.
 # NoDevicesWithFiles / NotEnoughDevices: too few connected devices have its files.
 # DoesNotFit: the devices that have its files can't hold it now.
 WaitKind = Literal["DeviceAway", "NoDevicesWithFiles", "NotEnoughDevices", "DoesNotFit"]
@@ -109,7 +109,8 @@ class Deployment(FrozenModel):
     # The nodes its last instance ran on: preferred when it is placed again
     last_nodes: list[NodeId] = []
     # Not placed again before this ISO time unless its nodes are back: a launch the master
-    # learned of from a node waits for the nodes it last ran on (MERGED_LAUNCH_WAIT)
+    # learned of from a node waits for the nodes it last ran on (MERGED_LAUNCH_WAIT), and a
+    # model whose node quit waits for it (LEAVE_GRACE)
     not_before: str | None = None
     # When it lost its instance (ISO); none while it has one
     lost_at: str | None = None

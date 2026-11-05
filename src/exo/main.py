@@ -40,7 +40,7 @@ from exo.shared.deployment_store import DeploymentKeeper
 from exo.shared.election import Election, ElectionResult
 from exo.shared.logging import logger_cleanup, logger_setup
 from exo.shared.types.common import NodeId, SessionId
-from exo.shared.types.events import NodeTimedOut
+from exo.shared.types.events import NodeLeft
 from exo.shared.types.state import State
 from exo.utils import STDIO_FDS
 from exo.utils.channels import Receiver, channel
@@ -273,9 +273,10 @@ class Node:
         """Tell the master this node is leaving, and wait until it has removed the node.
         Returns whether there was anything to announce.
 
-        The departure is the event the master sends for a node it stopped hearing from, so a
-        master of an older version removes the node too. A node without a worker never joined
-        the cluster's state, so it has nothing to announce.
+        The departure removes the node as the master removes one it stopped hearing from, but
+        says it was a departure: the node's models wait LEAVE_GRACE (for a restart) before they
+        move. A node without a worker never joined the cluster's state, so it has nothing to
+        announce.
         """
         if self.worker is None:
             return False
@@ -286,7 +287,7 @@ class Node:
         if self.download_coordinator is not None:
             self.download_coordinator.stop_reporting()
         logger.info("Announcing this node's departure to the cluster")
-        await self.event_router.sender().send(NodeTimedOut(node_id=self.node_id))
+        await self.event_router.sender().send(NodeLeft(node_id=self.node_id))
         while _lists_node(worker.state, self.node_id):
             await anyio.sleep(LEAVE_POLL_INTERVAL)
         logger.info("The cluster has removed this node")

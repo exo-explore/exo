@@ -19,10 +19,11 @@ BrokenInstanceReason = Literal["StartFailed"]
 # Why an instance was removed. Every removal says which, so nothing has to guess: a request the
 # removal ends is told why, and only a user's stop means the user no longer wants the model.
 # NodeLost: one of its nodes left the cluster, or the master stopped hearing from it.
+# NodeLeft: one of its nodes announced that it was quitting.
 # UserStopped: a user stopped it.
 # Duplicate: its deployment had another instance (a launch crossed a re-placement).
 InstanceRemovalReason = (
-    Literal["NodeLost", "UserStopped", "Duplicate"] | BrokenInstanceReason
+    Literal["NodeLost", "NodeLeft", "UserStopped", "Duplicate"] | BrokenInstanceReason
 )
 
 

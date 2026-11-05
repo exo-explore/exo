@@ -8,8 +8,8 @@ isn't part of the replicated state: two nodes may disagree for a moment.
 
 It also tells the networking layer what only exo knows, from the cluster's events as this node
 applies them: that exo on a node reported (which shows it isn't wedged), that the cluster's
-state lists a node, and that the coordinator removed a node (NodeTimedOut, which is also how a
-quitting node's departure arrives), so that the quorum read stops counting it.
+state lists a node, and that the coordinator removed a node (NodeTimedOut) or that a node left
+(NodeLeft, a quitting node's departure), so that the quorum read stops counting it.
 """
 
 import copy
@@ -27,6 +27,7 @@ from exo.shared.types.common import NodeId
 from exo.shared.types.events import (
     IndexedEvent,
     NodeGatheredInfo,
+    NodeLeft,
     NodeTimedOut,
     StateSnapshot,
 )
@@ -293,7 +294,9 @@ class Membership(MembershipReader):
                     case IndexedEvent(event=NodeGatheredInfo(node_id=node_id)):
                         self._networking.listed(node_id)
                         self._networking.heard_from(node_id)
-                    case IndexedEvent(event=NodeTimedOut(node_id=node_id)):
+                    case IndexedEvent(
+                        event=NodeTimedOut(node_id=node_id) | NodeLeft(node_id=node_id)
+                    ):
                         self._networking.forget(node_id)
                     case IndexedEvent():
                         pass
