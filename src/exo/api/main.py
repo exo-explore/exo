@@ -189,12 +189,11 @@ from exo.shared.models.model_cards import (
     ModelTask,
 )
 from exo.shared.request_errors import (
-    DEVICE_LEFT,
     DEVICE_UNREACHABLE,
     INSTANCE_GONE_BEFORE_START,
     INTERRUPTED,
-    MODEL_STOPPED,
     GenerationErrorCode,
+    removal_message,
 )
 from exo.shared.topology import Topology
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
@@ -2242,7 +2241,6 @@ class API:
                     self._apply_snapshot(i_event)
                     continue
                 self._recent_events.append(i_event.event)
-                previous_state = self.state
                 self.state = apply(self.state, i_event)
                 self._note_applied_cluster_commands()
                 event = i_event.event
@@ -2285,10 +2283,7 @@ class API:
                             self._text_generation_queues.pop(event.command_id, None)
                 if isinstance(event, InstanceDeleted):
                     self._close_streams_for_instance(
-                        event.instance_id,
-                        self._why_deleted(
-                            previous_state.instances.get(event.instance_id)
-                        ),
+                        event.instance_id, removal_message(event.reason)
                     )
                 if isinstance(event, TracesMerged):
                     self._save_merged_trace(event)
@@ -2347,19 +2342,6 @@ class API:
                 await text_queue.send(error)
             if image_queue is not None:
                 await image_queue.send(error)
-
-    def _why_deleted(self, instance: Instance | None) -> str:
-        """Why an instance was deleted, as its requests are told. The master deletes an
-        instance as soon as one of its nodes is gone, after removing the node from the
-        topology if it timed out, so a node missing from the topology now means it left."""
-        if instance is None:
-            return INTERRUPTED
-        if any(
-            not self.state.topology.contains_node(node_id)
-            for node_id in instance.shard_assignments.node_to_runner
-        ):
-            return DEVICE_LEFT
-        return MODEL_STOPPED
 
     def _close_streams_for_instance(
         self,

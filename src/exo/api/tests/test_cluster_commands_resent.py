@@ -219,7 +219,9 @@ async def test_a_launch_undone_at_once_still_counts_as_applied() -> None:
                 await events.send(
                     IndexedEvent(
                         idx=last + 2,
-                        event=InstanceDeleted(instance_id=instance.instance_id),
+                        event=InstanceDeleted(
+                            instance_id=instance.instance_id, reason="UserStopped"
+                        ),
                     )
                 )
     assert len(responses) == 1
@@ -271,7 +273,12 @@ async def test_a_stop_is_sent_to_the_new_master(
                 await events.send(snapshot_from_new_master(api))
                 sent.append((await commands.receive()).command)
                 await events.send(
-                    next_event(api, InstanceDeleted(instance_id=instance.instance_id))
+                    next_event(
+                        api,
+                        InstanceDeleted(
+                            instance_id=instance.instance_id, reason="UserStopped"
+                        ),
+                    )
                 )
     stop = DeleteInstance(
         command_id=sent[0].command_id, instance_id=instance.instance_id
@@ -343,7 +350,12 @@ async def test_a_launch_answered_503_is_undone_when_it_applies_after_all(
             undo = await first_sent(commands, DeleteInstance)
         assert undo.instance_id == first.instance.instance_id
         await events.send(
-            next_event(api, InstanceDeleted(instance_id=first.instance.instance_id))
+            next_event(
+                api,
+                InstanceDeleted(
+                    instance_id=first.instance.instance_id, reason="UserStopped"
+                ),
+            )
         )
         await until(lambda: first.instance.instance_id not in api.state.instances)
         assert list(api.state.instances) == [retry.instance.instance_id]
@@ -410,7 +422,12 @@ async def test_the_same_launch_tried_again_while_its_late_copy_is_undone_waits_f
             await anyio.sleep(0.1)
             assert responses == []
             await events.send(
-                next_event(api, InstanceDeleted(instance_id=instance.instance_id))
+                next_event(
+                    api,
+                    InstanceDeleted(
+                        instance_id=instance.instance_id, reason="UserStopped"
+                    ),
+                )
             )
             with anyio.fail_after(5):
                 again = await first_sent(commands, CreateInstance)
@@ -472,7 +489,10 @@ async def test_a_launch_undone_since_is_not_restored_by_a_new_master() -> None:
         instance = (await launched(api, commands, events)).instance
         await until(lambda: instance.instance_id in api.state.instances)
         await events.send(
-            next_event(api, InstanceDeleted(instance_id=instance.instance_id))
+            next_event(
+                api,
+                InstanceDeleted(instance_id=instance.instance_id, reason="UserStopped"),
+            )
         )
         await until(lambda: instance.instance_id not in api.state.instances)
         await events.send(

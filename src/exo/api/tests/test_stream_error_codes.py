@@ -19,8 +19,7 @@ from exo.api.adapters.claude import generate_claude_stream
 from exo.api.adapters.responses import generate_responses_stream
 from exo.api.collected_response import CollectedResponse
 from exo.api.main import API
-from exo.shared.request_errors import generation_error_code
-from exo.shared.topology import Topology
+from exo.shared.request_errors import generation_error_code, removal_message
 from exo.shared.types.chunks import (
     ErrorChunk,
     PrefillProgressChunk,
@@ -37,7 +36,7 @@ from exo.shared.types.text_generation import (
     InputMessageContent,
     TextGenerationTaskParams,
 )
-from exo.shared.types.worker.instances import InstanceId
+from exo.shared.types.worker.instances import InstanceId, InstanceRemovalReason
 from exo.shared.types.worker.runners import RunnerId
 from exo.utils.channels import channel
 from exo.worker.tests.unittests.conftest import (
@@ -111,7 +110,7 @@ def test_an_error_without_a_code_keeps_the_status_as_code() -> None:
 
 
 async def _ending_of_request_when_instance_deleted(
-    node_still_in_cluster: bool,
+    reason: InstanceRemovalReason,
 ) -> ErrorChunk:
     """Delete the instance serving a request, as the API does when it applies the deletion,
     and return the chunk the request ends with."""
@@ -132,11 +131,8 @@ async def _ending_of_request_when_instance_deleted(
             input=[InputMessage(role="user", content=InputMessageContent("hi"))],
         ),
     )
-    topology = Topology()
-    if node_still_in_cluster:
-        topology.add_node(node)
     api = object.__new__(API)
-    api.state = State(tasks={task.task_id: task}, topology=topology)
+    api.state = State(tasks={task.task_id: task})
     api._text_generation_queues = {}
     api._image_generation_queues = {}
     api._cancelled_command_ids = set()
@@ -158,14 +154,14 @@ async def _ending_of_request_when_instance_deleted(
             while command_id not in api._text_generation_queues:
                 await anyio.sleep(0)
             api._close_streams_for_instance(
-                instance.instance_id, api._why_deleted(instance)
+                instance.instance_id, removal_message(reason)
             )
     (ending,) = received
     return ending
 
 
 async def test_a_request_whose_device_left_says_so() -> None:
-    ending = await _ending_of_request_when_instance_deleted(node_still_in_cluster=False)
+    ending = await _ending_of_request_when_instance_deleted("NodeLost")
     assert generation_error_code(ending.error_message) == "device_left"
     assert ending.error_message == (
         "A device serving this model left the cluster before the reply finished."
@@ -173,7 +169,7 @@ async def test_a_request_whose_device_left_says_so() -> None:
 
 
 async def test_a_request_whose_model_was_stopped_says_so() -> None:
-    ending = await _ending_of_request_when_instance_deleted(node_still_in_cluster=True)
+    ending = await _ending_of_request_when_instance_deleted("UserStopped")
     assert generation_error_code(ending.error_message) == "model_stopped"
     assert ending.error_message == "The model was stopped before the reply finished."
 

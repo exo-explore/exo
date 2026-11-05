@@ -130,7 +130,7 @@ def removals(broadcast: Receiver[GlobalForwarderEvent]) -> list[tuple[str, str]]
         match message.event:
             case NodeTimedOut(node_id=node_id):
                 out.append(("node", node_id))
-            case InstanceDeleted(instance_id=instance_id):
+            case InstanceDeleted(instance_id=instance_id, reason="NodeLost"):
                 out.append(("instance", instance_id))
             case event:
                 out.append(("other", type(event).__name__))

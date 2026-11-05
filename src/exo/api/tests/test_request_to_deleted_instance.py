@@ -168,7 +168,10 @@ async def test_a_request_whose_task_was_not_added_ends_with_an_error() -> None:
             (command_id,) = api._text_generation_queues
             await events.send(
                 IndexedEvent(
-                    idx=2, event=InstanceDeleted(instance_id=instance.instance_id)
+                    idx=2,
+                    event=InstanceDeleted(
+                        instance_id=instance.instance_id, reason="UserStopped"
+                    ),
                 )
             )
             task = TextGeneration(

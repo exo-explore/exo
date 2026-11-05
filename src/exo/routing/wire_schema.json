@@ -1109,6 +1109,9 @@
               "$ref": "#/$defs/DeleteInstance"
             },
             {
+              "$ref": "#/$defs/InstanceBroken"
+            },
+            {
               "$ref": "#/$defs/TaskCancelled"
             },
             {
@@ -1847,6 +1850,47 @@
       "x-extra": "ignore",
       "x-strict": false
     },
+    "InstanceBroken": {
+      "additionalProperties": false,
+      "properties": {
+        "InstanceBroken": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "instance_id": {
+              "type": "string"
+            },
+            "message": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reason": {
+              "const": "StartFailed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "instance_id",
+            "reason"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "InstanceBroken"
+      ],
+      "type": "object"
+    },
     "InstanceCreated": {
       "additionalProperties": false,
       "properties": {
@@ -1891,10 +1935,26 @@
             },
             "instance_id": {
               "type": "string"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "NodeLost",
+                    "UserStopped"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "const": "StartFailed",
+                  "type": "string"
+                }
+              ]
             }
           },
           "required": [
-            "instance_id"
+            "instance_id",
+            "reason"
           ],
           "type": "object",
           "x-extra": "forbid",

@@ -57,7 +57,9 @@ def test_instance_deleted_strips_from_links() -> None:
     link = _link([a, c], [b])
     state = State(instance_links={link.link_id: link})
 
-    new_state = apply_instance_deleted(InstanceDeleted(instance_id=a), state)
+    new_state = apply_instance_deleted(
+        InstanceDeleted(instance_id=a, reason="UserStopped"), state
+    )
     remaining = new_state.instance_links[link.link_id]
     assert remaining.prefill_instances == [c]
     assert remaining.decode_instances == [b]
@@ -68,5 +70,7 @@ def test_instance_deleted_drops_link_when_role_empties() -> None:
     link = _link([a], [b])
     state = State(instance_links={link.link_id: link})
 
-    new_state = apply_instance_deleted(InstanceDeleted(instance_id=a), state)
+    new_state = apply_instance_deleted(
+        InstanceDeleted(instance_id=a, reason="UserStopped"), state
+    )
     assert link.link_id not in new_state.instance_links
