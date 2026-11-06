@@ -1,5 +1,7 @@
 """Type stubs for the GLM-5.3-Flash model (glm5_next.py next to this file)."""
 
+import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,6 +15,33 @@ from mlx_lm.models.switch_layers import SwitchGLU
 LINEAR_ATTENTION: str
 SPARSE_ATTENTION: str
 
+# The Metal kernels (None without Metal) and the fused paths the tests compare to the ops.
+_MetalKernel = Callable[..., list[mx.array]]
+_kda_decode_kernel: _MetalKernel | None
+_hc_update_kernel: _MetalKernel | None
+_hc_mix_kernel: _MetalKernel | None
+_pool_scores_kernel: _MetalKernel | None
+_router_select_kernel: _MetalKernel | None
+_FUSED_GEMM_MAX_ROWS: int
+_FUSED_QUANTIZED_MAX_ROWS: int
+_FUSE_PROJECTIONS: bool
+_CHECKED_MLX: re.Pattern[str]
+_KNOWN_ARCHITECTURE: re.Pattern[str]
+
+def _gpu_architecture() -> tuple[int, str] | None: ...
+def _qmv_row_limit(
+    architecture: tuple[int, str], in_dims: int, out_dims: int
+) -> int: ...
+def _fused_max_rows(quantized: bool, in_dims: int, widths: Sequence[int]) -> int: ...
+
+class _FusedLinear:
+    sizes: list[int]
+    max_rows: int
+    def __call__(
+        self, x: mx.array, groups: tuple[int, ...] | None = None
+    ) -> list[mx.array]: ...
+
+def _fuse(module: nn.Module, names: tuple[str, ...]) -> _FusedLinear | None: ...
 @dataclass
 class ModelArgs(BaseModelArgs):
     model_type: str
@@ -66,6 +95,21 @@ class HyperConnection(nn.Module):
         self, x: mx.array
     ) -> tuple[mx.array, mx.array, mx.array]: ...
 
+def _hc_pre(
+    x: mx.array, hc: HyperConnection, norm: nn.RMSNorm
+) -> tuple[mx.array, mx.array, mx.array]: ...
+def _hc_post(
+    out: mx.array, x: mx.array, post_mix: mx.array, comb: mx.array, hc: HyperConnection
+) -> mx.array: ...
+def _hc_post_then_pre(
+    out: mx.array,
+    x: mx.array,
+    post_mix: mx.array,
+    comb: mx.array,
+    hc: HyperConnection,
+    norm: nn.RMSNorm,
+) -> tuple[mx.array, tuple[mx.array, mx.array, mx.array]]: ...
+
 class MLP(nn.Module):
     swiglu_limit: float
     gate_proj: nn.Linear
@@ -88,6 +132,7 @@ class MoE(nn.Module):
     shared_experts: MLP
     def __init__(self, args: ModelArgs) -> None: ...
     def __call__(self, x: mx.array) -> mx.array: ...
+    def _fuse_gate_up(self) -> tuple[object, ...] | None: ...
 
 class GatedRMSNorm(nn.Module):
     eps: float
@@ -136,6 +181,26 @@ class Indexer(nn.Module):
     def __call__(  # pyright: ignore[reportIncompatibleMethodOverride]
         self, x: mx.array, qr: mx.array, cache: KVCache | BatchKVCache | None = None
     ) -> mx.array | None: ...
+    def _x_projections(self, x: mx.array) -> tuple[mx.array, mx.array, mx.array]: ...
+    def _select(
+        self,
+        x: mx.array,
+        qr: mx.array,
+        keys: mx.array,
+        gates: mx.array,
+        weights: mx.array,
+        first: mx.array | None,
+        n_keys: int,
+    ) -> mx.array: ...
+    def _select_few(
+        self,
+        qr: mx.array,
+        keys: mx.array,
+        gates: mx.array,
+        weights: mx.array,
+        first: mx.array | None,
+        n_keys: int,
+    ) -> mx.array: ...
 
 class Glm5NextAttention(nn.Module):
     num_heads: int
@@ -168,6 +233,13 @@ class DecoderLayer(nn.Module):
     def __call__(
         self, x: mx.array, cache: ArraysCache | CacheList | None = None
     ) -> mx.array: ...
+    def forward(
+        self,
+        x: mx.array,
+        cache: ArraysCache | CacheList | None = None,
+        attn_input: tuple[mx.array, mx.array, mx.array] | None = None,
+        next_layer: DecoderLayer | None = None,
+    ) -> tuple[mx.array, tuple[mx.array, mx.array, mx.array] | None]: ...
 
 class Glm5NextModel(nn.Module):
     hc_mult: int
@@ -196,5 +268,8 @@ class Model(nn.Module):
     ) -> mx.array: ...
     @property
     def layers(self) -> list[DecoderLayer]: ...
+    def shard_vocabulary(
+        self, lm_head: nn.Linear, group: mx.distributed.Group
+    ) -> None: ...
     def make_cache(self) -> list[ArraysCache | CacheList]: ...
     def sanitize(self, weights: dict[str, mx.array]) -> dict[str, mx.array]: ...
