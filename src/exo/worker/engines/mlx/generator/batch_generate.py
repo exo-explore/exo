@@ -1,8 +1,8 @@
 import contextlib
 import time
 import uuid
-from dataclasses import dataclass, field
-from typing import Callable, Literal, cast
+from dataclasses import dataclass, field, replace
+from typing import Callable, Literal, cast, final
 
 import mlx.core as mx
 from mlx_lm.generate import (
@@ -23,6 +23,7 @@ from exo.api.types import (
     TopLogprobItem,
     Usage,
 )
+from exo.shared.constants import EXO_ASYNC_REMOTE_PREFILL
 from exo.shared.types.memory import Memory
 from exo.shared.types.text_generation import TextGenerationTaskParams
 from exo.shared.types.worker.runner_response import GenerationResponse
@@ -30,6 +31,7 @@ from exo.worker.engines.mlx.cache import (
     CacheSnapshot,
     KVPrefixCache,
     encode_prompt,
+    get_prefix_length,
     make_kv_cache,
 )
 from exo.worker.engines.mlx.constants import DEFAULT_TOP_LOGPROBS, MAX_TOKENS
@@ -40,7 +42,10 @@ from exo.worker.engines.mlx.generator.generate import (
     patch_embed_tokens,
     prefill,
 )
-from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
+from exo.worker.engines.mlx.generator.remote_prefill import (
+    RemotePrefillHandle,
+    remote_prefill,
+)
 from exo.worker.engines.mlx.models.registry import keeps_think_tags, model_type_of
 from exo.worker.engines.mlx.patches.opt_batch_gen import (
     set_needs_topk,
@@ -62,6 +67,8 @@ from exo.worker.runner.context_length import check_context_length
 
 _MIN_PREFIX_HIT_RATIO_TO_UPDATE = 0.5
 REMOTE_PREFILL_MIN_TOKENS = 1000
+# At most one progress report per background fetch per this many seconds.
+REMOTE_PREFILL_PROGRESS_INTERVAL_SECONDS = 1.0
 
 
 def _stop_sequences(task_params: TextGenerationTaskParams) -> list[str]:
@@ -92,6 +99,25 @@ class _EngineTask:
     last_gen_token_time: float | None = None
 
 
+@final
+@dataclass(frozen=True)
+class _PreparedSubmission:
+    """Everything submit() prepared for a prompt, up to the point of prefill."""
+
+    task_params: TextGenerationTaskParams
+    cache: KVCacheType
+    sampler: Callable[[mx.array], mx.array]
+    prompt_tokens: mx.array
+    all_prompt_tokens: mx.array
+    prefix_hit_length: int
+    matched_index: int | None
+    is_exact_hit: bool
+    media_regions: list[MediaRegion]
+    is_bench: bool
+    on_generation_token: Callable[[], None] | None
+    on_prefill_progress: Callable[[int, int], None] | None
+
+
 @dataclass(eq=False)
 class ExoBatchGenerator:
     model: Model
@@ -104,6 +130,13 @@ class ExoBatchGenerator:
 
     _mlx_gen: MlxBatchGenerator = field(init=False)
     _active_tasks: dict[int, _EngineTask] = field(default_factory=dict, init=False)
+    # Remote prefills being fetched in the background, by placeholder uid. A request
+    # is known to its caller by its placeholder until it finishes.
+    _pending_remote_prefills: dict[
+        int, tuple[RemotePrefillHandle, _PreparedSubmission]
+    ] = field(default_factory=dict, init=False)
+    _placeholder_by_uid: dict[int, int] = field(default_factory=dict, init=False)
+    _next_placeholder_uid: int = field(default=-1, init=False)
 
     def __post_init__(self) -> None:
         self._mlx_gen = MlxBatchGenerator(
@@ -117,6 +150,10 @@ class ExoBatchGenerator:
 
     @property
     def has_work(self) -> bool:
+        return bool(self._pending_remote_prefills) or self._batch_has_work
+
+    @property
+    def _batch_has_work(self) -> bool:
         return (
             bool(self._active_tasks)
             or bool(self._mlx_gen._unprocessed_sequences)
@@ -223,6 +260,45 @@ class ExoBatchGenerator:
         _prefill_tokens: int = 0
         cache_snapshots: list[CacheSnapshot] = []
         remote_prefilled = False
+        # A synchronous remote prefill stalls every stream on this instance for the
+        # whole remote prefill and transfer. Fetch it in the background instead and let
+        # the batch keep decoding. Multi-node instances stay synchronous, because their
+        # ranks must stay in lock step.
+        if (
+            EXO_ASYNC_REMOTE_PREFILL
+            and use_remote
+            and vision is None
+            and task_params.prefill_endpoint is not None
+            and (self.group is None or self.group.size() == 1)
+        ):
+            handle = RemotePrefillHandle(
+                prompt_tokens[:-1],
+                endpoint=task_params.prefill_endpoint,
+                request_id=str(uuid.uuid4()),
+                model_id=str(task_params.model),
+                start_pos=prefix_hit_length,
+            )
+            placeholder = self._next_placeholder_uid
+            self._next_placeholder_uid -= 1
+            self._pending_remote_prefills[placeholder] = (
+                handle,
+                _PreparedSubmission(
+                    task_params=task_params,
+                    cache=cache,
+                    sampler=sampler,
+                    prompt_tokens=prompt_tokens,
+                    all_prompt_tokens=all_prompt_tokens,
+                    prefix_hit_length=prefix_hit_length,
+                    matched_index=matched_index,
+                    is_exact_hit=is_exact_hit,
+                    media_regions=media_regions,
+                    is_bench=is_bench,
+                    on_generation_token=on_generation_token,
+                    on_prefill_progress=on_prefill_progress,
+                ),
+            )
+            return placeholder
+
         with vision_ctx:
             if use_remote and task_params.prefill_endpoint is not None:
                 try:
@@ -253,12 +329,43 @@ class ExoBatchGenerator:
                     distributed_prompt_progress_callback,
                 )
 
+        # Built after prefill, so it holds the cache and prompt that were prefilled.
+        prepared = _PreparedSubmission(
+            task_params=task_params,
+            cache=cache,
+            sampler=sampler,
+            prompt_tokens=prompt_tokens,
+            all_prompt_tokens=all_prompt_tokens,
+            prefix_hit_length=prefix_hit_length,
+            matched_index=matched_index,
+            is_exact_hit=is_exact_hit,
+            media_regions=media_regions,
+            is_bench=is_bench,
+            on_generation_token=on_generation_token,
+            on_prefill_progress=on_prefill_progress,
+        )
+        return self._insert_prefilled(prepared, _prefill_tps, cache_snapshots)
+
+    def _insert_prefilled(
+        self,
+        prepared: _PreparedSubmission,
+        prefill_tps: float,
+        cache_snapshots: list[CacheSnapshot],
+    ) -> int:
+        task_params = prepared.task_params
+        cache = prepared.cache
+        prompt_tokens = prepared.prompt_tokens
+        all_prompt_tokens = prepared.all_prompt_tokens
+        prefix_hit_length = prepared.prefix_hit_length
+        matched_index = prepared.matched_index
+        media_regions = prepared.media_regions
+        is_bench = prepared.is_bench
         prefix_cache_hit: Literal["none", "partial", "exact"] = "none"
         if matched_index is not None and prefix_hit_length > 0:
             assert self.kv_prefix_cache is not None
-            if is_exact_hit:
+            if prepared.is_exact_hit:
                 prefix_cache_hit = "exact"
-                _prefill_tps = self.kv_prefix_cache.prefill_tps[matched_index]
+                prefill_tps = self.kv_prefix_cache.prefill_tps[matched_index]
             else:
                 prefix_cache_hit = "partial"
 
@@ -287,7 +394,7 @@ class ExoBatchGenerator:
                 matched_index,
                 min_prefix_hit_length,
                 media_regions,
-                prefill_tps=_prefill_tps,
+                prefill_tps=prefill_tps,
             )
 
         last_tokens = prompt_tokens[-2:]
@@ -313,7 +420,7 @@ class ExoBatchGenerator:
             prompts=[cast(list[int], last_tokens.tolist())],
             max_tokens=[max_tokens],
             caches=[list(cache)],
-            samplers=[sampler],
+            samplers=[prepared.sampler],
             logits_processors=[logits_processors],
         )
 
@@ -328,17 +435,105 @@ class ExoBatchGenerator:
             prefix_hit_length=prefix_hit_length,
             matched_index=matched_index,
             detokenizer=self.tokenizer.detokenizer,
-            on_generation_token=on_generation_token,
+            on_generation_token=prepared.on_generation_token,
             generation_start_time=time.perf_counter(),
-            prefill_tps=_prefill_tps,
+            prefill_tps=prefill_tps,
             prefix_cache_hit=prefix_cache_hit,
             media_regions=media_regions,
         )
 
         return uid
 
+    def _insert_fetched_remote_prefills(self) -> None:
+        """Ingest every finished background fetch on this thread and add it to the batch.
+
+        A failed fetch falls back to local prefill, as the synchronous path does.
+        """
+        finished = [
+            placeholder
+            for placeholder, (handle, _) in self._pending_remote_prefills.items()
+            if handle.done
+        ]
+        for placeholder in finished:
+            handle, prepared = self._pending_remote_prefills.pop(placeholder)
+            try:
+                prefill_tps, _, cache_snapshots = handle.ingest(prepared.cache)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Remote prefill failed, falling back to local prefill"
+                )
+                # With its progress reports: a long local prefill that reports nothing
+                # is taken for a stuck runner. No cancellation callback, as before.
+                prefill_tps, _, cache_snapshots = prefill(
+                    self.model,
+                    self.tokenizer,
+                    prepared.sampler,
+                    prepared.prompt_tokens[:-1],
+                    prepared.cache,
+                    self.group,
+                    prepared.on_prefill_progress,
+                    None,
+                )
+            prepared = self._revalidate_prefix_match(prepared)
+            uid = self._insert_prefilled(prepared, prefill_tps, cache_snapshots)
+            self._placeholder_by_uid[uid] = placeholder
+
+    def _revalidate_prefix_match(
+        self, prepared: _PreparedSubmission
+    ) -> _PreparedSubmission:
+        """Point a background prefill at the prefix-cache entry it matched, as it stands now.
+
+        The entry was found by index at submit time. While the fetch ran, other requests
+        saved to the prefix cache, and eviction removes entries by position, so the index
+        can now name a different prompt. Saving through it would overwrite an unrelated
+        entry (and merge that entry's SSM snapshots). Look the matched prefix up again;
+        if no entry holds it any more, save as a new entry.
+        """
+        kv_prefix_cache = self.kv_prefix_cache
+        index = prepared.matched_index
+        if kv_prefix_cache is None or index is None:
+            return prepared
+
+        def holds_prefix(i: int) -> bool:
+            return (
+                get_prefix_length(
+                    prepared.all_prompt_tokens, kv_prefix_cache.prompts[i]
+                )
+                >= prepared.prefix_hit_length
+            )
+
+        if index < len(kv_prefix_cache.prompts) and holds_prefix(index):
+            return prepared
+        current = next(
+            (i for i in range(len(kv_prefix_cache.prompts)) if holds_prefix(i)), None
+        )
+        return replace(
+            prepared,
+            matched_index=current,
+            is_exact_hit=prepared.is_exact_hit and current is not None,
+        )
+
+    def _report_remote_prefill_progress(self) -> None:
+        """Report how far each background fetch has got, on the engine thread.
+
+        While a request is being fetched these are its only reports; without them a
+        runner whose only request streams its prefill for longer than
+        RUNNER_STALL_TIMEOUT is stopped as stuck.
+        """
+        for handle, prepared in self._pending_remote_prefills.values():
+            if prepared.on_prefill_progress is None:
+                continue
+            progress = handle.take_progress(REMOTE_PREFILL_PROGRESS_INTERVAL_SECONDS)
+            if progress is not None:
+                prepared.on_prefill_progress(*progress)
+
     def step(self) -> list[tuple[int, GenerationResponse]]:
-        if not self.has_work:
+        self._report_remote_prefill_progress()
+        self._insert_fetched_remote_prefills()
+        if not self._batch_has_work:
+            if self._pending_remote_prefills:
+                # Only background fetches are running; don't spin the engine loop.
+                time.sleep(0.002)
             return []
 
         gb = self._mlx_gen._generation_batch
@@ -463,7 +658,7 @@ class ExoBatchGenerator:
 
             results.append(
                 (
-                    response.uid,
+                    self._placeholder_by_uid.get(response.uid, response.uid),
                     GenerationResponse(
                         text=text,
                         token=response.token,
@@ -478,6 +673,7 @@ class ExoBatchGenerator:
 
             if is_done:
                 del self._active_tasks[response.uid]
+                self._placeholder_by_uid.pop(response.uid, None)
             elif (
                 max_stop_len > 0
                 and len(state.potential_stop_sequence_text) > max_stop_len
@@ -497,6 +693,17 @@ class ExoBatchGenerator:
         return results
 
     def cancel(self, uids: list[int]) -> None:
+        # A request still being fetched is dropped here; its fetch thread finishes on
+        # its own and the result is discarded. Placeholders map to their batch uid.
+        fetching = [uid for uid in uids if uid in self._pending_remote_prefills]
+        for uid in fetching:
+            del self._pending_remote_prefills[uid]
+        uid_by_placeholder = {
+            placeholder: uid for uid, placeholder in self._placeholder_by_uid.items()
+        }
+        uids = [uid_by_placeholder.get(uid, uid) for uid in uids if uid not in fetching]
+        for uid in uids:
+            self._placeholder_by_uid.pop(uid, None)
         # A sequence that is generating is finished by mlx_lm at its next step, as if it had
         # reached its token limit, instead of being removed from the batch here. Removing it
         # between steps deadlocked pipeline-parallel instances; finishing is the path every
