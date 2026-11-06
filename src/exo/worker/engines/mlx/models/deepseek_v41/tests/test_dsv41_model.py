@@ -1,13 +1,19 @@
 """DeepSeek V4.1's MLX model on a tiny random configuration: the engram hashing against the
 reference algorithm, the engram layout against the released config, the caches (chunked
-prefill and one-token decode give one-shot results), the quantizers and the checkpoint
-mapping. Real-weight comparisons with DeepSeek's reference are in the PR's report."""
+prefill and one-token decode give one-shot results), the quantizers, the checkpoint
+mapping, and the model's own pipeline split (two ranks over the ring give one device's
+logits, and a stage waits for the last stage's output on the CPU). Real-weight comparisons
+with DeepSeek's reference are in the PR's report."""
 
 import json
+import multiprocessing as mp
+import os
 import struct
+import tempfile
+import time
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import mlx.core as mx
 import numpy as np
@@ -22,8 +28,14 @@ from exo.worker.engines.mlx.models.deepseek_v41.model import (
     Model,
     ModelArgs,
     NgramHasher,
+    PipelineStage,
     fake_quant_fp4,
     fake_quant_fp8,
+)
+from exo.worker.engines.mlx.sharding.pipeline import set_pipeline_prefill
+from exo.worker.engines.mlx.utils_mlx import (
+    mx_barrier,
+    use_generation_stream_by_default,
 )
 
 # The released config's engram fields (deepseek-ai/DeepSeek-V4.1-Flash config.json).
@@ -330,3 +342,236 @@ def test_compressed_layers_share_their_source(ratio_layer: int) -> None:
     assert source.is_kv_source and source.is_index_source
     reuse = model.layers[ratio_layer + 1].self_attn
     assert reuse.ratio == source.ratio and not reuse.is_kv_source
+
+
+# == The model's own pipeline split ==
+
+# Rank 0 runs layers [0, 3), rank 1 (the last stage) layers [3, 6). Layer 2's compressed KV
+# and index keys are read by later layers, so they go to rank 1 with the streams.
+_SPLIT = 3
+_PIPELINE_TOKENS = [5, 17, 3, 42, 9, 33, 1, 60, 27, 11, 8, 50, 2]
+_PIPELINE_PREFILL = 9
+# Longer than the GPU watchdog, about 5 s on Apple silicon
+_LAST_STAGE_DELAY = 8.0
+
+
+class _TwoRankGroup:
+    """Rank 0 of a two-rank pipeline group, for a stage whose collectives are mocked."""
+
+    def size(self) -> int:
+        return 2
+
+    def rank(self) -> int:
+        return 0
+
+
+def _first_of_two_stages() -> Model:
+    model = _tiny_model()
+    model.model.set_pipeline_stage(
+        PipelineStage(
+            group=cast(mx.distributed.Group, cast(object, _TwoRankGroup())),
+            start=0,
+            end=_SPLIT,
+            previous_rank=None,
+            next_rank=1,
+            last_rank=1,
+        )
+    )
+    return model
+
+
+def test_a_pipeline_stage_waits_for_the_last_stage_output_on_the_cpu(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Every stage gathers the last stage's output and keeps it. A GPU command buffer that
+    # waited for the gather would wait for the slowest rank, and the GPU watchdog fails
+    # command buffers that wait more than a few seconds: the gather must be evaluated on
+    # its own, before the slice and the norm use it.
+    model = _first_of_two_stages()
+    evaluated: list[list[mx.array]] = []
+    gathered: list[tuple[mx.array, mx.array]] = []
+    real_eval = mx.eval
+
+    def recording_eval(*arrays: object) -> None:
+        evaluated.append([a for a in arrays if isinstance(a, mx.array)])
+        real_eval(*arrays)  # pyright: ignore[reportArgumentType]
+
+    def gather_two_ranks(x: mx.array, group: object = None) -> mx.array:
+        # This rank's rows, then the last rank's
+        out = mx.concatenate([x, x + 1])
+        gathered.append((x, out))
+        return out
+
+    def send(x: mx.array, dst: int, group: object = None) -> mx.array:
+        return x
+
+    monkeypatch.setattr(mx, "eval", recording_eval)
+    monkeypatch.setattr(mx.distributed, "all_gather", gather_two_ranks)
+    monkeypatch.setattr(mx.distributed, "send", send)
+
+    logits = model(mx.array([[5, 17, 3]]))
+
+    assert len(gathered) == 1
+    own, out = gathered[0]
+    assert any(len(arrays) == 1 and arrays[0] is out for arrays in evaluated)
+    # The stage keeps the last rank's rows.
+    expected = (
+        model.model.norm(own + 1).astype(mx.float32)
+        @ model.lm_head.weight.astype(mx.float32).T
+    )
+    np.testing.assert_array_equal(np.array(logits), np.array(expected))
+
+
+def test_a_pipeline_stage_does_not_gather_while_exo_prefills(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # While prefilling only the caches are kept. Evaluating the gather there would make
+    # every stage wait for the last one to finish each chunk before starting the next.
+    model = _first_of_two_stages()
+    gathers: list[mx.array] = []
+
+    def gather_two_ranks(x: mx.array, group: object = None) -> mx.array:
+        gathers.append(x)
+        return mx.concatenate([x, x])
+
+    def send(x: mx.array, dst: int, group: object = None) -> mx.array:
+        return x
+
+    monkeypatch.setattr(mx.distributed, "all_gather", gather_two_ranks)
+    monkeypatch.setattr(mx.distributed, "send", send)
+    cache = model.make_cache()
+
+    set_pipeline_prefill(model, is_prefill=True)
+    mx.eval(model(mx.array([[5, 17, 3]]), cache))
+    assert gathers == []
+
+    set_pipeline_prefill(model, is_prefill=False)
+    mx.eval(model(mx.array([[42]]), cache))
+    assert len(gathers) == 1
+
+
+def _hold_back_all_gather() -> None:
+    """Make this rank's next all_gather join _LAST_STAGE_DELAY seconds late"""
+    all_gather = mx.distributed.all_gather
+    held_back = False
+
+    def late_all_gather(
+        x: mx.array, *, group: mx.distributed.Group | None = None
+    ) -> mx.array:
+        nonlocal held_back
+        if not held_back:
+            held_back = True
+            time.sleep(_LAST_STAGE_DELAY)
+        return all_gather(x, group=group)
+
+    setattr(mx.distributed, "all_gather", late_all_gather)  # noqa: B010
+
+
+def _run_stage(
+    rank: int,
+    hostfile_path: str,
+    late_last_stage: bool,
+    results: Any,  # pyright: ignore[reportAny]
+) -> None:
+    """Prefill, then decode one token at a time, as exo does, on this rank's stage"""
+    os.environ["MLX_HOSTFILE"] = hostfile_path
+    os.environ["MLX_RANK"] = str(rank)
+    try:
+        group = mx.distributed.init(backend="ring", strict=True)
+        use_generation_stream_by_default()
+        model = _tiny_model()
+        model.model.set_pipeline_stage(
+            PipelineStage(
+                group=group,
+                start=0 if rank == 0 else _SPLIT,
+                end=_SPLIT if rank == 0 else model.args.num_hidden_layers,
+                previous_rank=None if rank == 0 else 0,
+                next_rank=1 if rank == 0 else None,
+                last_rank=1,
+            )
+        )
+        mx_barrier(group)
+        cache = model.make_cache()
+        set_pipeline_prefill(model, is_prefill=True)
+        model(mx.array([_PIPELINE_TOKENS[:_PIPELINE_PREFILL]]), cache)
+        mx.eval(*(array for c in cache for array in c.state))
+        set_pipeline_prefill(model, is_prefill=False)
+        if late_last_stage and rank == 1:
+            _hold_back_all_gather()
+        rows: list[list[float]] = []
+        for token in _PIPELINE_TOKENS[_PIPELINE_PREFILL:]:
+            logits = model(mx.array([[token]]), cache)
+            rows.extend(cast(list[list[float]], np.array(logits[0]).tolist()))
+        results.put((rank, True, rows))  # pyright: ignore[reportAny]
+    except Exception as e:
+        results.put((rank, False, repr(e)))  # pyright: ignore[reportAny]
+
+
+def _pipeline_decode_logits(late_last_stage: bool, base_port: int) -> list[list[float]]:
+    context = mp.get_context("spawn")
+    hosts = [f"127.0.0.1:{base_port + rank}" for rank in range(2)]
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(hosts, f)
+        hostfile_path = f.name
+    results: Any = context.Queue()
+    processes = [
+        context.Process(
+            target=_run_stage, args=(rank, hostfile_path, late_last_stage, results)
+        )
+        for rank in range(2)
+    ]
+    try:
+        for process in processes:
+            process.start()
+        outcomes: dict[int, tuple[bool, object]] = {}
+        for _ in processes:
+            rank, ok, value = cast(
+                tuple[int, bool, object],
+                results.get(timeout=120),  # pyright: ignore[reportAny]
+            )
+            outcomes[rank] = (ok, value)
+    finally:
+        for process in processes:
+            process.join(timeout=10)
+            if process.is_alive():
+                process.kill()
+                process.join()
+        os.unlink(hostfile_path)
+    assert {rank: ok for rank, (ok, _) in outcomes.items()} == {0: True, 1: True}, (
+        outcomes
+    )
+    # Every rank ends with the last stage's logits.
+    assert outcomes[0][1] == outcomes[1][1]
+    return cast(list[list[float]], outcomes[0][1])
+
+
+def _single_device_decode_logits() -> npt.NDArray[np.float32]:
+    decode_steps = len(_PIPELINE_TOKENS) - _PIPELINE_PREFILL
+    rows = _logits(
+        _tiny_model(), _PIPELINE_TOKENS, [_PIPELINE_PREFILL] + [1] * decode_steps
+    )
+    return rows[_PIPELINE_PREFILL:]
+
+
+def test_a_pipeline_split_decodes_as_a_single_device() -> None:
+    np.testing.assert_allclose(
+        np.array(_pipeline_decode_logits(late_last_stage=False, base_port=29780)),
+        _single_device_decode_logits(),
+        rtol=0,
+        atol=2e-3,
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not mx.metal.is_available(), reason="the GPU watchdog is Metal's")
+def test_a_last_stage_slower_than_the_gpu_watchdog_does_not_fail_the_first() -> None:
+    # The last stage joins the first decode step's gather 8 s late, e.g. while it reads
+    # host engram rows from a cold page cache: the first stage waits on the CPU. A GPU
+    # command buffer that waited for it was failed by the watchdog after about 5 s, and
+    # the first stage went on with wrong logits, without an error.
+    np.testing.assert_allclose(
+        np.array(_pipeline_decode_logits(late_last_stage=True, base_port=29782)),
+        _single_device_decode_logits(),
+        rtol=0,
+        atol=2e-3,
+    )

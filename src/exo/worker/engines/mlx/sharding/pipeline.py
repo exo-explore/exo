@@ -1,6 +1,6 @@
 from collections.abc import Generator
 from inspect import signature
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -173,10 +173,20 @@ class PipelineLastLayer(CustomMlxLayer):
         return output
 
 
+@runtime_checkable
+class ModelWithOwnPipeline(Protocol):
+    """A model that passes its activations between pipeline stages itself, instead of having
+    PipelineFirstLayer and PipelineLastLayer wrapped around its layers."""
+
+    def set_pipeline_prefill(self, is_prefill: bool) -> None: ...
+
+
 def set_pipeline_prefill(model: nn.Module, is_prefill: bool) -> None:
     for layer in model.layers:  # type: ignore
         if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
             layer.is_prefill = is_prefill
+    if isinstance(model, ModelWithOwnPipeline):
+        model.set_pipeline_prefill(is_prefill)
 
 
 def set_pipeline_queue_sends(model: nn.Module, queue_sends: bool) -> None:

@@ -1378,6 +1378,9 @@ class TextModel(nn.Module):
         self.norm = nn.RMSNorm(args.hidden_size, eps=args.rms_norm_eps)
         self.args = args
         self._stage: PipelineStage | None = None
+        # Set while exo prefills a prompt (Model.set_pipeline_prefill): only the caches are
+        # kept, so the last stage's output isn't gathered.
+        self.is_prefill: bool = False
         # Set by Model.shard for tensor parallelism.
         self.tensor_group: mx.distributed.Group | None = None
 
@@ -1535,9 +1538,15 @@ class TextModel(nn.Module):
             if last_window is not None:
                 caches[-1].window = mx.depends(last_window, sent)
         out = _collapse(streams, pre_mix)
-        if stage is not None and stage.group.size() > 1:
-            # Every rank needs the last stage's output.
+        if stage is not None and stage.group.size() > 1 and not self.is_prefill:
+            # Every rank needs the last stage's output to sample the same token. Wait for it
+            # on the CPU, on its own, as for the send and the receive: a GPU command buffer
+            # that waited for the gather (the slice and the norm below) would wait for the
+            # slowest rank, and the GPU watchdog fails command buffers that wait more than a
+            # few seconds (a later stage still computing a long chunk, or reading host
+            # engram rows from a cold page cache).
             gathered = mx.distributed.all_gather(out, group=stage.group)
+            mx.eval(gathered)
             out = gathered[stage.last_rank * batch : (stage.last_rank + 1) * batch]
         return self.norm(out)
 
@@ -1622,6 +1631,13 @@ class Model(nn.Module):
 
     def make_cache(self) -> list[LayerCache]:
         return self.model.make_cache()
+
+    def set_pipeline_prefill(self, is_prefill: bool) -> None:
+        """While prefilling, a pipeline stage skips gathering the last stage's output: only
+        the caches are kept, and the token sampled from the prompt is thrown away (as with
+        PipelineLastLayer). It would also make each stage wait for the last one to finish a
+        chunk before starting the next."""
+        self.model.is_prefill = is_prefill
 
     def load_engram(self, model_path: Path) -> None:
         """Attach what the engram layers need besides their weights: the hashing (from the
