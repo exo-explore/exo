@@ -1,3 +1,7 @@
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 
-__version__ = version("exo")
+try:
+    __version__ = version("exo")
+except PackageNotFoundError:
+    # Fallback version string when running directly from source tree without installation metadata
+    __version__ = "0.3.70"
