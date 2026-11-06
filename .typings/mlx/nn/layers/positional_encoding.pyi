@@ -26,10 +26,15 @@ class RoPE(Module):
             each dimension in the positional encodings. Default: ``10000``.
         scale (float, optional): The scale used to scale the positions. Default: ``1.0``.
     """
+
+    dims: int
+    traditional: bool
+    base: float
+    scale: float
     def __init__(
         self, dims: int, traditional: bool = ..., base: float = ..., scale: float = ...
     ) -> None: ...
-    def __call__(self, x, offset: int = ...) -> mx.array: ...
+    def __call__(self, x, offset: int | mx.array = ...) -> mx.array: ...
 
 class SinusoidalPositionalEncoding(Module):
     r"""Implements sinusoidal positional encoding.

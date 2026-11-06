@@ -119,6 +119,9 @@ def _run_rank(
     try:
         group = mx.distributed.init(backend="ring", strict=True)
         model: nn.Module = _model(quantized)
+        if mode == "tensor-heads":
+            # The layout tensor parallelism takes over RDMA: attention split by heads.
+            os.environ["MLX_JACCL_COORDINATOR"] = "unused"
         if mode == "pipeline":
             shard = PipelineShardMetadata(
                 model_card=_card(),
@@ -131,6 +134,10 @@ def _run_rank(
             model = _drain(pipeline_auto_parallel(model, group, shard))
         else:
             model = _drain(tensor_auto_parallel(model, group))
+            attention = cast(Model, model).layers[0].self_attn
+            heads = attention.q_proj.weight.shape[0] // _ARGS.head_dim
+            expected = _ARGS.num_attention_heads // (2 if mode == "tensor-heads" else 1)
+            assert heads == expected, (mode, heads)
         result_queue.put((rank, True, _generate(model)))  # pyright: ignore[reportAny]
     except Exception as error:
         result_queue.put((rank, False, repr(error)))  # pyright: ignore[reportAny]
@@ -183,10 +190,22 @@ def test_pipeline_split_matches_a_single_device(
     assert np.array_equal(np.array(sharded), np.array(single))
 
 
-@pytest.mark.parametrize(("quantized", "base_port"), [(False, 29720), (True, 29722)])
-def test_tensor_split_matches_a_single_device(quantized: bool, base_port: int) -> None:
+@pytest.mark.parametrize(
+    ("mode", "quantized", "base_port"),
+    [
+        # over the TCP ring: attention and the dense MLP whole on every rank
+        ("tensor", False, 29720),
+        ("tensor", True, 29722),
+        # over RDMA: attention split by heads
+        ("tensor-heads", False, 29724),
+        ("tensor-heads", True, 29726),
+    ],
+)
+def test_tensor_split_matches_a_single_device(
+    mode: str, quantized: bool, base_port: int
+) -> None:
     single = _generate(_model(quantized))
-    sharded = _sharded_logits("tensor", quantized, base_port)
+    sharded = _sharded_logits(mode, quantized, base_port)
     np.testing.assert_allclose(
         np.array(sharded), np.array(single), rtol=1e-4, atol=1e-4
     )
