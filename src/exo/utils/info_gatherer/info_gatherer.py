@@ -20,6 +20,7 @@ from exo.shared.types.profiling import (
     DiskUsage,
     MemoryUsage,
     NetworkInterfaceInfo,
+    NodeLinkTelemetry,
     ThunderboltBridgeStatus,
 )
 from exo.shared.types.thunderbolt import (
@@ -384,6 +385,10 @@ class NodeBackends(TaggedModel):
         return cls(backends=backends)
 
 
+class NodeLinkTelemetryData(TaggedModel):
+    telemetry: NodeLinkTelemetry
+
+
 GatheredInfo = (
     MacmonMetrics
     | MemoryUsage
@@ -397,6 +402,7 @@ GatheredInfo = (
     | StaticNodeInformation
     | NodeDiskUsage
     | NodeBackends
+    | NodeLinkTelemetryData
 )
 
 

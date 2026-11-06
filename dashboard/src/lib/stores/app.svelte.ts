@@ -82,6 +82,9 @@ export interface TopologyEdge {
   sendBackInterface?: string;
   sourceRdmaIface?: string;
   sinkRdmaIface?: string;
+  latencyMs?: number;
+  bandwidthCapacityMbps?: number;
+  usedBandwidthMbps?: number;
 }
 
 export interface TopologyData {
@@ -295,6 +298,22 @@ interface RawStateResponse {
     string,
     { total: { inBytes: number }; available: { inBytes: number } }
   >;
+  // Link telemetry per node (latency RTT, capacity, real-time throughput)
+  nodeLinkTelemetry?: Record<
+    string,
+    {
+      links?: Array<{
+        source?: string;
+        target?: string;
+        targetIp?: string;
+        interfaceName?: string;
+        latencyMs?: number;
+        bandwidthCapacityMbps?: number;
+        usedBandwidthMbps?: number;
+        lastUpdated?: number;
+      }>;
+    }
+  >;
 }
 
 export interface MessageAttachment {
@@ -436,6 +455,21 @@ interface GranularNodeState {
   nodeMemory?: Record<string, RawMemoryUsage>;
   nodeSystem?: Record<string, RawSystemPerformanceProfile>;
   nodeNetwork?: Record<string, RawNodeNetworkInfo>;
+  nodeLinkTelemetry?: Record<
+    string,
+    {
+      links?: Array<{
+        source?: string;
+        target?: string;
+        targetIp?: string;
+        interfaceName?: string;
+        latencyMs?: number;
+        bandwidthCapacityMbps?: number;
+        usedBandwidthMbps?: number;
+        lastUpdated?: number;
+      }>;
+    }
+  >;
 }
 
 function transformNetworkInterface(iface: RawNetworkInterfaceInfo): {
@@ -556,6 +590,23 @@ function transformTopology(
             sinkRdmaIface = edge.sinkRdmaIface;
           }
 
+          // Lookup link telemetry for this source -> sink pair
+          let latencyMs: number | undefined;
+          let bandwidthCapacityMbps: number | undefined;
+          let usedBandwidthMbps: number | undefined;
+
+          const sourceLinks = granularState.nodeLinkTelemetry?.[source]?.links;
+          const sinkLinks = granularState.nodeLinkTelemetry?.[sink]?.links;
+          const telemetryMatch =
+            sourceLinks?.find((l) => l.target === sink) ||
+            sinkLinks?.find((l) => l.target === source);
+
+          if (telemetryMatch) {
+            latencyMs = telemetryMatch.latencyMs;
+            bandwidthCapacityMbps = telemetryMatch.bandwidthCapacityMbps;
+            usedBandwidthMbps = telemetryMatch.usedBandwidthMbps;
+          }
+
           if (nodes[source] && nodes[sink] && source !== sink) {
             edges.push({
               source,
@@ -563,6 +614,9 @@ function transformTopology(
               sendBackIp,
               sourceRdmaIface,
               sinkRdmaIface,
+              latencyMs,
+              bandwidthCapacityMbps,
+              usedBandwidthMbps,
             });
           }
         }
@@ -1588,6 +1642,7 @@ class AppStore {
           nodeMemory: data.nodeMemory,
           nodeSystem: data.nodeSystem,
           nodeNetwork: data.nodeNetwork,
+          nodeLinkTelemetry: data.nodeLinkTelemetry,
         });
         // Handle topology changes for preview filter
         this.handleTopologyChange();
