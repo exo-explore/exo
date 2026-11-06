@@ -1258,6 +1258,11 @@ class DeepseekV4Cache:
         branch._new_pool_lengths = None
 
         pool = branch.pool
+        if new_lengths is None and branch.pool_lengths is not None:
+            # exo fix: every row emitted the same number of rows (uniform carry), but the
+            # rows' pools differ in length: append each row's new rows after its own, not
+            # after the longest pool, or a shorter row reads its padding as pool rows
+            new_lengths = [new_pooled.shape[1]] * new_pooled.shape[0]
         if new_lengths is not None:
             B = new_pooled.shape[0]
             cur_lengths = _as_lengths_list(
@@ -1346,7 +1351,9 @@ class DeepseekV4Cache:
             and all(o == offsets[0] for o in offsets)
             and all(s == sizes[0] for s in sizes)
         )
-        if not uniform:
+        # exo fix: empty single-row caches merge to a batch cache, which keeps the batch
+        # size in its offsets (a RotatingKVCache without keys counts as one row)
+        if not uniform or (sizes[0] == 0 and len(locals_) > 1):
             if hasattr(locals_[0], "merge"):
                 return locals_[0].merge(locals_)
             return BatchRotatingKVCache.merge(locals_)
