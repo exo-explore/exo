@@ -441,6 +441,8 @@ class BatchGenerator:
     def stats(self) -> Generator[BatchStats, None, None]:
         """The work this generator does while the block runs."""
         ...
+    prefill_step_size: int
+    prefill_batch_size: int
     _unprocessed_sequences: deque[tuple[Any, ...]]
     _prompt_batch: PromptProcessingBatch
     _generation_batch: GenerationBatch
