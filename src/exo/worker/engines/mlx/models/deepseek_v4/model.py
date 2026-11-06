@@ -32,7 +32,10 @@
 #     (_decode_padding_mask), multi-token steps the padded window slots; the overlapping
 #     compressor keeps each row's own last window (_carry_last_window); merge / extend /
 #     extract keep every row's carry and pool length, also for the fixed decode buffer
-#     (_buffer_row_lengths, _set_row_lengths), and a missing overlap gate is -inf.
+#     (_buffer_row_lengths, _set_row_lengths), and a missing overlap gate is -inf;
+#   - the prefill mask of the indexer's top-k rows is built by a scatter into
+#     [B, S, compressed_len] (_topk_selected), not a comparison that materialised
+#     [B, S, index_topk, compressed_len]; same mask, marked in place.
 # Everything else below is the file as it was at that commit. exo loads it for
 # config model_type "deepseek_v4" through exo.worker.engines.mlx.models.get_model_classes.
 # Delete this copy once upstream mlx-lm ships a deepseek_v4 that exo can use.
@@ -2056,6 +2059,22 @@ def _decode_padding_mask(
     return mx.concatenate([window_valid, pool_valid], axis=-1)
 
 
+def _topk_selected(topk: mx.array, compressed_len: int) -> mx.array:
+    """exo fix: bool ``[B, S, compressed_len]``, True at the compressed rows each query's
+    ``topk [B, S, k]`` names. Indices outside ``[0, compressed_len)`` select nothing.
+
+    Built by a scatter into one spare column (where any out-of-range index lands) that is
+    then sliced off. It replaces ``(topk[..., None] == arange(compressed_len)).any(-2)``,
+    which gives the same mask but materialises ``[B, S, k, compressed_len]``: 5 GB per
+    ratio-4 layer for V4 Flash (k = 512) at a 1365-token prefill step and 28.8k tokens."""
+    B, S, _ = topk.shape
+    topk = topk.astype(mx.int32)
+    safe = mx.where((topk >= 0) & (topk < compressed_len), topk, compressed_len)
+    selected = mx.zeros((B, S, compressed_len + 1), dtype=mx.bool_)
+    selected = mx.put_along_axis(selected, safe, mx.array(True), axis=-1)
+    return selected[..., :compressed_len]
+
+
 def _compressed_visibility(
     B: int,
     S: int,
@@ -2429,11 +2448,9 @@ class V4Attention(nn.Module):
                     B, S, offset, compressed_len, self.compress_ratio
                 )
                 if indexer_topk is not None:
-                    k_range = mx.arange(compressed_len, dtype=mx.int32)
-                    selected = (
-                        indexer_topk[..., None] == k_range[None, None, None, :]
-                    ).any(axis=-2)[:, None, :, :]
-                    comp_mask = comp_mask & selected
+                    # exo fix: scatter, not a [B, S, k, compressed_len] comparison
+                    selected = _topk_selected(indexer_topk, compressed_len)
+                    comp_mask = comp_mask & selected[:, None, :, :]
                 mask = mx.concatenate([win_mask, comp_mask], axis=-1)
             else:
                 mask = win_mask
