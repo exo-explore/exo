@@ -111,6 +111,18 @@ EXO_TRACING_ENABLED = os.getenv("EXO_TRACING_ENABLED", "false").lower() == "true
 
 ENABLE_DISAGGREGATION = os.getenv("ENABLE_DISAGGREGATION", "false").lower() == "true"
 
+# How long a remote prefill may take before its first layer of KV arrives: this many
+# seconds, plus EXO_REMOTE_PREFILL_WAIT_SECONDS_PER_1K_TOKENS for every 1000 prompt tokens
+# the prefill node computes. A prefill node that answers only once its prefill is done
+# sends nothing during that time, so the wait grows with the prompt. Once KV flows, the
+# stream fails after 60 s without a byte. On a timeout the caller prefills locally.
+EXO_REMOTE_PREFILL_WAIT_SECONDS = float(
+    os.getenv("EXO_REMOTE_PREFILL_WAIT_SECONDS", "60")
+)
+EXO_REMOTE_PREFILL_WAIT_SECONDS_PER_1K_TOKENS = float(
+    os.getenv("EXO_REMOTE_PREFILL_WAIT_SECONDS_PER_1K_TOKENS", "4")
+)
+
 EXO_MAX_CONCURRENT_REQUESTS = int(os.getenv("EXO_MAX_CONCURRENT_REQUESTS", "8"))
 
 EXO_MAX_INSTANCE_RETRIES = 5
