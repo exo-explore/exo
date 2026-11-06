@@ -21,9 +21,11 @@ from exo.worker.disaggregated.server import PrefillRequest, write_request
 from exo.worker.engines.mlx.disaggregated.adapter import (
     chunk_to_mlx_nhd,
     inject_arrays_cache,
+    inject_deepseek_v4_cache,
     inject_kv_chunk,
     inject_rotating_kv_chunk,
 )
+from exo.worker.engines.mlx.models.deepseek_v4.model import DeepseekV4Cache
 
 _SOCKET_TIMEOUT_SECS = 60
 _RECV_BUFFER_BYTES = 4 * 1024 * 1024
@@ -54,6 +56,7 @@ def remote_prefill_fetch(
     on_header: Callable[[Header], None] | None = None,
     on_kv_chunk: Callable[[KVChunk, int], None] | None = None,
     timeout_secs: float = _SOCKET_TIMEOUT_SECS,
+    on_arrays_state: Callable[[ArraysState, int], None] | None = None,
 ) -> PrefillResult:
     host, port = _parse_endpoint(endpoint)
     logger.info(
@@ -79,6 +82,7 @@ def remote_prefill_fetch(
         result = PrefillResult(header=header)
         kv_by_layer: dict[int, list[KVChunk]] = defaultdict(list)
         chunks_received = 0
+        arrays_received = 0
 
         while True:
             msg = read_message(stream)
@@ -91,6 +95,9 @@ def remote_prefill_fetch(
                     on_kv_chunk(msg, chunks_received)
             elif isinstance(msg, ArraysState):
                 result.arrays[msg.layer_idx] = msg.arrays
+                arrays_received += 1
+                if on_arrays_state is not None:
+                    on_arrays_state(msg, arrays_received)
             elif isinstance(msg, Done):
                 result.total_tokens = msg.total_tokens
                 break
@@ -105,7 +112,7 @@ def remote_prefill_fetch(
 
 def ingest_into_mlx_cache(
     result: PrefillResult,
-    caches: list[KVCache | RotatingKVCache | ArraysCache],
+    caches: list[KVCache | RotatingKVCache | ArraysCache | DeepseekV4Cache],
     *,
     start_pos: int = 0,
 ) -> int:
@@ -143,5 +150,9 @@ def ingest_into_mlx_cache(
 
         if i in result.arrays and isinstance(cache, ArraysCache):
             inject_arrays_cache(cache, result.arrays[i])
+        elif i in result.arrays and isinstance(cache, DeepseekV4Cache):
+            inject_deepseek_v4_cache(cache, result.arrays[i])
+            # DeepSeek V4 layers send no KV chunks, so the offset comes from the cache.
+            final_offset = max(final_offset, cache.offset)
 
     return final_offset
