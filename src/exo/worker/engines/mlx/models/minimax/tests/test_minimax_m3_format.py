@@ -11,7 +11,6 @@ from typing import Any, cast, final
 
 import jinja2
 import pytest
-from mlx_lm.models.minimax_m3_vl import Model as MiniMaxM3ModelClass
 
 from exo.shared.types.chunks import GenerationChunk, TokenChunk, ToolCallChunk
 from exo.shared.types.common import ModelId
@@ -22,6 +21,9 @@ from exo.shared.types.text_generation import (
     TextGenerationTaskParams,
 )
 from exo.shared.types.worker.runner_response import GenerationResponse
+from exo.worker.engines.mlx.models.minimax.minimax_m3 import (
+    Model as MiniMaxM3ModelClass,
+)
 from exo.worker.engines.mlx.models.minimax.parser import parse_tool_calls
 from exo.worker.engines.mlx.types import Model
 from exo.worker.engines.mlx.utils_mlx import apply_chat_template

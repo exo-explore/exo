@@ -249,7 +249,7 @@ def _mlx_lm_model_classes() -> dict[str, type]:
         assert model_type not in classes
         classes[model_type] = registry.get_model_classes({"model_type": model_type})[0]
     # Model types whose family ships a subclass of mlx-lm's model, which exo loads instead
-    for model_type in ("flint", "nemotron_h"):
+    for model_type in ("flint", "nemotron_h", "minimax_m3_vl"):
         shipped = registry.get_model_classes({"model_type": model_type})[0]
         assert issubclass(shipped, classes[model_type])
         classes[model_type] = shipped

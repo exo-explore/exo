@@ -19,7 +19,7 @@ import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
 import pytest
-from mlx_lm.models.minimax_m3_vl import Model, ModelArgs
+from mlx_lm.models.minimax_m3_vl import ModelArgs
 from mlx_lm.models.switch_layers import SwitchLinear
 
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
@@ -31,6 +31,7 @@ from exo.worker.engines.mlx.auto_parallel import (
     pipeline_auto_parallel,
     tensor_auto_parallel,
 )
+from exo.worker.engines.mlx.models.minimax.minimax_m3 import Model
 
 _N_LAYERS = 4
 _TEXT_CONFIG: dict[str, Any] = {
