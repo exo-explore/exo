@@ -10,7 +10,7 @@ from loguru import logger
 
 import exo.master.main as master_main
 from exo.master.main import Master
-from exo.master.tests.test_requests_to_deleted_instances import (
+from exo.master.tests.master_helpers import (
     LOST_NODE,
     NODE,
     instance_on,
@@ -18,7 +18,6 @@ from exo.master.tests.test_requests_to_deleted_instances import (
     master_with,
 )
 from exo.routing.tests.fake_membership import FakeMembership
-from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import DeleteDeployment, ForwarderCommand
 from exo.shared.types.common import CommandId, DeploymentId, SystemId
 from exo.shared.types.events import (
@@ -30,14 +29,6 @@ from exo.shared.types.events import (
 from exo.shared.types.memory import Memory
 from exo.shared.types.profiling import MemoryUsage
 from exo.shared.types.state import State
-from exo.shared.types.tasks import TaskId, TaskStatus
-from exo.shared.types.tasks import TextGeneration as TextGenerationTask
-from exo.shared.types.text_generation import (
-    InputMessage,
-    InputMessageContent,
-    TextGenerationTaskParams,
-)
-from exo.shared.types.worker.instances import InstanceId
 from exo.utils.channels import Receiver, channel
 
 
@@ -68,30 +59,6 @@ def test_only_recent_commands_are_remembered(monkeypatch: pytest.MonkeyPatch) ->
 
     assert len(master._processed_commands) == 2  # pyright: ignore[reportPrivateUsage]
     assert not master._already_processed(oldest)  # pyright: ignore[reportPrivateUsage]
-
-
-def test_a_request_the_previous_master_accepted_is_not_processed_again() -> None:
-    master = fresh_master()
-    command_id = CommandId()
-    task_id = TaskId()
-    master.state = State(
-        tasks={
-            task_id: TextGenerationTask(
-                task_id=task_id,
-                command_id=command_id,
-                instance_id=InstanceId(),
-                task_status=TaskStatus.Running,
-                task_params=TextGenerationTaskParams(
-                    model=ModelId("test-model"),
-                    input=[
-                        InputMessage(role="user", content=InputMessageContent("hi"))
-                    ],
-                ),
-            )
-        }
-    )
-
-    assert master._already_processed(command_id)  # pyright: ignore[reportPrivateUsage]
 
 
 def master_with_room() -> tuple[Master, Receiver[GlobalForwarderEvent]]:

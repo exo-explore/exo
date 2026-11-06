@@ -1,7 +1,6 @@
 import base64
 import contextlib
 import functools
-import hashlib
 import json
 import random
 import shutil
@@ -18,7 +17,7 @@ from uuid import uuid4
 
 import anyio
 import httpx
-from anyio import BrokenResourceError, ClosedResourceError, to_thread
+from anyio import to_thread
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
@@ -28,10 +27,6 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
-from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType]
-from hypercorn.config import Config
-from hypercorn.typing import ASGIFramework
-from hypercorn.utils import LifespanTimeoutError, ShutdownError
 from loguru import logger
 
 from exo.api.adapters.chat_completions import (
@@ -57,6 +52,8 @@ from exo.api.adapters.responses import (
     generate_responses_stream,
     responses_request_to_text_generation,
 )
+from exo.api.closes_streams import ClosesStreams, close_with_exchange
+from exo.api.cluster_routes import ClusterRoutes
 from exo.api.collected_response import CollectedResponse
 from exo.api.command_acceptance import (
     ClusterCommand,
@@ -66,10 +63,15 @@ from exo.api.command_acceptance import (
     command_in_effect,
     undoing_command,
 )
-from exo.api.finished_commands import RESEND_INTERVAL_SECONDS, finishes_to_resend
 from exo.api.keepalive import with_sse_keepalive
+from exo.api.listening_socket import serve_on_socket
 from exo.api.recent_events import RecentEvents
 from exo.api.request_logger import RequestLogger
+from exo.api.serving_client import (
+    ServeStream,
+    ServingClient,
+    UnroutableError,
+)
 from exo.api.types import (
     AddCustomModelParams,
     AdvancedImageParams,
@@ -160,6 +162,7 @@ from exo.routing.event_router import NodeEventReceiver
 from exo.routing.membership import (
     MembershipReader,
     MembershipView,
+    Reachability,
     instance_is_reachable,
     reachable_topology,
 )
@@ -170,8 +173,8 @@ from exo.shared.constants import (
     EXO_CACHE_HOME,
     EXO_EVENT_LOG_DIR,
     EXO_IMAGE_CACHE_DIR,
-    EXO_MAX_CHUNK_SIZE,
     EXO_TRACING_CACHE_DIR,
+    EXO_TRACING_ENABLED,
     dashboard_dir,
 )
 from exo.shared.election import (
@@ -180,7 +183,6 @@ from exo.shared.election import (
     MASTER_SILENCE_TIMEOUT,
     ElectionMessage,
 )
-from exo.shared.logging import InterceptLogger
 from exo.shared.model_readiness import (
     MODEL_READY_WAIT_SECONDS,
     NotReady,
@@ -195,17 +197,20 @@ from exo.shared.models.model_cards import (
 )
 from exo.shared.request_errors import (
     DEVICE_UNREACHABLE,
-    INSTANCE_GONE_BEFORE_START,
     INTERRUPTED,
+    MODEL_NOT_READY,
     GenerationErrorCode,
-    removal_message,
+)
+from exo.shared.serving import (
+    NoInstanceForModelError,
+    candidate_instances,
+    prefill_endpoint_for,
 )
 from exo.shared.topology import Topology
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.chunks import (
     ErrorChunk,
     ImageChunk,
-    InputImageChunk,
     PrefillProgressChunk,
     TokenChunk,
     ToolCallChunk,
@@ -222,15 +227,9 @@ from exo.shared.types.commands import (
     DownloadCommand,
     ForwarderCommand,
     ForwarderDownloadCommand,
-    ImageEdits,
-    ImageGeneration,
     ResumeDeployment,
-    SendInputChunk,
     SetInstanceLink,
     StartDownload,
-    TaskCancelled,
-    TaskFinished,
-    TextGeneration,
 )
 from exo.shared.types.common import (
     CommandId,
@@ -242,15 +241,14 @@ from exo.shared.types.common import (
 )
 from exo.shared.types.deployments import DeploymentSpec
 from exo.shared.types.events import (
-    ChunkGenerated,
-    InstanceDeleted,
     StateSnapshot,
-    TaskCreated,
-    TracesMerged,
+    TraceEventData,
+    TracesCollected,
 )
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.placement import PlacementRequest
 from exo.shared.types.state import State
+from exo.shared.types.tasks import GenerationTask, TaskId
 from exo.shared.types.tasks import (
     ImageEdits as ImageEditsTask,
 )
@@ -261,16 +259,16 @@ from exo.shared.types.tasks import (
     TextGeneration as TextGenerationTask,
 )
 from exo.shared.types.text_generation import (
-    Base64ImageHash,
     TextGenerationTaskParams,
 )
 from exo.shared.types.worker.downloads import DownloadCompleted
 from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
 from exo.shared.types.worker.shards import Sharding, whole_model_shard
 from exo.utils.banner import print_startup_banner
-from exo.utils.channels import Receiver, Sender, channel
+from exo.utils.channels import Receiver, Sender
 from exo.utils.power_sampler import PowerSampler
 from exo.utils.task_group import TaskGroup
+from exo.worker.serving import RefusalError, ServingHost
 
 # Where that log used to be written; removed when the API starts
 _OLD_API_EVENT_LOG_DIR = EXO_EVENT_LOG_DIR / "api"
@@ -278,13 +276,6 @@ ONBOARDING_COMPLETE_FILE = EXO_CACHE_HOME / "onboarding_complete"
 # How often a request waiting for its model to be ready checks on it
 _MODEL_READY_POLL_SECONDS = 0.2
 
-
-# How long to wait for the cluster to accept a chat request before sending it again. A busy
-# node can take a while to see a request accepted (up to 18 s on four nodes streaming 800
-# events/s), and resending sooner only adds traffic. After about a minute the request ends
-# with an error instead of waiting forever.
-REQUEST_RESEND_WAITS = (10.0, 15.0, 30.0)
-_NOT_ACCEPTED_MESSAGE = "The cluster didn't accept the request. Please check that the model is running and try again."
 
 # A request that changes the cluster (launching or stopping a model, say) is answered once this
 # node's state shows the change. Until then its command is sent again this often: it can be
@@ -440,6 +431,10 @@ class API:
         membership: MembershipReader,
         # What discovery hears of devices that can't join: they run another version
         devices_on_other_versions: Callable[[], list[DeviceOnOtherVersion]],
+        # This node's side of serving requests from other API nodes; None without a worker
+        serving_host: ServingHost | None = None,
+        # Which nodes serving treats as reachable; the membership's view if not given
+        serving_reachability: Reachability | None = None,
     ) -> None:
         self.state = State()
         self._recent_events = RecentEvents()
@@ -458,9 +453,25 @@ class API:
         self.paused: bool = False
         self.paused_ev: anyio.Event = anyio.Event()
 
+        # Requests go straight to the nodes serving them (exo.api.serving_client), never
+        # through the master
+        self._serving_host = serving_host
+        self._serving = ServingClient(
+            node_id,
+            api_port=port,
+            host=serving_host,
+            state=lambda: self.state,
+            reachability=serving_reachability or membership,
+        )
+        # Traces of image requests from this node (EXO_TRACING_ENABLED): each rank's, until all
+        # of the request's ranks have sent theirs
+        self._trace_ranks: dict[TaskId, int] = {}
+        self._pending_traces: dict[TaskId, dict[int, list[TraceEventData]]] = {}
+
         self.app = FastAPI()
 
         self.app.add_middleware(RequestLogger)
+        self.app.add_middleware(ClosesStreams)
 
         self._setup_exception_handlers()
         self._setup_cors()
@@ -475,16 +486,6 @@ class API:
             name="dashboard",
         )
 
-        self._text_generation_queues: dict[
-            CommandId,
-            Sender[TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk],
-        ] = {}
-        self._image_generation_queues: dict[
-            CommandId, Sender[ImageChunk | ErrorChunk]
-        ] = {}
-        # Cancelling closes a command's stream just like losing its instance
-        # does, but it was requested, so the stream should not report an error
-        self._cancelled_command_ids: set[CommandId] = set()
         self._image_store = ImageStore(EXO_IMAGE_CACHE_DIR)
         self._tg: TaskGroup = TaskGroup()
 
@@ -493,12 +494,6 @@ class API:
         self._recent_events = RecentEvents()
         self.state = State()
         self._system_id = SystemId()
-        # Nothing routes chunks to the old queues any more, so close them to
-        # end their requests with an error instead of leaving them hanging
-        self._shutdown_queues(self._text_generation_queues)
-        self._shutdown_queues(self._image_generation_queues)
-        self._text_generation_queues = {}
-        self._image_generation_queues = {}
         self.unpause(result_clock)
         self.event_receiver.close()
         self.event_receiver = event_receiver
@@ -506,14 +501,10 @@ class API:
 
     def follow_new_master(self, result_clock: int) -> None:
         """Carry on under a new master that took over the cluster's state: keep ours until
-        its snapshot replaces it, so the running models stay usable, but end the requests
-        in flight, whose output the old master was routing."""
+        its snapshot replaces it, so the running models stay usable. Requests in flight carry
+        on: the master isn't on their way."""
         logger.info("Following a new master")
         self._system_id = SystemId()
-        self._shutdown_queues(self._text_generation_queues)
-        self._shutdown_queues(self._image_generation_queues)
-        self._text_generation_queues = {}
-        self._image_generation_queues = {}
         self.unpause(result_clock)
 
     def unpause(self, result_clock: int):
@@ -553,6 +544,12 @@ class API:
 
     def _setup_routes(self) -> None:
         self.app.get("/node_id")(lambda: self.node_id)
+        # Between nodes only (members of the cluster): serving requests without the master
+        ClusterRoutes(
+            state=lambda: self.state,
+            host=self._serving_host,
+            streaming=self._serving.streams,
+        ).add_to(self.app)
         self.app.post("/instance")(self.create_instance)
         self.app.post("/place_instance")(self.place_instance)
         self.app.get("/instance/placement")(self.get_placement)
@@ -1040,71 +1037,167 @@ class API:
         )
 
     async def cancel_command(self, command_id: CommandId) -> CancelCommandResponse:
-        """Cancel an active command by closing its stream and notifying workers."""
-        sender = self._text_generation_queues.get(
-            command_id
-        ) or self._image_generation_queues.get(command_id)
-        if sender is None:
+        """Cancel a request of this node's: closing its stream cancels it on every rank."""
+        stream = self._serving.stream(command_id)
+        if stream is None:
             raise HTTPException(
                 status_code=404,
                 detail="Command not found or already completed",
             )
-
-        self._cancelled_command_ids.add(command_id)
-        await self._send(TaskCancelled(cancelled_command_id=command_id))
-        sender.close()
-
+        stream.cancel()
         return CancelCommandResponse(
             message="Command cancelled.",
             command_id=command_id,
         )
 
+    # --- requests ---------------------------------------------------------------------------
+
+    async def _start(
+        self,
+        task_params: TextGenerationTaskParams
+        | ImageGenerationTaskParams
+        | ImageEditsTaskParams,
+    ) -> ServeStream:
+        """Send a request to the best instance of its model that takes it, and return its
+        stream once every rank of that instance holds it. 503 if none takes it.
+
+        An instance its output node says isn't ready (this node's view lags: a runner just
+        failed and is being started again) is waited for as a model that isn't ready is
+        (MODEL_READY_WAIT_SECONDS): a refused request ran nowhere, so it is sent again."""
+        deadline = anyio.current_time() + MODEL_READY_WAIT_SECONDS
+        command_id = CommandId()
+        while True:
+            refusal = await self._try_instances(task_params, command_id)
+            if isinstance(refusal, ServeStream):
+                close_with_exchange(refusal)
+                return refusal
+            if refusal.message == DEVICE_UNREACHABLE:
+                raise ModelUnreachableError()
+            if (
+                not refusal.message.startswith(MODEL_NOT_READY)
+                or anyio.current_time() >= deadline
+            ):
+                raise HTTPException(
+                    status_code=503,
+                    detail=refusal.message,
+                    headers={"Retry-After": str(refusal.retry_after_seconds)}
+                    if refusal.retry_after_seconds is not None
+                    else None,
+                )
+            await anyio.sleep(_MODEL_READY_POLL_SECONDS)
+
+    async def _try_instances(
+        self,
+        task_params: TextGenerationTaskParams
+        | ImageGenerationTaskParams
+        | ImageEditsTaskParams,
+        command_id: CommandId,
+    ) -> ServeStream | NoInstanceForModelError:
+        """The stream of the first instance that takes the request, or why none did"""
+        images = not isinstance(task_params, TextGenerationTaskParams)
+        try:
+            candidates = candidate_instances(
+                self.state,
+                ModelId(task_params.model),
+                self._serving.in_flight(),
+                lambda instance: self._can_serve(instance, images=images),
+            )
+        except NoInstanceForModelError as error:
+            return error
+        refusal = NoInstanceForModelError(DEVICE_UNREACHABLE)
+        for instance_id in candidates:
+            instance = self.state.instances.get(instance_id)
+            if instance is None:
+                continue
+            task = self._task_for(task_params, command_id, instance_id)
+            try:
+                stream = await self._serving.open(task, instance)
+            except UnroutableError:
+                continue
+            except RefusalError as error:
+                refusal = NoInstanceForModelError(error.message)
+                continue
+            if images and EXO_TRACING_ENABLED:
+                self._trace_ranks[task.task_id] = len(
+                    instance.shard_assignments.runner_to_shard
+                )
+            return stream
+        return refusal
+
+    def _can_serve(self, instance: Instance, *, images: bool) -> bool:
+        """Whether a request can go to this instance: this node reaches every node of it, in
+        its membership view (as _reachable_model_readiness has it, which checks the model as a
+        whole), and has an address of its output node. An instance on a node it can't reach is
+        never tried: that node may accept the connection and never answer."""
+        return instance_is_reachable(
+            self.membership, instance
+        ) and self._serving.routable(instance, images=images)
+
+    def _task_for(
+        self,
+        task_params: TextGenerationTaskParams
+        | ImageGenerationTaskParams
+        | ImageEditsTaskParams,
+        command_id: CommandId,
+        instance_id: InstanceId,
+    ) -> GenerationTask:
+        match task_params:
+            case TextGenerationTaskParams():
+                return TextGenerationTask(
+                    command_id=command_id,
+                    instance_id=instance_id,
+                    task_params=task_params.model_copy(
+                        update={
+                            "prefill_endpoint": prefill_endpoint_for(
+                                self.state, instance_id, self._serving.in_flight()
+                            )
+                        }
+                    ),
+                )
+            case ImageEditsTaskParams():
+                return ImageEditsTask(
+                    command_id=command_id,
+                    instance_id=instance_id,
+                    task_params=task_params,
+                )
+            case ImageGenerationTaskParams():
+                return ImageGenerationTask(
+                    command_id=command_id,
+                    instance_id=instance_id,
+                    task_params=task_params,
+                )
+
+    async def _start_text(self, task_params: TextGenerationTaskParams) -> ServeStream:
+        return await self._start(task_params.with_card_sampling_defaults())
+
     async def _token_chunk_stream(
-        self, text_generation: TextGeneration
+        self, stream: ServeStream
     ) -> AsyncGenerator[
         TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk, None
     ]:
-        """Yield chunks for a given command until completion.
+        """Yield a request's chunks until it completes.
 
         This is the internal low-level stream used by all API adapters.
         """
-        command_id = text_generation.command_id
-        try:
-            self._text_generation_queues[command_id], recv = channel[
-                TokenChunk | ErrorChunk | ToolCallChunk | PrefillProgressChunk
-            ]()
-
-            with recv as token_chunks:
-                async for chunk in token_chunks:
-                    yield chunk
-                    if isinstance(chunk, PrefillProgressChunk):
-                        continue
-                    if chunk.finish_reason is not None:
-                        break
-                else:
-                    # The stream was closed before the generation finished
-                    if command_id not in self._cancelled_command_ids:
-                        yield ErrorChunk(
-                            model=text_generation.task_params.model,
-                            error_message=self._stream_end_reasons.get(
-                                command_id, INTERRUPTED
-                            ),
-                        )
-
-        except anyio.get_cancelled_exc_class():
-            await self._send_from_cleanup(
-                TaskCancelled(cancelled_command_id=command_id)
-            )
-            raise
-        finally:
-            await self._finish(command_id)
-            if command_id in self._text_generation_queues:
-                del self._text_generation_queues[command_id]
-            self._cancelled_command_ids.discard(command_id)
-            self._stream_end_reasons.pop(command_id, None)
+        async with contextlib.aclosing(stream.chunks()) as chunks:
+            async for chunk in chunks:
+                if isinstance(chunk, ImageChunk):
+                    continue
+                yield chunk
+                if isinstance(chunk, PrefillProgressChunk):
+                    continue
+                if chunk.finish_reason is not None:
+                    break
+            else:
+                # The stream was closed before the generation finished
+                if not stream.cancelled:
+                    yield ErrorChunk(
+                        model=ModelId(stream.task.task_params.model),
+                        error_message=INTERRUPTED,
+                    )
 
     async def _collect_text_generation_with_stats(
-        self, text_generation: TextGeneration
+        self, stream: ServeStream
     ) -> BenchChatCompletionResponse:
         sampler = PowerSampler(get_node_system=lambda: self.state.node_system)
         text_parts: list[str] = []
@@ -1117,7 +1210,7 @@ class API:
         async with anyio.create_task_group() as tg:
             tg.start_soon(sampler.run)
 
-            async for chunk in self._token_chunk_stream(text_generation):
+            async for chunk in self._token_chunk_stream(stream):
                 if isinstance(chunk, PrefillProgressChunk):
                     continue
 
@@ -1156,7 +1249,7 @@ class API:
         assert model is not None
 
         return BenchChatCompletionResponse(
-            id=text_generation.command_id,
+            id=stream.command_id,
             created=int(time.time()),
             model=model,
             choices=[
@@ -1179,48 +1272,6 @@ class API:
             "TODO: we should send a notification to the user to download the model"
         )
 
-    async def _send_text_generation_with_images(
-        self, task_params: TextGenerationTaskParams
-    ) -> TextGeneration:
-        task_params = task_params.with_card_sampling_defaults()
-        images = task_params.images
-        if not images:
-            command = TextGeneration(task_params=task_params)
-            await self._send(command)
-            return command
-
-        hashes = [hashlib.sha256(img.encode("ascii")).hexdigest() for img in images]
-        all_hashes = {idx: Base64ImageHash(h) for idx, h in enumerate(hashes)}
-        task_params = task_params.model_copy(
-            update={"images": [], "image_hashes": all_hashes}
-        )
-        command = TextGeneration(task_params=task_params)
-
-        # Every request carries its own images. Nodes keep them only while they need them,
-        # and a node that restarted, joined later or caught up from a state snapshot never
-        # saw an earlier request's images anyway.
-        all_chunks: list[tuple[int, str]] = []
-        for img_idx, img_data in enumerate(images):
-            for i in range(0, len(img_data), EXO_MAX_CHUNK_SIZE):
-                all_chunks.append((img_idx, img_data[i : i + EXO_MAX_CHUNK_SIZE]))
-
-        for global_idx, (img_idx, chunk_data) in enumerate(all_chunks):
-            await self._send(
-                SendInputChunk(
-                    chunk=InputImageChunk(
-                        model=task_params.model,
-                        command_id=command.command_id,
-                        data=chunk_data,
-                        chunk_index=global_idx,
-                        total_chunks=len(all_chunks),
-                        image_index=img_idx,
-                    )
-                )
-            )
-
-        await self._send(command)
-        return command
-
     async def chat_completions(
         self, payload: ChatCompletionRequest
     ) -> ChatCompletionResponse | StreamingResponse:
@@ -1229,14 +1280,14 @@ class API:
         validated_model = await self._validate_model_has_instance(task_params.model)
         task_params = task_params.model_copy(update={"model": validated_model})
 
-        command = await self._send_text_generation_with_images(task_params)
+        stream = await self._start_text(task_params)
 
         if payload.stream:
             return StreamingResponse(
                 with_sse_keepalive(
                     generate_chat_stream(
-                        command.command_id,
-                        self._token_chunk_stream(command),
+                        stream.command_id,
+                        self._token_chunk_stream(stream),
                     ),
                 ),
                 media_type="text/event-stream",
@@ -1249,8 +1300,8 @@ class API:
         else:
             return CollectedResponse(
                 collect_chat_response(
-                    command.command_id,
-                    self._token_chunk_stream(command),
+                    stream.command_id,
+                    self._token_chunk_stream(stream),
                 ),
                 media_type="application/json",
             )
@@ -1272,14 +1323,14 @@ class API:
             }
         )
 
-        command = await self._send_text_generation_with_images(task_params)
+        stream = await self._start_text(task_params)
 
         if payload.stream:
             return StreamingResponse(
                 with_sse_keepalive(
                     generate_chat_stream(
-                        command.command_id,
-                        self._token_chunk_stream(command),
+                        stream.command_id,
+                        self._token_chunk_stream(stream),
                     ),
                 ),
                 media_type="text/event-stream",
@@ -1290,7 +1341,7 @@ class API:
                 },
             )
 
-        return await self._collect_text_generation_with_stats(command)
+        return await self._collect_text_generation_with_stats(stream)
 
     async def _validate_model_has_instance(self, model_id: ModelId) -> ModelId:
         """Validate a model has an instance that is ready to serve.
@@ -1319,7 +1370,8 @@ class API:
         membership view) can't serve the request, and its deployment isn't placed again while
         the master keeps it for that device. So if the model has nothing else (an instance it
         reaches, or a deployment being placed again), the request ends at once, with
-        ModelUnreachableError, rather than be sent and wait."""
+        ModelUnreachableError, rather than be sent and wait. It is per model: the instance a
+        request goes to is chosen among the reachable ones (_can_serve), on the same view."""
         cut_off = {
             instance_id: instance
             for instance_id, instance in self.state.instances.items()
@@ -1418,17 +1470,14 @@ class API:
             }
         )
 
-        command = ImageGeneration(
-            task_params=payload,
-        )
-        await self._send(command)
+        stream = await self._start(payload)
 
         # Check if streaming is requested
         if payload.stream and payload.partial_images and payload.partial_images > 0:
             return StreamingResponse(
                 self._generate_image_stream(
                     request=request,
-                    command_id=command.command_id,
+                    stream=stream,
                     num_images=payload.n or 1,
                     response_format=payload.response_format or "b64_json",
                 ),
@@ -1438,7 +1487,7 @@ class API:
         # Non-streaming: collect all image chunks
         return await self._collect_image_generation(
             request=request,
-            command_id=command.command_id,
+            stream=stream,
             num_images=payload.n or 1,
             response_format=payload.response_format or "b64_json",
         )
@@ -1446,7 +1495,7 @@ class API:
     async def _generate_image_stream(
         self,
         request: Request,
-        command_id: CommandId,
+        stream: ServeStream,
         num_images: int,
         response_format: str,
     ) -> AsyncGenerator[str, None]:
@@ -1457,112 +1506,94 @@ class API:
         image_metadata: dict[tuple[int, bool], tuple[int | None, int | None]] = {}
         images_complete = 0
 
-        try:
-            self._image_generation_queues[command_id], recv = channel[
-                ImageChunk | ErrorChunk
-            ]()
+        async with contextlib.aclosing(stream.chunks()) as chunks:
+            async for chunk in chunks:
+                if not isinstance(chunk, (ImageChunk, ErrorChunk)):
+                    continue
+                if chunk.finish_reason == "error":
+                    yield _image_stream_error_event(
+                        chunk.error_message or "Internal server error"
+                    )
+                    yield "data: [DONE]\n\n"
+                    return
 
-            with recv as chunks:
-                async for chunk in chunks:
-                    if chunk.finish_reason == "error":
-                        yield _image_stream_error_event(
-                            chunk.error_message or "Internal server error"
-                        )
-                        yield "data: [DONE]\n\n"
-                        return
+                key = (chunk.image_index, chunk.is_partial)
 
-                    key = (chunk.image_index, chunk.is_partial)
+                if key not in image_chunks:
+                    image_chunks[key] = {}
+                    image_total_chunks[key] = chunk.total_chunks
+                    image_metadata[key] = (
+                        chunk.partial_index,
+                        chunk.total_partials,
+                    )
 
-                    if key not in image_chunks:
-                        image_chunks[key] = {}
-                        image_total_chunks[key] = chunk.total_chunks
-                        image_metadata[key] = (
-                            chunk.partial_index,
-                            chunk.total_partials,
-                        )
+                image_chunks[key][chunk.chunk_index] = chunk.data
 
-                    image_chunks[key][chunk.chunk_index] = chunk.data
+                # Check if this image is complete
+                if len(image_chunks[key]) != image_total_chunks[key]:
+                    continue
+                full_data = "".join(
+                    image_chunks[key][i] for i in range(len(image_chunks[key]))
+                )
 
-                    # Check if this image is complete
-                    if len(image_chunks[key]) == image_total_chunks[key]:
-                        full_data = "".join(
-                            image_chunks[key][i] for i in range(len(image_chunks[key]))
-                        )
+                partial_idx, total_partials = image_metadata[key]
 
-                        partial_idx, total_partials = image_metadata[key]
-
-                        if chunk.is_partial:
-                            # Yield partial image event (always use b64_json for partials)
-                            event_data = {
-                                "type": "partial",
-                                "image_index": chunk.image_index,
-                                "partial_index": partial_idx,
-                                "total_partials": total_partials,
-                                "format": str(chunk.format),
-                                "data": {
-                                    "b64_json": full_data
-                                    if response_format == "b64_json"
-                                    else None,
-                                },
-                            }
-                            yield f"data: {json.dumps(event_data)}\n\n"
-                        else:
-                            # Final image
-                            if response_format == "url":
-                                image_bytes = base64.b64decode(full_data)
-                                content_type = _format_to_content_type(chunk.format)
-                                stored = self._image_store.store(
-                                    image_bytes, content_type
-                                )
-                                url = self._build_image_url(request, stored.image_id)
-                                event_data = {
-                                    "type": "final",
-                                    "image_index": chunk.image_index,
-                                    "format": str(chunk.format),
-                                    "data": {"url": url},
-                                }
-                            else:
-                                event_data = {
-                                    "type": "final",
-                                    "image_index": chunk.image_index,
-                                    "format": str(chunk.format),
-                                    "data": {"b64_json": full_data},
-                                }
-                            yield f"data: {json.dumps(event_data)}\n\n"
-                            images_complete += 1
-
-                            if images_complete >= num_images:
-                                yield "data: [DONE]\n\n"
-                                break
-
-                        # Clean up completed image chunks
-                        del image_chunks[key]
-                        del image_total_chunks[key]
-                        del image_metadata[key]
+                if chunk.is_partial:
+                    # Yield partial image event (always use b64_json for partials)
+                    event_data = {
+                        "type": "partial",
+                        "image_index": chunk.image_index,
+                        "partial_index": partial_idx,
+                        "total_partials": total_partials,
+                        "format": str(chunk.format),
+                        "data": {
+                            "b64_json": full_data
+                            if response_format == "b64_json"
+                            else None,
+                        },
+                    }
+                    yield f"data: {json.dumps(event_data)}\n\n"
                 else:
-                    # The stream was closed before every image was generated
-                    if command_id not in self._cancelled_command_ids:
-                        yield _image_stream_error_event(
-                            self._stream_end_reasons.get(command_id, INTERRUPTED)
-                        )
-                        yield "data: [DONE]\n\n"
+                    # Final image
+                    if response_format == "url":
+                        image_bytes = base64.b64decode(full_data)
+                        content_type = _format_to_content_type(chunk.format)
+                        stored = self._image_store.store(image_bytes, content_type)
+                        url = self._build_image_url(request, stored.image_id)
+                        event_data = {
+                            "type": "final",
+                            "image_index": chunk.image_index,
+                            "format": str(chunk.format),
+                            "data": {"url": url},
+                        }
+                    else:
+                        event_data = {
+                            "type": "final",
+                            "image_index": chunk.image_index,
+                            "format": str(chunk.format),
+                            "data": {"b64_json": full_data},
+                        }
+                    yield f"data: {json.dumps(event_data)}\n\n"
+                    images_complete += 1
 
-        except anyio.get_cancelled_exc_class():
-            await self._send_from_cleanup(
-                TaskCancelled(cancelled_command_id=command_id)
-            )
-            raise
-        finally:
-            await self._finish(command_id)
-            if command_id in self._image_generation_queues:
-                del self._image_generation_queues[command_id]
-            self._cancelled_command_ids.discard(command_id)
-            self._stream_end_reasons.pop(command_id, None)
+                    if images_complete >= num_images:
+                        yield "data: [DONE]\n\n"
+                        break
+
+                # Clean up completed image chunks
+                del image_chunks[key]
+                del image_total_chunks[key]
+                del image_metadata[key]
+            else:
+                # The stream was closed before every image was generated
+                if not stream.cancelled:
+                    yield _image_stream_error_event(INTERRUPTED)
+                    yield "data: [DONE]\n\n"
 
     async def _collect_image_chunks(
         self,
         request: Request | None,
-        command_id: CommandId,
+        stream: ServeStream,
         num_images: int,
         response_format: str,
         capture_stats: bool = False,
@@ -1576,100 +1607,80 @@ class API:
         images_complete = 0
         stats: ImageGenerationStats | None = None
 
-        try:
-            self._image_generation_queues[command_id], recv = channel[
-                ImageChunk | ErrorChunk
-            ]()
-
-            while images_complete < num_images:
-                with recv as chunks:
-                    async for chunk in chunks:
-                        if chunk.finish_reason == "error":
-                            raise HTTPException(
-                                status_code=500,
-                                detail=chunk.error_message or "Internal server error",
-                            )
-
-                        if chunk.is_partial:
-                            continue
-
-                        if chunk.image_index not in image_chunks:
-                            image_chunks[chunk.image_index] = {}
-                            image_total_chunks[chunk.image_index] = chunk.total_chunks
-                            image_formats[chunk.image_index] = chunk.format
-
-                        image_chunks[chunk.image_index][chunk.chunk_index] = chunk.data
-
-                        if capture_stats and chunk.stats is not None:
-                            stats = chunk.stats
-
-                        if (
-                            len(image_chunks[chunk.image_index])
-                            == image_total_chunks[chunk.image_index]
-                        ):
-                            images_complete += 1
-
-                        if images_complete >= num_images:
-                            break
-                    else:
-                        # The stream was closed before every image was generated
-                        raise HTTPException(
-                            status_code=500,
-                            detail="Command cancelled."
-                            if command_id in self._cancelled_command_ids
-                            else self._stream_end_reasons.get(command_id, INTERRUPTED),
-                        )
-
-            images: list[ImageData] = []
-            for image_idx in range(num_images):
-                chunks_dict = image_chunks[image_idx]
-                full_data = "".join(chunks_dict[i] for i in range(len(chunks_dict)))
-                if response_format == "url" and request is not None:
-                    image_bytes = base64.b64decode(full_data)
-                    content_type = _format_to_content_type(image_formats.get(image_idx))
-                    stored = self._image_store.store(image_bytes, content_type)
-                    url = self._build_image_url(request, stored.image_id)
-                    images.append(ImageData(b64_json=None, url=url))
-                else:
-                    images.append(
-                        ImageData(
-                            b64_json=full_data
-                            if response_format == "b64_json"
-                            else None,
-                            url=None,
-                        )
+        async with contextlib.aclosing(stream.chunks()) as chunks:
+            async for chunk in chunks:
+                if not isinstance(chunk, (ImageChunk, ErrorChunk)):
+                    continue
+                if chunk.finish_reason == "error":
+                    raise HTTPException(
+                        status_code=500,
+                        detail=chunk.error_message or "Internal server error",
                     )
+                if chunk.is_partial:
+                    continue
 
-            return (images, stats if capture_stats else None)
-        except anyio.get_cancelled_exc_class():
-            await self._send_from_cleanup(
-                TaskCancelled(cancelled_command_id=command_id)
-            )
-            raise
-        finally:
-            await self._finish(command_id)
-            if command_id in self._image_generation_queues:
-                del self._image_generation_queues[command_id]
-            self._cancelled_command_ids.discard(command_id)
-            self._stream_end_reasons.pop(command_id, None)
+                if chunk.image_index not in image_chunks:
+                    image_chunks[chunk.image_index] = {}
+                    image_total_chunks[chunk.image_index] = chunk.total_chunks
+                    image_formats[chunk.image_index] = chunk.format
+
+                image_chunks[chunk.image_index][chunk.chunk_index] = chunk.data
+
+                if capture_stats and chunk.stats is not None:
+                    stats = chunk.stats
+
+                if (
+                    len(image_chunks[chunk.image_index])
+                    == image_total_chunks[chunk.image_index]
+                ):
+                    images_complete += 1
+
+                if images_complete >= num_images:
+                    break
+            else:
+                # The stream was closed before every image was generated
+                raise HTTPException(
+                    status_code=500,
+                    detail="Command cancelled." if stream.cancelled else INTERRUPTED,
+                )
+
+        images: list[ImageData] = []
+        for image_idx in range(num_images):
+            chunks_dict = image_chunks[image_idx]
+            full_data = "".join(chunks_dict[i] for i in range(len(chunks_dict)))
+            if response_format == "url" and request is not None:
+                image_bytes = base64.b64decode(full_data)
+                content_type = _format_to_content_type(image_formats.get(image_idx))
+                stored = self._image_store.store(image_bytes, content_type)
+                url = self._build_image_url(request, stored.image_id)
+                images.append(ImageData(b64_json=None, url=url))
+            else:
+                images.append(
+                    ImageData(
+                        b64_json=full_data if response_format == "b64_json" else None,
+                        url=None,
+                    )
+                )
+
+        return (images, stats if capture_stats else None)
 
     async def _collect_image_generation(
         self,
         request: Request,
-        command_id: CommandId,
+        stream: ServeStream,
         num_images: int,
         response_format: str,
     ) -> ImageGenerationResponse:
         """Collect all image chunks (non-streaming) and return a single response."""
         images, _ = await self._collect_image_chunks(
-            request, command_id, num_images, response_format, capture_stats=False
+            request, stream, num_images, response_format, capture_stats=False
         )
         return ImageGenerationResponse(data=images)
 
     async def _collect_image_generation_with_stats(
         self,
         request: Request | None,
-        command_id: CommandId,
+        stream: ServeStream,
         num_images: int,
         response_format: str,
     ) -> BenchImageGenerationResponse:
@@ -1679,7 +1690,7 @@ class API:
         async with anyio.create_task_group() as tg:
             tg.start_soon(sampler.run)
             images, stats = await self._collect_image_chunks(
-                request, command_id, num_images, response_format, capture_stats=True
+                request, stream, num_images, response_format, capture_stats=True
             )
             tg.cancel_scope.cancel()
         return BenchImageGenerationResponse(
@@ -1700,19 +1711,16 @@ class API:
             }
         )
 
-        command = ImageGeneration(
-            task_params=payload,
-        )
-        await self._send(command)
+        stream = await self._start(payload)
 
         return await self._collect_image_generation_with_stats(
             request=request,
-            command_id=command.command_id,
+            stream=stream,
             num_images=payload.n or 1,
             response_format=payload.response_format or "b64_json",
         )
 
-    async def _send_image_edits_command(
+    async def _start_image_edits(
         self,
         image: UploadFile,
         prompt: str,
@@ -1727,8 +1735,8 @@ class API:
         quality: Literal["high", "medium", "low"],
         output_format: Literal["png", "jpeg", "webp"],
         advanced_params: AdvancedImageParams | None,
-    ) -> ImageEdits:
-        """Prepare and send an image edits command with chunked image upload."""
+    ) -> ServeStream:
+        """Send an image edit, its image inline, to the instance that will run it"""
         validated_model = await self._validate_model_has_instance(model)
         advanced_params = _ensure_seed(advanced_params)
 
@@ -1737,16 +1745,10 @@ class API:
 
         image_strength = 0.7 if input_fidelity == "high" else 0.3
 
-        data_chunks = [
-            image_data[i : i + EXO_MAX_CHUNK_SIZE]
-            for i in range(0, len(image_data), EXO_MAX_CHUNK_SIZE)
-        ]
-        total_chunks = len(data_chunks)
-
-        command = ImageEdits(
-            task_params=ImageEditsTaskParams(
-                image_data="",
-                total_input_chunks=total_chunks,
+        logger.info(f"Sending input image: {len(image_data)} bytes")
+        return await self._start(
+            ImageEditsTaskParams(
+                image_data=image_data,
                 prompt=prompt,
                 model=validated_model,
                 n=n,
@@ -1759,27 +1761,8 @@ class API:
                 quality=quality,
                 output_format=output_format,
                 advanced_params=advanced_params,
-            ),
-        )
-
-        logger.info(
-            f"Sending input image: {len(image_data)} bytes in {total_chunks} chunks"
-        )
-        for chunk_index, chunk_data in enumerate(data_chunks):
-            await self._send(
-                SendInputChunk(
-                    chunk=InputImageChunk(
-                        model=validated_model,
-                        command_id=command.command_id,
-                        data=chunk_data,
-                        chunk_index=chunk_index,
-                        total_chunks=total_chunks,
-                    )
-                )
             )
-
-        await self._send(command)
-        return command
+        )
 
     async def image_edits(
         self,
@@ -1809,7 +1792,7 @@ class API:
                     advanced_params
                 )
 
-        command = await self._send_image_edits_command(
+        serve_stream = await self._start_image_edits(
             image=image,
             prompt=prompt,
             model=ModelId(model),
@@ -1829,7 +1812,7 @@ class API:
             return StreamingResponse(
                 self._generate_image_stream(
                     request=request,
-                    command_id=command.command_id,
+                    stream=serve_stream,
                     num_images=n,
                     response_format=response_format,
                 ),
@@ -1838,7 +1821,7 @@ class API:
 
         return await self._collect_image_generation(
             request=request,
-            command_id=command.command_id,
+            stream=serve_stream,
             num_images=n,
             response_format=response_format,
         )
@@ -1865,7 +1848,7 @@ class API:
                     advanced_params
                 )
 
-        command = await self._send_image_edits_command(
+        serve_stream = await self._start_image_edits(
             image=image,
             prompt=prompt,
             model=ModelId(model),
@@ -1883,7 +1866,7 @@ class API:
 
         return await self._collect_image_generation_with_stats(
             request=request,
-            command_id=command.command_id,
+            stream=serve_stream,
             num_images=n,
             response_format=response_format,
         )
@@ -1898,15 +1881,15 @@ class API:
         )
         task_params = task_params.model_copy(update={"model": validated_model})
 
-        command = await self._send_text_generation_with_images(task_params)
+        stream = await self._start_text(task_params)
 
         if payload.stream:
             return StreamingResponse(
                 with_sse_keepalive(
                     generate_claude_stream(
-                        command.command_id,
+                        stream.command_id,
                         payload.model,
-                        self._token_chunk_stream(command),
+                        self._token_chunk_stream(stream),
                     ),
                 ),
                 media_type="text/event-stream",
@@ -1919,9 +1902,9 @@ class API:
         else:
             return CollectedResponse(
                 collect_claude_response(
-                    command.command_id,
+                    stream.command_id,
                     payload.model,
-                    self._token_chunk_stream(command),
+                    self._token_chunk_stream(stream),
                 ),
                 media_type="application/json",
             )
@@ -1934,15 +1917,15 @@ class API:
         validated_model = await self._validate_model_has_instance(task_params.model)
         task_params = task_params.model_copy(update={"model": validated_model})
 
-        command = await self._send_text_generation_with_images(task_params)
+        stream = await self._start_text(task_params)
 
         if payload.stream:
             return StreamingResponse(
                 with_sse_keepalive(
                     generate_responses_stream(
-                        command.command_id,
+                        stream.command_id,
                         payload.model,
-                        self._token_chunk_stream(command),
+                        self._token_chunk_stream(stream),
                     ),
                 ),
                 media_type="text/event-stream",
@@ -1956,9 +1939,9 @@ class API:
         else:
             return CollectedResponse(
                 collect_responses_response(
-                    command.command_id,
+                    stream.command_id,
                     payload.model,
-                    self._token_chunk_stream(command),
+                    self._token_chunk_stream(stream),
                 ),
                 media_type="application/json",
             )
@@ -1979,13 +1962,13 @@ class API:
         )
         task_params = task_params.model_copy(update={"model": validated_model})
 
-        command = await self._send_text_generation_with_images(task_params)
+        stream = await self._start_text(task_params)
 
         if payload.stream:
             return StreamingResponse(
                 generate_ollama_chat_stream(
-                    command.command_id,
-                    self._token_chunk_stream(command),
+                    stream.command_id,
+                    self._token_chunk_stream(stream),
                 ),
                 media_type="application/x-ndjson",
                 headers={
@@ -1997,8 +1980,8 @@ class API:
         else:
             return CollectedResponse(
                 collect_ollama_chat_response(
-                    command.command_id,
-                    self._token_chunk_stream(command),
+                    stream.command_id,
+                    self._token_chunk_stream(stream),
                 ),
                 media_type="application/json",
             )
@@ -2015,13 +1998,13 @@ class API:
         )
         task_params = task_params.model_copy(update={"model": validated_model})
 
-        command = await self._send_text_generation_with_images(task_params)
+        stream = await self._start_text(task_params)
 
         if payload.stream:
             return StreamingResponse(
                 generate_ollama_generate_stream(
-                    command.command_id,
-                    self._token_chunk_stream(command),
+                    stream.command_id,
+                    self._token_chunk_stream(stream),
                 ),
                 media_type="application/x-ndjson",
                 headers={
@@ -2033,8 +2016,8 @@ class API:
         else:
             return CollectedResponse(
                 collect_ollama_generate_response(
-                    command.command_id,
-                    self._token_chunk_stream(command),
+                    stream.command_id,
+                    self._token_chunk_stream(stream),
                 ),
                 media_type="application/json",
             )
@@ -2257,59 +2240,21 @@ class API:
                     partial(shutil.rmtree, _OLD_API_EVENT_LOG_DIR, ignore_errors=True)
                 )
                 tg.start_soon(self._apply_state)
-                tg.start_soon(self._end_requests_on_unreachable_nodes)
                 tg.start_soon(self._pause_on_new_election)
                 tg.start_soon(self._cleanup_expired_images)
-                tg.start_soon(self._resend_lost_finishes)
+                tg.start_soon(self._serving.run)
                 tg.start_soon(self.run_api, shutdown_ev)
                 tg.start_soon(self._print_banner_once_serving)
                 try:
                     await anyio.sleep_forever()
                 finally:
-                    with anyio.CancelScope(shield=True):
-                        # IMPORTANT: when new queues are added, update this (for proper shutdown semantics)
-                        self._shutdown_queues(self._text_generation_queues)
-                        self._shutdown_queues(self._image_generation_queues)
-
-                        shutdown_ev.set()
+                    shutdown_ev.set()
         finally:
             self.command_sender.close()
             self.event_receiver.close()
 
-    @staticmethod
-    def _shutdown_queues[K, V](queues: dict[K, Sender[V]]):
-        for v in queues.values():
-            v.close()
-
     async def run_api(self, ev: anyio.Event):
-        cfg = Config()
-        # Serve the socket the node bound when it started; hypercorn takes ownership of it
-        cfg.bind = [f"fd://{self._listening_socket.detach()}"]
-        # nb: shared.logging needs updating if any of this changes
-        cfg.accesslog = None
-        cfg.errorlog = "-"
-        cfg.logger_class = InterceptLogger
-
-        # prevents hangs when mid-request and connection refuses to close
-        cfg.graceful_timeout = 2  # seconds
-        cfg.shutdown_timeout = 3  # seconds
-
-        with anyio.CancelScope(shield=True):
-            try:
-                await serve(
-                    cast(ASGIFramework, self.app),
-                    cfg,
-                    shutdown_trigger=ev.wait,
-                )
-                if not ev.is_set():
-                    raise ShutdownError(
-                        "Server exited without shutdown trigger - exiting abnormally"
-                    )
-            except LifespanTimeoutError as e:
-                logger.warning(
-                    "Graceful server shutdown timed out, some connections forcebly closed"
-                )
-                logger.opt(exception=e).debug("")
+        await serve_on_socket(self.app, self._listening_socket, ev)
 
     async def _print_banner_once_serving(self) -> None:
         """Print the startup banner once the API answers requests, so its URL works when shown."""
@@ -2331,52 +2276,11 @@ class API:
                 self._recent_events.append(i_event.event)
                 self.state = apply(self.state, i_event)
                 self._note_applied_cluster_commands()
-                event = i_event.event
-
-                if isinstance(event, TaskCreated) and isinstance(
-                    event.task,
-                    (TextGenerationTask, ImageGenerationTask, ImageEditsTask),
-                ):
-                    self._mark_accepted(event.task.command_id)
-                    if event.task_id not in self.state.tasks:
-                        await self._end_request_not_started(event.task)
-                    elif (
-                        instance := self.state.instances.get(event.task.instance_id)
-                    ) is not None and not instance_is_reachable(
-                        self.membership, instance
-                    ):
-                        # The master chose it on its own view; this node can't reach one of
-                        # its devices, so the output couldn't arrive
-                        self._close_streams_for_instance(
-                            instance.instance_id, DEVICE_UNREACHABLE
-                        )
-                if isinstance(event, ChunkGenerated):
-                    self._mark_accepted(event.command_id)
-                    if queue := self._image_generation_queues.get(
-                        event.command_id, None
-                    ):
-                        # Image runners report failures as ErrorChunks
-                        assert isinstance(event.chunk, (ImageChunk, ErrorChunk))
-                        try:
-                            await queue.send(event.chunk)
-                        except (BrokenResourceError, ClosedResourceError):
-                            self._image_generation_queues.pop(event.command_id, None)
-                    if queue := self._text_generation_queues.get(
-                        event.command_id, None
-                    ):
-                        assert not isinstance(event.chunk, ImageChunk)
-                        try:
-                            await queue.send(event.chunk)
-                        except (BrokenResourceError, ClosedResourceError):
-                            self._text_generation_queues.pop(event.command_id, None)
-                if isinstance(event, InstanceDeleted):
-                    self._close_streams_for_instance(
-                        event.instance_id, removal_message(event.reason)
-                    )
-                if isinstance(event, TracesMerged):
-                    self._save_merged_trace(event)
+                if isinstance(i_event.event, TracesCollected):
+                    self._collect_traces(i_event.event)
 
     def _apply_snapshot(self, snapshot: StateSnapshot) -> None:
+        # Requests in flight carry on: their output doesn't come through here
         lost_changes = self._changes_lost_with_old_master(snapshot)
         self.state = snapshot.state
         self._master_session = snapshot.session
@@ -2392,88 +2296,29 @@ class API:
                 "master is missing from the new master's state; sending it again"
             )
             self._tg.start_soon(self._send_lost_change_again, command)
-        # Output for in-flight requests may have been in the events we skipped
-        in_flight = [
-            *self._text_generation_queues.values(),
-            *self._image_generation_queues.values(),
-        ]
-        if in_flight:
-            logger.warning(
-                f"Ending {len(in_flight)} in-flight request(s) that may have missed "
-                "output while this node caught up from a state snapshot"
-            )
-        for sender in in_flight:
-            sender.close()
-        self._text_generation_queues.clear()
-        self._image_generation_queues.clear()
 
-    async def _end_request_not_started(
-        self, task: TextGenerationTask | ImageGenerationTask | ImageEditsTask
-    ) -> None:
-        """End a request whose task the cluster didn't add, its instance having been deleted
-        just before. The deletion ended the instance's requests before this one had a task,
-        and nothing else would end it."""
-        text_queue = self._text_generation_queues.get(task.command_id)
-        image_queue = self._image_generation_queues.get(task.command_id)
-        if text_queue is None and image_queue is None:
-            return  # sent through another node's API
-        logger.warning(
-            f"Ending request {task.command_id}: it reached instance {task.instance_id} "
-            "after the instance was deleted"
-        )
-        error = ErrorChunk(
-            model=ModelId(task.task_params.model),
-            error_message=INSTANCE_GONE_BEFORE_START,
-        )
-        with contextlib.suppress(BrokenResourceError, ClosedResourceError):
-            if text_queue is not None:
-                await text_queue.send(error)
-            if image_queue is not None:
-                await image_queue.send(error)
-
-    def _close_streams_for_instance(
-        self,
-        instance_id: InstanceId,
-        reason: str = INTERRUPTED,
-    ) -> None:
-        """Close any active generation streams for commands running on the given instance."""
-        for task in self.state.tasks.values():
-            if task.instance_id != instance_id:
-                continue
-            if not isinstance(
-                task, (TextGenerationTask, ImageGenerationTask, ImageEditsTask)
-            ):
-                continue
-            if sender := self._text_generation_queues.pop(task.command_id, None):
-                self._stream_end_reasons[task.command_id] = reason
-                sender.close()
-            if sender := self._image_generation_queues.pop(task.command_id, None):
-                self._stream_end_reasons[task.command_id] = reason
-                sender.close()
-
-    async def _end_requests_on_unreachable_nodes(self) -> None:
-        """End the requests running on an instance with a device this node can no longer
-        reach (it left Alive in this node's membership view), at once: their output can't
-        arrive, and the device may be back within the grace period or be removed only after
-        it. New requests skip such instances (see _reachable_model_readiness)."""
-        with self.membership.watch() as unreachable_nodes:
-            async for node_id in unreachable_nodes:
-                for instance_id, instance in self.state.instances.items():
-                    if node_id in instance.shard_assignments.node_to_runner:
-                        self._close_streams_for_instance(
-                            instance_id, DEVICE_UNREACHABLE
-                        )
-
-    def _save_merged_trace(self, event: TracesMerged) -> None:
+    def _collect_traces(self, event: TracesCollected) -> None:
+        """Keep each rank's traces of an image request from this node, and save them merged
+        once every rank has sent its own"""
+        ranks = self._trace_ranks.get(event.task_id)
+        if ranks is None:
+            return  # another node's request
+        collected = self._pending_traces.setdefault(event.task_id, {})
+        collected[event.rank] = event.traces
+        if len(collected) < ranks:
+            return
+        del self._pending_traces[event.task_id]
+        del self._trace_ranks[event.task_id]
         traces = [
             TraceEvent(
-                name=t.name,
-                start_us=t.start_us,
-                duration_us=t.duration_us,
-                rank=t.rank,
-                category=t.category,
+                name=trace.name,
+                start_us=trace.start_us,
+                duration_us=trace.duration_us,
+                rank=trace.rank,
+                category=trace.category,
             )
-            for t in event.traces
+            for rank_traces in collected.values()
+            for trace in rank_traces
         ]
         output_path = EXO_TRACING_CACHE_DIR / f"trace_{event.task_id}.json"
         export_trace(traces, output_path)
@@ -2496,22 +2341,6 @@ class API:
             removed = self._image_store.cleanup_expired()
             if removed > 0:
                 logger.debug(f"Cleaned up {removed} expired images")
-
-    @functools.cached_property
-    def _stream_end_reasons(self) -> dict[CommandId, str]:
-        """Why the API closed a request's stream before its generation finished, when it
-        knows: the message the request ends with."""
-        return {}
-
-    @functools.cached_property
-    def _awaiting_acceptance(self) -> dict[CommandId, anyio.Event]:
-        """Generation requests (chats and images) sent but not yet seen as a task."""
-        return {}
-
-    @functools.cached_property
-    def _request_inputs(self) -> dict[CommandId, list[SendInputChunk]]:
-        """The image chunks sent ahead of generation requests not yet seen as a task."""
-        return {}
 
     @functools.cached_property
     def _pending_cluster_commands(self) -> dict[CommandId, PendingClusterCommand]:
@@ -2539,106 +2368,12 @@ class API:
         apply. Kept until then, or until a request about the same deployment or link."""
         return {}
 
-    @functools.cached_property
-    def _finished_at(self) -> dict[CommandId, float]:
-        """When this API finished each request whose task may still need a TaskFinished. Kept
-        across resets: a change of master is when finishes get lost."""
-        return {}
-
-    async def _finish(self, command_id: CommandId) -> None:
-        self._finished_at[command_id] = time.monotonic()
-        await self._send_from_cleanup(TaskFinished(finished_command_id=command_id))
-
-    async def _resend_lost_finishes(self) -> None:
-        while True:
-            await anyio.sleep(RESEND_INTERVAL_SECONDS)
-            resend, forget = finishes_to_resend(
-                self._finished_at, self.state, time.monotonic()
-            )
-            for command_id in forget:
-                del self._finished_at[command_id]
-            for command_id in resend:
-                logger.info(
-                    f"Resending the finish of {command_id}: its task is still in state"
-                )
-                await self._send(TaskFinished(finished_command_id=command_id))
-
     async def _send(self, command: Command):
-        await self._forward(command)
-        match command:
-            case SendInputChunk(chunk=chunk):
-                self._request_inputs.setdefault(chunk.command_id, []).append(command)
-            case TextGeneration() | ImageGeneration() | ImageEdits() if (
-                command.command_id not in self._awaiting_acceptance
-                and self._tg.is_running()
-            ):
-                self._awaiting_acceptance[command.command_id] = anyio.Event()
-                self._tg.start_soon(self._resend_until_accepted, command)
-            case _:
-                pass
-
-    async def _forward(self, command: Command) -> None:
         while self.paused:
             await self.paused_ev.wait()
         await self.command_sender.send(
             ForwarderCommand(origin=self._system_id, command=command)
         )
-
-    async def _send_from_cleanup(self, command: Command) -> None:
-        # Stream cleanup runs after a client disconnect has cancelled the
-        # stream, so an unshielded send would be cancelled before it reaches
-        # the master. Skip _send's election pause too: a shielded wait on it
-        # could block shutdown forever.
-        with anyio.CancelScope(shield=True):
-            await self.command_sender.send(
-                ForwarderCommand(origin=self._system_id, command=command)
-            )
-
-    async def _resend_until_accepted(
-        self, command: TextGeneration | ImageGeneration | ImageEdits
-    ) -> None:
-        """Send a generation request (a chat or an image) again until the cluster has
-        accepted it.
-
-        A command can be lost on its way to the master: dropped under load, or sent just as
-        the master changed. The request would then wait forever for output that never comes.
-        The master ignores a command it has already processed, so sending it again can't
-        start the request twice.
-        """
-        command_id = command.command_id
-        accepted = self._awaiting_acceptance[command_id]
-        try:
-            for wait in REQUEST_RESEND_WAITS:
-                with anyio.move_on_after(wait):
-                    await accepted.wait()
-                    return
-                if (
-                    command_id not in self._text_generation_queues
-                    and command_id not in self._image_generation_queues
-                ):
-                    return  # the request has already ended
-                logger.warning(
-                    f"Request {command_id} not accepted after {wait:.0f}s; sending it again"
-                )
-                for chunk in self._request_inputs.get(command_id, []):
-                    await self._forward(chunk)
-                await self._forward(command)
-            not_accepted = ErrorChunk(
-                model=ModelId(command.task_params.model),
-                error_message=_NOT_ACCEPTED_MESSAGE,
-            )
-            text_queue = self._text_generation_queues.get(command_id)
-            image_queue = self._image_generation_queues.get(command_id)
-            if text_queue is not None or image_queue is not None:
-                logger.warning(f"Giving up on request {command_id}: never accepted")
-            with contextlib.suppress(BrokenResourceError, ClosedResourceError):
-                if text_queue is not None:
-                    await text_queue.send(not_accepted)
-                if image_queue is not None:
-                    await image_queue.send(not_accepted)
-        finally:
-            self._awaiting_acceptance.pop(command_id, None)
-            self._request_inputs.pop(command_id, None)
 
     async def _apply_cluster_command(self, command: ClusterCommand) -> None:
         """Send a command that changes the cluster, and return once this node's state shows
@@ -2693,7 +2428,7 @@ class API:
         try:
             with anyio.move_on_after(CLUSTER_COMMAND_TIMEOUT):
                 while not pending.applied:
-                    await self._forward(command)
+                    await self._send(command)
                     with anyio.move_on_after(CLUSTER_COMMAND_RESEND_INTERVAL):
                         await pending.wake.wait()
                     pending.wake = anyio.Event()
@@ -2805,10 +2540,6 @@ class API:
             "trying again at the next change to the state"
         )
         withdrawn.undo_finished = None
-
-    def _mark_accepted(self, command_id: CommandId) -> None:
-        if (accepted := self._awaiting_acceptance.get(command_id)) is not None:
-            accepted.set()
 
     async def _send_download(self, command: DownloadCommand):
         await self.download_command_sender.send(

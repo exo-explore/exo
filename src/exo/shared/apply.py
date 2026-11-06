@@ -12,7 +12,6 @@ from exo.shared.types.deployments import (
     Deployment,
 )
 from exo.shared.types.events import (
-    ChunkGenerated,
     CustomModelCardAdded,
     CustomModelCardDeleted,
     DeploymentCreated,
@@ -22,7 +21,6 @@ from exo.shared.types.events import (
     DeploymentStatus,
     Event,
     IndexedEvent,
-    InputChunkReceived,
     InstanceCreated,
     InstanceDeleted,
     InstanceLinkCreated,
@@ -41,7 +39,6 @@ from exo.shared.types.events import (
     TopologyEdgeCreated,
     TopologyEdgeDeleted,
     TracesCollected,
-    TracesMerged,
 )
 from exo.shared.types.instance_link import InstanceLink, InstanceLinkId
 from exo.shared.types.profiling import (
@@ -53,12 +50,9 @@ from exo.shared.types.profiling import (
 )
 from exo.shared.types.state import State
 from exo.shared.types.tasks import (
-    ImageEdits,
-    ImageGeneration,
     Task,
     TaskId,
     TaskStatus,
-    TextGeneration,
 )
 from exo.shared.types.topology import Connection, RDMAConnection
 from exo.shared.types.worker.downloads import DownloadProgress, is_not_on_disk
@@ -101,12 +95,7 @@ def event_apply(event: Event, state: State) -> State:
     """Apply an event to state."""
     match event:
         case (
-            TestEvent()
-            | ChunkGenerated()
-            | TaskAcknowledged()
-            | InputChunkReceived()
-            | TracesCollected()
-            | TracesMerged()
+            TestEvent() | TaskAcknowledged() | TracesCollected()
         ):  # Pass-through events that don't modify state
             return state
         case CustomModelCardAdded():
@@ -234,23 +223,16 @@ def apply_node_download_progress(event: NodeDownloadProgress, state: State) -> S
 
 def apply_task_created(event: TaskCreated, state: State) -> State:
     if event.task.instance_id not in state.instances:
-        # A task for an instance deleted just before. A request: nothing would ever run it,
-        # the deletion has already ended the instance's requests, and the API ends this one
-        # when it sees its task wasn't added. A worker's own task (cancelling a request,
-        # stopping a runner): the deletion that removes an instance's tasks has already been
-        # applied, so only the worker's report that it finished would remove it, and a worker
-        # that stops first (its node quitting) never sends that. The worker carries the task
-        # out either way. Every normal stop leaves one of these (the Shutdown the worker plans
-        # because the instance left the state), so only a request is worth a warning: it means
-        # a request raced the deletion of its instance.
-        message = (
+        # A worker's own task (stopping a runner, say) for an instance deleted just before: the
+        # deletion that removes an instance's tasks has already been applied, so only the
+        # worker's report that it finished would remove it, and a worker that stops first (its
+        # node quitting) never sends that. The worker carries the task out either way. Every
+        # normal stop leaves one of these (the Shutdown the worker plans because the instance
+        # left the state).
+        logger.debug(
             f"Not adding task {event.task_id}: its instance "
             f"{event.task.instance_id} no longer exists"
         )
-        if _is_generation(event.task):
-            logger.warning(message)
-        else:
-            logger.debug(message)
         return state
     new_tasks: Mapping[TaskId, Task] = {**state.tasks, event.task_id: event.task}
     return state.model_copy(update={"tasks": new_tasks})
@@ -263,20 +245,16 @@ def apply_task_deleted(event: TaskDeleted, state: State) -> State:
     return state.model_copy(update={"tasks": new_tasks})
 
 
-def _is_generation(task: Task) -> bool:
-    return isinstance(task, (TextGeneration, ImageGeneration, ImageEdits))
-
-
 def apply_task_status_updated(event: TaskStatusUpdated, state: State) -> State:
     if event.task_id not in state.tasks:
         # maybe should raise
         return state
 
     task = state.tasks[event.task_id]
-    if event.task_status == TaskStatus.Complete and not _is_generation(task):
-        # A worker's own bookkeeping task (creating, loading or warming up a runner,
-        # cancelling a request...) is of no further use once it completes, and nothing
-        # else removes it. Generation tasks stay until their request is finished.
+    if event.task_status == TaskStatus.Complete:
+        # A worker's own bookkeeping task (creating, loading or warming up a runner...) is
+        # of no further use once it completes, and nothing else removes it. (Requests are
+        # never in the state: exo.worker.serving.)
         new_tasks: Mapping[TaskId, Task] = {
             tid: t for tid, t in state.tasks.items() if tid != event.task_id
         }
@@ -432,11 +410,11 @@ def apply_instance_deleted(event: InstanceDeleted, state: State) -> State:
                 update={"prefill_instances": prefill, "decode_instances": decode}
             )
     # The instance's bookkeeping tasks (e.g. a runner that failed to load) are of no use once
-    # it's gone. Its generation tasks stay: the API still looks them up to end their requests.
+    # it's gone
     new_tasks: Mapping[TaskId, Task] = {
         tid: task
         for tid, task in state.tasks.items()
-        if task.instance_id != event.instance_id or _is_generation(task)
+        if task.instance_id != event.instance_id
     }
     state = state.model_copy(
         update={

@@ -1,5 +1,16 @@
 import errno
 import socket
+from typing import cast
+
+import anyio
+from hypercorn.asyncio import serve  # pyright: ignore[reportUnknownVariableType]
+from hypercorn.config import Config
+from hypercorn.typing import ASGIFramework
+from hypercorn.utils import LifespanTimeoutError, ShutdownError
+from loguru import logger
+from starlette.types import ASGIApp
+
+from exo.shared.logging import InterceptLogger
 
 API_BIND_HOST = "0.0.0.0"
 
@@ -32,3 +43,33 @@ def listen_on_api_port(port: int) -> socket.socket:
         raise
     listening_socket.listen()
     return listening_socket
+
+
+async def serve_on_socket(
+    app: ASGIApp, listening_socket: socket.socket, shutdown: anyio.Event
+) -> None:
+    """Serve the app on the socket the node bound when it started, until `shutdown` is set.
+    Hypercorn takes ownership of the socket."""
+    config = Config()
+    config.bind = [f"fd://{listening_socket.detach()}"]
+    # nb: shared.logging needs updating if any of this changes
+    config.accesslog = None
+    config.errorlog = "-"
+    config.logger_class = InterceptLogger
+    # prevents hangs when mid-request and connection refuses to close
+    config.graceful_timeout = 2  # seconds
+    config.shutdown_timeout = 3  # seconds
+    with anyio.CancelScope(shield=True):
+        try:
+            await serve(
+                cast(ASGIFramework, app), config, shutdown_trigger=shutdown.wait
+            )
+            if not shutdown.is_set():
+                raise ShutdownError(
+                    "Server exited without shutdown trigger - exiting abnormally"
+                )
+        except LifespanTimeoutError as error:
+            logger.warning(
+                "Graceful server shutdown timed out, some connections forcebly closed"
+            )
+            logger.opt(exception=error).debug("")

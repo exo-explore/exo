@@ -7,7 +7,7 @@ from exo.api.command_acceptance import (
     command_in_effect,
     undoing_command,
 )
-from exo.master.tests.test_requests_to_deleted_instances import deployment_of
+from exo.master.tests.master_helpers import deployment_of
 from exo.shared.models.model_cards import ModelCard, ModelId, ModelTask
 from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (

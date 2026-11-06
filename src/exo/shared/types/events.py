@@ -5,7 +5,7 @@ from pydantic import Field
 
 from exo.shared.models.model_cards import ModelCard
 from exo.shared.topology import Connection
-from exo.shared.types.chunks import Chunk, InputImageChunk
+from exo.shared.types.chunks import Chunk
 from exo.shared.types.common import (
     CommandId,
     DeploymentId,
@@ -162,13 +162,11 @@ class NodeDownloadProgress(BaseEvent):
 
 
 class ChunkGenerated(BaseEvent):
+    """A request's output, from a runner to its supervisor, which streams it to the request's
+    API node (exo.worker.serving). Never in the cluster's log: not an Event."""
+
     command_id: CommandId
     chunk: Chunk
-
-
-class InputChunkReceived(BaseEvent):
-    command_id: CommandId
-    chunk: InputImageChunk
 
 
 class TopologyEdgeCreated(BaseEvent):
@@ -203,12 +201,6 @@ class TracesCollected(BaseEvent):
     traces: list[TraceEventData]
 
 
-@final
-class TracesMerged(BaseEvent):
-    task_id: TaskId
-    traces: list[TraceEventData]
-
-
 class InstanceLinkCreated(BaseEvent):
     link: InstanceLink
 
@@ -217,8 +209,7 @@ class InstanceLinkDeleted(BaseEvent):
     link_id: InstanceLinkId
 
 
-# Validated by tag (see ByTag): a follower parses every event of the cluster, one per token
-# of every reply
+# Validated by tag (see ByTag): a follower parses every event of the cluster
 Event = Annotated[
     TestEvent
     | TaskCreated
@@ -238,18 +229,19 @@ Event = Annotated[
     | NodeLeft
     | NodeGatheredInfo
     | NodeDownloadProgress
-    | ChunkGenerated
-    | InputChunkReceived
     | TopologyEdgeCreated
     | TopologyEdgeDeleted
     | TracesCollected
-    | TracesMerged
     | CustomModelCardAdded
     | CustomModelCardDeleted
     | InstanceLinkCreated
     | InstanceLinkDeleted,
     ByTag(),
 ]
+
+
+# What a runner sends its supervisor: events, and the chunks of the requests it serves
+RunnerEvent = Event | ChunkGenerated
 
 
 class IndexedEvent(FrozenModel):

@@ -21,7 +21,7 @@ from exo.api.types import (
     DeploymentConstraints,
     PlaceInstanceParams,
 )
-from exo.master.tests.test_requests_to_deleted_instances import deployment_of
+from exo.master.tests.master_helpers import deployment_of
 from exo.routing.tests.fake_membership import FakeMembership
 from exo.shared.model_readiness import deployment_readiness
 from exo.shared.types.commands import (

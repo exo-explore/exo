@@ -5,13 +5,12 @@ import anyio
 from exo.master.main import Master
 from exo.routing.router import get_node_zid
 from exo.routing.tests.fake_membership import FakeMembership
-from exo.shared.models.model_cards import ModelId
 from exo.shared.types.commands import (
     ForwarderCommand,
     ForwarderDownloadCommand,
     RequestEventLog,
 )
-from exo.shared.types.common import CommandId, SessionId, SystemId
+from exo.shared.types.common import SessionId, SystemId
 from exo.shared.types.events import (
     GlobalForwarderEvent,
     LocalForwarderEvent,
@@ -19,42 +18,23 @@ from exo.shared.types.events import (
     TestEvent,
 )
 from exo.shared.types.state import State
-from exo.shared.types.tasks import TaskId, TaskStatus
-from exo.shared.types.tasks import TextGeneration as TextGenerationTask
-from exo.shared.types.text_generation import (
-    InputMessage,
-    InputMessageContent,
-    TextGenerationTaskParams,
-)
-from exo.shared.types.worker.instances import InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerReady
 from exo.utils.channels import channel
 
 CARRIED_OVER_IDX = 40
 
 
-def carried_over_state() -> tuple[State, RunnerId, TaskId]:
-    runner_id, task_id = RunnerId(), TaskId()
-    task = TextGenerationTask(
-        task_id=task_id,
-        command_id=CommandId(),
-        instance_id=InstanceId(),
-        task_status=TaskStatus.Running,
-        task_params=TextGenerationTaskParams(
-            model=ModelId("test-model"),
-            input=[InputMessage(role="user", content=InputMessageContent("hi"))],
-        ),
-    )
+def carried_over_state() -> tuple[State, RunnerId]:
+    runner_id = RunnerId()
     state = State(
         last_event_applied_idx=CARRIED_OVER_IDX,
         runners={runner_id: RunnerReady()},
-        tasks={task_id: task},
     )
-    return state, runner_id, task_id
+    return state, runner_id
 
 
 async def test_a_new_master_carries_on_from_its_nodes_state() -> None:
-    state, runner_id, task_id = carried_over_state()
+    state, runner_id = carried_over_state()
     node_id = get_node_zid()
     session = SessionId(master_node_id=node_id, election_clock=7)
     global_send, global_recv = channel[GlobalForwarderEvent]()
@@ -74,9 +54,9 @@ async def test_a_new_master_carries_on_from_its_nodes_state() -> None:
         initial_state=state,
     )
 
-    # The runners carry on; the requests ended with the old master
+    # The runners carry on (and requests, which never were in the state)
     assert runner_id in master.state.runners
-    assert task_id not in master.state.tasks
+
     async with anyio.create_task_group() as tg:
         tg.start_soon(master.run)
         # New events are numbered on from the state it carried over
@@ -101,7 +81,6 @@ async def test_a_new_master_carries_on_from_its_nodes_state() -> None:
         assert snapshot.requester == requester
         assert snapshot.state.last_event_applied_idx == CARRIED_OVER_IDX + 1
         assert runner_id in snapshot.state.runners
-        assert task_id not in snapshot.state.tasks
 
         await master.shutdown()
 

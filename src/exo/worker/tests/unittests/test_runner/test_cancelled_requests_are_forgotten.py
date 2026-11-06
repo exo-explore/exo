@@ -13,7 +13,7 @@ from anyio.abc import TaskStatus as Started
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.chunks import Chunk
 from exo.shared.types.common import CommandId, NodeId
-from exo.shared.types.events import Event, TaskStatusUpdated
+from exo.shared.types.events import Event, RunnerEvent, TaskStatusUpdated
 from exo.shared.types.tasks import (
     GenerationTask,
     LoadModel,
@@ -149,7 +149,7 @@ def test_a_runner_reports_a_request_the_ranks_cancelled() -> None:
         Runner(
             bound(),
             CancellingBuilder(),
-            cast(MpSender[Event], cast(object, events)),
+            cast(MpSender[RunnerEvent], cast(object, events)),
             task_receiver,
         ).main()
 
@@ -185,7 +185,7 @@ async def test_a_supervisor_forgets_a_request_its_runner_cancelled() -> None:
     event_sender, _ = channel[Event]()
     task_sender, _ = mp_channel[Task]()
     cancel_sender, _ = mp_channel[TaskId]()
-    runner_events, event_receiver = mp_channel[Event | RunnerTerminationError]()
+    runner_events, event_receiver = mp_channel[RunnerEvent | RunnerTerminationError]()
     process = cast(AsyncProcess, cast(object, _SilentProcess()))
     supervisor = RunnerSupervisor(
         shard_metadata=bound().bound_shard,

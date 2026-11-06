@@ -19,7 +19,7 @@ from loguru import logger
 import exo.worker.runner.supervisor as supervisor_module
 from exo.shared.models.model_cards import ModelId
 from exo.shared.types.common import NodeId
-from exo.shared.types.events import Event, RunnerStatusUpdated
+from exo.shared.types.events import Event, RunnerEvent, RunnerStatusUpdated
 from exo.shared.types.tasks import ConnectToGroup, Task, TaskId
 from exo.shared.types.worker.instances import BoundInstance, InstanceId
 from exo.shared.types.worker.runner_response import ModelLoadingResponse
@@ -68,7 +68,7 @@ def _runner_whose_connect_holds_the_gil(
     Runner(
         bound_instance,
         _ConnectHoldsTheGil(),
-        cast(MpSender[Event], event_sender),
+        cast(MpSender[RunnerEvent], event_sender),
         task_receiver,
     ).main()
 

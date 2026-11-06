@@ -605,7 +605,6 @@
           "presence_penalty": null,
           "frequency_penalty": null,
           "images": [],
-          "image_hashes": {},
           "prefill_endpoint": null
         },
         "errorType": null,

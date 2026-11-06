@@ -7,7 +7,6 @@ import json
 from collections.abc import AsyncGenerator
 from typing import cast
 
-import anyio
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -18,27 +17,19 @@ from exo.api.adapters.chat_completions import (
 from exo.api.adapters.claude import generate_claude_stream
 from exo.api.adapters.responses import generate_responses_stream
 from exo.api.collected_response import CollectedResponse
-from exo.api.main import API
 from exo.shared.request_errors import generation_error_code, removal_message
+from exo.shared.serving import why_runner_stopped
+from exo.shared.topology import Topology
 from exo.shared.types.chunks import (
     ErrorChunk,
     PrefillProgressChunk,
     TokenChunk,
     ToolCallChunk,
 )
-from exo.shared.types.commands import ForwarderCommand
-from exo.shared.types.commands import TextGeneration as TextGenerationCommand
-from exo.shared.types.common import CommandId, ModelId, NodeId, SystemId
+from exo.shared.types.common import CommandId, ModelId, NodeId
 from exo.shared.types.state import State
-from exo.shared.types.tasks import TaskStatus, TextGeneration
-from exo.shared.types.text_generation import (
-    InputMessage,
-    InputMessageContent,
-    TextGenerationTaskParams,
-)
 from exo.shared.types.worker.instances import InstanceId, InstanceRemovalReason
 from exo.shared.types.worker.runners import RunnerId
-from exo.utils.channels import channel
 from exo.worker.tests.unittests.conftest import (
     get_mlx_ring_instance,
     get_pipeline_shard_metadata,
@@ -109,11 +100,30 @@ def test_an_error_without_a_code_keeps_the_status_as_code() -> None:
     assert error["code"] == 500
 
 
-async def _ending_of_request_when_instance_deleted(
-    reason: InstanceRemovalReason,
-) -> ErrorChunk:
-    """Delete the instance serving a request, as the API does when it applies the deletion,
-    and return the chunk the request ends with."""
+def _ending_of_request_when_instance_deleted(reason: InstanceRemovalReason) -> str:
+    """What a request is told when its instance is removed for `reason`: the output device
+    ends it with this as its worker applies the deletion (ServingHost.end_instance, tested in
+    exo.worker.tests.unittests.test_serving)"""
+    return removal_message(reason)
+
+
+def test_a_request_whose_device_left_says_so() -> None:
+    ending = _ending_of_request_when_instance_deleted("NodeLost")
+    assert generation_error_code(ending) == "device_left"
+    assert ending == (
+        "A device serving this model left the cluster before the reply finished."
+    )
+
+
+def test_a_request_whose_model_was_stopped_says_so() -> None:
+    ending = _ending_of_request_when_instance_deleted("UserStopped")
+    assert generation_error_code(ending) == "model_stopped"
+    assert ending == "The model was stopped before the reply finished."
+
+
+def test_a_request_whose_runner_stopped_because_another_failed_says_so() -> None:
+    """A runner is stopped while its instance is still in the state only because a runner it
+    works with is going: not something the user did"""
     node, runner = NodeId("node"), RunnerId()
     instance = get_mlx_ring_instance(
         instance_id=InstanceId(),
@@ -121,57 +131,20 @@ async def _ending_of_request_when_instance_deleted(
         node_to_runner={node: runner},
         runner_to_shard={runner: get_pipeline_shard_metadata(MODEL, device_rank=0)},
     )
-    command_id = CommandId()
-    task = TextGeneration(
-        instance_id=instance.instance_id,
-        command_id=command_id,
-        task_status=TaskStatus.Running,
-        task_params=TextGenerationTaskParams(
-            model=MODEL,
-            input=[InputMessage(role="user", content=InputMessageContent("hi"))],
-        ),
+    topology = Topology()
+    topology.add_node(node)
+    still_there = State(topology=topology, instances={instance.instance_id: instance})
+    ending = why_runner_stopped(still_there, instance, None)
+    assert ending == "A device running this model failed; the reply was cut short."
+    assert generation_error_code(ending) == "model_failed"
+    # Its instance removed: the removal's reason, as for the instance's other requests
+    gone = State(topology=topology)
+    assert why_runner_stopped(gone, instance, "UserStopped") == (
+        "The model was stopped before the reply finished."
     )
-    api = object.__new__(API)
-    api.state = State(tasks={task.task_id: task})
-    api._text_generation_queues = {}
-    api._image_generation_queues = {}
-    api._cancelled_command_ids = set()
-    api.command_sender, _commands = channel[ForwarderCommand]()
-    api._system_id = SystemId()
-
-    received: list[ErrorChunk] = []
-
-    async def read() -> None:
-        async for chunk in api._token_chunk_stream(
-            TextGenerationCommand(command_id=command_id, task_params=task.task_params)
-        ):
-            assert isinstance(chunk, ErrorChunk)
-            received.append(chunk)
-
-    with anyio.fail_after(5):
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(read)
-            while command_id not in api._text_generation_queues:
-                await anyio.sleep(0)
-            api._close_streams_for_instance(
-                instance.instance_id, removal_message(reason)
-            )
-    (ending,) = received
-    return ending
-
-
-async def test_a_request_whose_device_left_says_so() -> None:
-    ending = await _ending_of_request_when_instance_deleted("NodeLost")
-    assert generation_error_code(ending.error_message) == "device_left"
-    assert ending.error_message == (
+    assert why_runner_stopped(gone, instance, "NodeLost") == (
         "A device serving this model left the cluster before the reply finished."
     )
-
-
-async def test_a_request_whose_model_was_stopped_says_so() -> None:
-    ending = await _ending_of_request_when_instance_deleted("UserStopped")
-    assert generation_error_code(ending.error_message) == "model_stopped"
-    assert ending.error_message == "The model was stopped before the reply finished."
 
 
 def test_every_message_exo_ends_a_request_with_has_a_code() -> None:
@@ -179,6 +152,7 @@ def test_every_message_exo_ends_a_request_with_has_a_code() -> None:
         "A device serving this model disconnected before the reply finished.",
         "A device serving this model left the cluster before the reply finished.",
         "The model was stopped before the reply finished.",
+        "A device running this model failed; the reply was cut short.",
         "The model instance was shut down before this request could start.",
         "No instance found for model test-model",
         "A device serving this model ran out of GPU memory before the reply finished.",

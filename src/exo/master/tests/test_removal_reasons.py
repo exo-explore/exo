@@ -8,10 +8,9 @@ API told the instance's requests "The model was stopped", and anything that shou
 lost model again would have had to guess whether the user wanted it.
 """
 
-from exo.master.tests.test_requests_to_deleted_instances import (
+from exo.master.tests.master_helpers import (
     LOST_NODE,
     NODE,
-    chat_request,
     instance_on,
     master_with,
     process,
@@ -47,7 +46,6 @@ async def test_a_user_stop_is_a_user_stop() -> None:
         master,
         events,
         DeleteDeployment(deployment_id=instance.deployment_id),
-        chat_request(),
     )
 
     assert removals(output) == [(instance.instance_id, "UserStopped")]
@@ -65,7 +63,6 @@ async def test_a_worker_that_gave_up_says_the_model_failed_to_start() -> None:
             reason="StartFailed",
             message="its runner here failed to start 3 times",
         ),
-        chat_request(),
     )
 
     assert removals(output) == [(instance.instance_id, "StartFailed")]
@@ -82,7 +79,6 @@ async def test_a_late_report_on_an_instance_already_gone_changes_nothing() -> No
         events,
         InstanceBroken(instance_id=InstanceId(), reason="StartFailed"),
         DeleteDeployment(deployment_id=DeploymentId()),
-        chat_request(),
     )
 
     assert removals(output) == []
@@ -98,7 +94,6 @@ async def test_an_instance_removed_for_a_lost_node_is_not_removed_again() -> Non
         master,
         events,
         InstanceBroken(instance_id=instance.instance_id, reason="StartFailed"),
-        chat_request(),
     )
 
     assert isinstance(lost, InstanceDeleted)

@@ -1,6 +1,6 @@
 """Run one exo node for the harness: `python -m exo.testkit.node NODE_ID [exo arguments...]`.
 
-This is exo's own `exo.main.main()`, with three changes made in this process before it starts:
+This is exo's own `exo.main.main()`, with these changes made in this process before it starts:
 
 1. The node id is NODE_ID instead of a random one, so the harness knows every node's id (and so
    which one an election picks) before it starts. A restart "as a new device" passes a new id.
@@ -12,6 +12,10 @@ This is exo's own `exo.main.main()`, with three changes made in this process bef
    at 127.0.0.1 an edge to one peer would hide the edge to another. The labels are only
    labels: Linux routes all of 127/8 to the loopback but macOS doesn't, so nothing may dial
    them (the stub ring's connections go through the harness, which maps them to 127.0.0.1).
+4. A node reaches another's API (to serve a request without the master) through the simulated
+   network's proxy for the pair, so a cut applies to it too. A test may also shorten the wedge
+   bound (TESTKIT_WEDGE_SECONDS), or make the nodes refuse every delivery of a request
+   (TESTKIT_REFUSE_DELIVERIES=1). A build without serving without the master runs without these.
 
 Everything else - discovery, zenoh, election, master, worker, API, downloads, runners - is the
 production code, unchanged.
@@ -23,6 +27,8 @@ from collections.abc import AsyncGenerator, Mapping
 
 import anyio
 import httpx
+from fastapi import Request
+from fastapi.responses import JSONResponse, Response
 
 import exo.main
 import exo.utils.info_gatherer.net_profile as net_profile
@@ -89,11 +95,65 @@ async def check_reachable(
         yield addresses.get(node_id, ip), node_id
 
 
+def node_urls(
+    _state: object, source: NodeId, sink: NodeId, _api_port: int
+) -> list[str]:
+    """Where `source` reaches `sink`'s API: the pair's proxy in the simulated network (exo's
+    assumes every node serves its API at the same port)"""
+    port = read_table().api_routes.get(source, {}).get(sink)
+    return [] if port is None else [f"http://[::1]:{port}"]
+
+
+# The data plane's wedge bound (30 s), shortened so a test can freeze a node longer than it but
+# not long enough for the master to remove it (15 s)
+WEDGE_SECONDS_ENV = "TESTKIT_WEDGE_SECONDS"
+# 1: answer every delivery of a request to the runner with a 403, as a member check that
+# doesn't know the sender would
+REFUSE_DELIVERIES_ENV = "TESTKIT_REFUSE_DELIVERIES"
+
+
+# Serving without the master's modules: a build without them (before it, a bisect, a revert)
+# runs without its hooks
+_SERVING_MODULES = (
+    "exo.api.serving_client",
+    "exo.shared.serving",
+    "exo.worker.serving",
+    "exo.api.cluster_routes",
+)
+
+
+def _install_serving_hooks() -> None:
+    try:
+        import exo.api.serving_client as serving_client
+        import exo.shared.serving as serving
+        import exo.worker.serving as worker_serving
+        from exo.api.cluster_routes import ClusterRoutes
+    except ModuleNotFoundError as error:
+        if error.name not in _SERVING_MODULES:
+            raise
+        return
+    serving.node_urls = node_urls
+    if seconds := os.environ.get(WEDGE_SECONDS_ENV):
+        for module in (worker_serving, serving_client):
+            module.WEDGE_SECONDS = float(seconds)  # pyright: ignore[reportAttributeAccessIssue]
+            module.STREAM_HEARTBEAT_INTERVAL = float(seconds) / 10  # pyright: ignore[reportAttributeAccessIssue]
+    if os.environ.get(REFUSE_DELIVERIES_ENV) == "1":
+        member_only = ClusterRoutes._member_only  # pyright: ignore[reportPrivateUsage]
+
+        def refusing(self: ClusterRoutes, request: Request) -> Response | None:
+            if request.url.path == worker_serving.DELIVER_PATH:
+                return JSONResponse(status_code=403, content={"detail": "not a member"})
+            return member_only(self, request)
+
+        setattr(ClusterRoutes, "_member_only", refusing)  # noqa: B010
+
+
 def install(node_id: NodeId) -> None:
     exo.main.get_node_zid = lambda: node_id
     supervisor.entrypoint = stub_entrypoint
     net_profile.check_reachability = _probe_for(node_id)
     worker_main.check_reachable = check_reachable
+    _install_serving_hooks()
 
 
 def main() -> None:

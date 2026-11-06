@@ -207,43 +207,6 @@
       ],
       "type": "object"
     },
-    "CancelTask": {
-      "additionalProperties": false,
-      "properties": {
-        "CancelTask": {
-          "additionalProperties": false,
-          "properties": {
-            "cancelled_task_id": {
-              "type": "string"
-            },
-            "instance_id": {
-              "type": "string"
-            },
-            "runner_id": {
-              "type": "string"
-            },
-            "task_id": {
-              "type": "string"
-            },
-            "task_status": {
-              "$ref": "#/$defs/TaskStatus"
-            }
-          },
-          "required": [
-            "cancelled_task_id",
-            "instance_id",
-            "runner_id"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "CancelTask"
-      ],
-      "type": "object"
-    },
     "CfgShardMetadata": {
       "additionalProperties": false,
       "properties": {
@@ -355,71 +318,6 @@
           "type": "boolean"
         }
       ]
-    },
-    "ChunkGenerated": {
-      "additionalProperties": false,
-      "properties": {
-        "ChunkGenerated": {
-          "additionalProperties": false,
-          "properties": {
-            "chunk": {
-              "oneOf": [
-                {
-                  "$ref": "#/$defs/PrefillProgressChunk"
-                },
-                {
-                  "$ref": "#/$defs/TokenChunk"
-                },
-                {
-                  "$ref": "#/$defs/ImageChunk"
-                },
-                {
-                  "$ref": "#/$defs/ToolCallChunk"
-                },
-                {
-                  "$ref": "#/$defs/ErrorChunk"
-                }
-              ]
-            },
-            "command_id": {
-              "type": "string"
-            },
-            "event_id": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "chunk",
-            "command_id"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "ChunkGenerated"
-      ],
-      "type": "object"
-    },
-    "CompletionTokensDetails": {
-      "properties": {
-        "accepted_prediction_tokens": {
-          "type": "integer"
-        },
-        "audio_tokens": {
-          "type": "integer"
-        },
-        "reasoning_tokens": {
-          "type": "integer"
-        },
-        "rejected_prediction_tokens": {
-          "type": "integer"
-        }
-      },
-      "type": "object",
-      "x-extra": "ignore",
-      "x-strict": false
     },
     "ComponentInfo": {
       "additionalProperties": false,
@@ -1410,56 +1308,6 @@
       "x-extra": "forbid",
       "x-strict": true
     },
-    "ErrorChunk": {
-      "additionalProperties": false,
-      "properties": {
-        "ErrorChunk": {
-          "additionalProperties": false,
-          "properties": {
-            "diagnostics": {
-              "items": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/RunnerMetalGpuTimeout"
-                  },
-                  {
-                    "$ref": "#/$defs/RunnerMetalOutOfMemory"
-                  },
-                  {
-                    "$ref": "#/$defs/RunnerRingTransportError"
-                  },
-                  {
-                    "$ref": "#/$defs/RunnerRingSocketReceivingError"
-                  }
-                ]
-              },
-              "type": "array"
-            },
-            "error_message": {
-              "type": "string"
-            },
-            "finish_reason": {
-              "const": "error",
-              "type": "string"
-            },
-            "model": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "error_message",
-            "model"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "ErrorChunk"
-      ],
-      "type": "object"
-    },
     "ForwarderCommand": {
       "additionalProperties": false,
       "properties": {
@@ -1470,15 +1318,6 @@
             },
             {
               "$ref": "#/$defs/RequestEventLog"
-            },
-            {
-              "$ref": "#/$defs/exo__shared__types__commands__TextGeneration"
-            },
-            {
-              "$ref": "#/$defs/exo__shared__types__commands__ImageGeneration"
-            },
-            {
-              "$ref": "#/$defs/exo__shared__types__commands__ImageEdits"
             },
             {
               "$ref": "#/$defs/CreateDeployment"
@@ -1494,15 +1333,6 @@
             },
             {
               "$ref": "#/$defs/AnnounceDeployments"
-            },
-            {
-              "$ref": "#/$defs/TaskCancelled"
-            },
-            {
-              "$ref": "#/$defs/TaskFinished"
-            },
-            {
-              "$ref": "#/$defs/SendInputChunk"
             },
             {
               "$ref": "#/$defs/AddCustomModelCard"
@@ -1557,43 +1387,6 @@
       "type": "object",
       "x-extra": "forbid",
       "x-strict": true
-    },
-    "GenerationStats": {
-      "properties": {
-        "generation_tokens": {
-          "type": "integer"
-        },
-        "generation_tps": {
-          "type": "number"
-        },
-        "peak_memory_usage": {
-          "$ref": "#/$defs/Memory"
-        },
-        "prefix_cache_hit": {
-          "enum": [
-            "none",
-            "partial",
-            "exact"
-          ],
-          "type": "string"
-        },
-        "prompt_tokens": {
-          "type": "integer"
-        },
-        "prompt_tps": {
-          "type": "number"
-        }
-      },
-      "required": [
-        "generation_tokens",
-        "generation_tps",
-        "peak_memory_usage",
-        "prompt_tokens",
-        "prompt_tps"
-      ],
-      "type": "object",
-      "x-extra": "ignore",
-      "x-strict": false
     },
     "GlobalForwarderEvent": {
       "additionalProperties": false,
@@ -1655,12 +1448,6 @@
               "$ref": "#/$defs/NodeDownloadProgress"
             },
             {
-              "$ref": "#/$defs/ChunkGenerated"
-            },
-            {
-              "$ref": "#/$defs/InputChunkReceived"
-            },
-            {
               "$ref": "#/$defs/TopologyEdgeCreated"
             },
             {
@@ -1668,9 +1455,6 @@
             },
             {
               "$ref": "#/$defs/TracesCollected"
-            },
-            {
-              "$ref": "#/$defs/TracesMerged"
             },
             {
               "$ref": "#/$defs/CustomModelCardAdded"
@@ -1755,16 +1539,13 @@
       "x-extra": "forbid",
       "x-strict": true
     },
-    "ImageChunk": {
+    "ImageEdits": {
       "additionalProperties": false,
       "properties": {
-        "ImageChunk": {
+        "ImageEdits": {
           "additionalProperties": false,
           "properties": {
-            "chunk_index": {
-              "type": "integer"
-            },
-            "data": {
+            "command_id": {
               "type": "string"
             },
             "error_message": {
@@ -1777,17 +1558,9 @@
                 }
               ]
             },
-            "finish_reason": {
+            "error_type": {
               "anyOf": [
                 {
-                  "enum": [
-                    "stop",
-                    "length",
-                    "tool_calls",
-                    "content_filter",
-                    "function_call",
-                    "error"
-                  ],
                   "type": "string"
                 },
                 {
@@ -1795,70 +1568,23 @@
                 }
               ]
             },
-            "format": {
-              "anyOf": [
-                {
-                  "enum": [
-                    "png",
-                    "jpeg",
-                    "webp"
-                  ],
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "image_index": {
-              "type": "integer"
-            },
-            "is_partial": {
-              "type": "boolean"
-            },
-            "model": {
+            "instance_id": {
               "type": "string"
             },
-            "partial_index": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+            "task_id": {
+              "type": "string"
             },
-            "stats": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/ImageGenerationStats"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+            "task_params": {
+              "$ref": "#/$defs/ImageEditsTaskParams"
             },
-            "total_chunks": {
-              "type": "integer"
-            },
-            "total_partials": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+            "task_status": {
+              "$ref": "#/$defs/TaskStatus"
             }
           },
           "required": [
-            "chunk_index",
-            "data",
-            "image_index",
-            "model",
-            "total_chunks"
+            "command_id",
+            "instance_id",
+            "task_params"
           ],
           "type": "object",
           "x-extra": "forbid",
@@ -1866,7 +1592,7 @@
         }
       },
       "required": [
-        "ImageChunk"
+        "ImageEdits"
       ],
       "type": "object"
     },
@@ -1976,9 +1702,6 @@
         },
         "stream": {
           "type": "boolean"
-        },
-        "total_input_chunks": {
-          "type": "integer"
         }
       },
       "required": [
@@ -1989,42 +1712,62 @@
       "x-extra": "ignore",
       "x-strict": false
     },
-    "ImageGenerationStats": {
+    "ImageGeneration": {
+      "additionalProperties": false,
       "properties": {
-        "image_height": {
-          "type": "integer"
-        },
-        "image_width": {
-          "type": "integer"
-        },
-        "num_images": {
-          "type": "integer"
-        },
-        "num_inference_steps": {
-          "type": "integer"
-        },
-        "peak_memory_usage": {
-          "$ref": "#/$defs/Memory"
-        },
-        "seconds_per_step": {
-          "type": "number"
-        },
-        "total_generation_time": {
-          "type": "number"
+        "ImageGeneration": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "error_message": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "instance_id": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "task_params": {
+              "$ref": "#/$defs/ImageGenerationTaskParams"
+            },
+            "task_status": {
+              "$ref": "#/$defs/TaskStatus"
+            }
+          },
+          "required": [
+            "command_id",
+            "instance_id",
+            "task_params"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
         }
       },
       "required": [
-        "image_height",
-        "image_width",
-        "num_images",
-        "num_inference_steps",
-        "peak_memory_usage",
-        "seconds_per_step",
-        "total_generation_time"
+        "ImageGeneration"
       ],
-      "type": "object",
-      "x-extra": "ignore",
-      "x-strict": false
+      "type": "object"
     },
     "ImageGenerationTaskParams": {
       "properties": {
@@ -2185,78 +1928,6 @@
       "type": "object",
       "x-extra": "ignore",
       "x-strict": false
-    },
-    "InputChunkReceived": {
-      "additionalProperties": false,
-      "properties": {
-        "InputChunkReceived": {
-          "additionalProperties": false,
-          "properties": {
-            "chunk": {
-              "$ref": "#/$defs/InputImageChunk"
-            },
-            "command_id": {
-              "type": "string"
-            },
-            "event_id": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "chunk",
-            "command_id"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "InputChunkReceived"
-      ],
-      "type": "object"
-    },
-    "InputImageChunk": {
-      "additionalProperties": false,
-      "properties": {
-        "InputImageChunk": {
-          "additionalProperties": false,
-          "properties": {
-            "chunk_index": {
-              "type": "integer"
-            },
-            "command_id": {
-              "type": "string"
-            },
-            "data": {
-              "type": "string"
-            },
-            "image_index": {
-              "type": "integer"
-            },
-            "model": {
-              "type": "string"
-            },
-            "total_chunks": {
-              "type": "integer"
-            }
-          },
-          "required": [
-            "chunk_index",
-            "command_id",
-            "data",
-            "model",
-            "total_chunks"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "InputImageChunk"
-      ],
-      "type": "object"
     },
     "InputMessage": {
       "properties": {
@@ -2590,12 +2261,6 @@
               "$ref": "#/$defs/NodeDownloadProgress"
             },
             {
-              "$ref": "#/$defs/ChunkGenerated"
-            },
-            {
-              "$ref": "#/$defs/InputChunkReceived"
-            },
-            {
               "$ref": "#/$defs/TopologyEdgeCreated"
             },
             {
@@ -2603,9 +2268,6 @@
             },
             {
               "$ref": "#/$defs/TracesCollected"
-            },
-            {
-              "$ref": "#/$defs/TracesMerged"
             },
             {
               "$ref": "#/$defs/CustomModelCardAdded"
@@ -3470,50 +3132,6 @@
       ],
       "type": "object"
     },
-    "PrefillProgressChunk": {
-      "additionalProperties": false,
-      "properties": {
-        "PrefillProgressChunk": {
-          "additionalProperties": false,
-          "properties": {
-            "model": {
-              "type": "string"
-            },
-            "processed_tokens": {
-              "type": "integer"
-            },
-            "total_tokens": {
-              "type": "integer"
-            }
-          },
-          "required": [
-            "model",
-            "processed_tokens",
-            "total_tokens"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "PrefillProgressChunk"
-      ],
-      "type": "object"
-    },
-    "PromptTokensDetails": {
-      "properties": {
-        "audio_tokens": {
-          "type": "integer"
-        },
-        "cached_tokens": {
-          "type": "integer"
-        }
-      },
-      "type": "object",
-      "x-extra": "ignore",
-      "x-strict": false
-    },
     "RDMAConnection": {
       "additionalProperties": false,
       "properties": {
@@ -4209,32 +3827,6 @@
       "x-extra": "forbid",
       "x-strict": true
     },
-    "SendInputChunk": {
-      "additionalProperties": false,
-      "properties": {
-        "SendInputChunk": {
-          "additionalProperties": false,
-          "properties": {
-            "chunk": {
-              "$ref": "#/$defs/InputImageChunk"
-            },
-            "command_id": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "chunk"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "SendInputChunk"
-      ],
-      "type": "object"
-    },
     "SessionId": {
       "additionalProperties": false,
       "properties": {
@@ -4649,16 +4241,13 @@
                 "$ref": "#/$defs/StartWarmup"
               },
               {
-                "$ref": "#/$defs/exo__shared__types__tasks__TextGeneration"
+                "$ref": "#/$defs/TextGeneration"
               },
               {
-                "$ref": "#/$defs/CancelTask"
+                "$ref": "#/$defs/ImageGeneration"
               },
               {
-                "$ref": "#/$defs/exo__shared__types__tasks__ImageGeneration"
-              },
-              {
-                "$ref": "#/$defs/exo__shared__types__tasks__ImageEdits"
+                "$ref": "#/$defs/ImageEdits"
               },
               {
                 "$ref": "#/$defs/Shutdown"
@@ -4790,32 +4379,6 @@
       ],
       "type": "object"
     },
-    "TaskCancelled": {
-      "additionalProperties": false,
-      "properties": {
-        "TaskCancelled": {
-          "additionalProperties": false,
-          "properties": {
-            "cancelled_command_id": {
-              "type": "string"
-            },
-            "command_id": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "cancelled_command_id"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "TaskCancelled"
-      ],
-      "type": "object"
-    },
     "TaskCreated": {
       "additionalProperties": false,
       "properties": {
@@ -4843,16 +4406,13 @@
                   "$ref": "#/$defs/StartWarmup"
                 },
                 {
-                  "$ref": "#/$defs/exo__shared__types__tasks__TextGeneration"
+                  "$ref": "#/$defs/TextGeneration"
                 },
                 {
-                  "$ref": "#/$defs/CancelTask"
+                  "$ref": "#/$defs/ImageGeneration"
                 },
                 {
-                  "$ref": "#/$defs/exo__shared__types__tasks__ImageGeneration"
-                },
-                {
-                  "$ref": "#/$defs/exo__shared__types__tasks__ImageEdits"
+                  "$ref": "#/$defs/ImageEdits"
                 },
                 {
                   "$ref": "#/$defs/Shutdown"
@@ -4934,32 +4494,6 @@
       },
       "required": [
         "TaskFailed"
-      ],
-      "type": "object"
-    },
-    "TaskFinished": {
-      "additionalProperties": false,
-      "properties": {
-        "TaskFinished": {
-          "additionalProperties": false,
-          "properties": {
-            "command_id": {
-              "type": "string"
-            },
-            "finished_command_id": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "finished_command_id"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "TaskFinished"
       ],
       "type": "object"
     },
@@ -5103,6 +4637,63 @@
       ],
       "type": "object"
     },
+    "TextGeneration": {
+      "additionalProperties": false,
+      "properties": {
+        "TextGeneration": {
+          "additionalProperties": false,
+          "properties": {
+            "command_id": {
+              "type": "string"
+            },
+            "error_message": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "instance_id": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "task_params": {
+              "$ref": "#/$defs/TextGenerationTaskParams"
+            },
+            "task_status": {
+              "$ref": "#/$defs/TaskStatus"
+            }
+          },
+          "required": [
+            "command_id",
+            "instance_id",
+            "task_params"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "TextGeneration"
+      ],
+      "type": "object"
+    },
     "TextGenerationTaskParams": {
       "properties": {
         "bench": {
@@ -5143,12 +4734,6 @@
               "type": "null"
             }
           ]
-        },
-        "image_hashes": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "type": "object"
         },
         "images": {
           "items": {
@@ -5441,204 +5026,6 @@
       "x-extra": "forbid",
       "x-strict": true
     },
-    "TokenChunk": {
-      "additionalProperties": false,
-      "properties": {
-        "TokenChunk": {
-          "additionalProperties": false,
-          "properties": {
-            "finish_reason": {
-              "anyOf": [
-                {
-                  "enum": [
-                    "stop",
-                    "length",
-                    "content_filter"
-                  ],
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "is_thinking": {
-              "type": "boolean"
-            },
-            "logprob": {
-              "anyOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "model": {
-              "type": "string"
-            },
-            "stats": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/GenerationStats"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "text": {
-              "type": "string"
-            },
-            "token_id": {
-              "type": "integer"
-            },
-            "top_logprobs": {
-              "anyOf": [
-                {
-                  "items": {
-                    "$ref": "#/$defs/TopLogprobItem"
-                  },
-                  "type": "array"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "usage": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/Usage"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          },
-          "required": [
-            "model",
-            "text",
-            "token_id",
-            "usage"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "TokenChunk"
-      ],
-      "type": "object"
-    },
-    "ToolCallChunk": {
-      "additionalProperties": false,
-      "properties": {
-        "ToolCallChunk": {
-          "additionalProperties": false,
-          "properties": {
-            "finish_reason": {
-              "const": "tool_calls",
-              "type": "string"
-            },
-            "model": {
-              "type": "string"
-            },
-            "stats": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/GenerationStats"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "tool_calls": {
-              "items": {
-                "$ref": "#/$defs/ToolCallItem"
-              },
-              "type": "array"
-            },
-            "usage": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/Usage"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          },
-          "required": [
-            "model",
-            "tool_calls",
-            "usage"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "ToolCallChunk"
-      ],
-      "type": "object"
-    },
-    "ToolCallItem": {
-      "properties": {
-        "arguments": {
-          "type": "string"
-        },
-        "id": {
-          "type": "string"
-        },
-        "name": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "arguments",
-        "name"
-      ],
-      "type": "object",
-      "x-extra": "ignore",
-      "x-strict": false
-    },
-    "TopLogprobItem": {
-      "properties": {
-        "bytes": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "integer"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "logprob": {
-          "type": "number"
-        },
-        "token": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "logprob",
-        "token"
-      ],
-      "type": "object",
-      "x-extra": "ignore",
-      "x-strict": false
-    },
     "TopologyEdgeCreated": {
       "additionalProperties": false,
       "properties": {
@@ -5795,68 +5182,6 @@
       ],
       "type": "object"
     },
-    "TracesMerged": {
-      "additionalProperties": false,
-      "properties": {
-        "TracesMerged": {
-          "additionalProperties": false,
-          "properties": {
-            "event_id": {
-              "type": "string"
-            },
-            "task_id": {
-              "type": "string"
-            },
-            "traces": {
-              "items": {
-                "$ref": "#/$defs/TraceEventData"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "task_id",
-            "traces"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "TracesMerged"
-      ],
-      "type": "object"
-    },
-    "Usage": {
-      "properties": {
-        "completion_tokens": {
-          "type": "integer"
-        },
-        "completion_tokens_details": {
-          "$ref": "#/$defs/CompletionTokensDetails"
-        },
-        "prompt_tokens": {
-          "type": "integer"
-        },
-        "prompt_tokens_details": {
-          "$ref": "#/$defs/PromptTokensDetails"
-        },
-        "total_tokens": {
-          "type": "integer"
-        }
-      },
-      "required": [
-        "completion_tokens",
-        "completion_tokens_details",
-        "prompt_tokens",
-        "prompt_tokens_details",
-        "total_tokens"
-      ],
-      "type": "object",
-      "x-extra": "ignore",
-      "x-strict": false
-    },
     "VisionCardConfig": {
       "additionalProperties": false,
       "properties": {
@@ -5947,255 +5272,6 @@
       "type": "object",
       "x-extra": "forbid",
       "x-strict": true
-    },
-    "exo__shared__types__commands__ImageEdits": {
-      "additionalProperties": false,
-      "properties": {
-        "ImageEdits": {
-          "additionalProperties": false,
-          "properties": {
-            "command_id": {
-              "type": "string"
-            },
-            "task_params": {
-              "$ref": "#/$defs/ImageEditsTaskParams"
-            }
-          },
-          "required": [
-            "task_params"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "ImageEdits"
-      ],
-      "type": "object"
-    },
-    "exo__shared__types__commands__ImageGeneration": {
-      "additionalProperties": false,
-      "properties": {
-        "ImageGeneration": {
-          "additionalProperties": false,
-          "properties": {
-            "command_id": {
-              "type": "string"
-            },
-            "task_params": {
-              "$ref": "#/$defs/ImageGenerationTaskParams"
-            }
-          },
-          "required": [
-            "task_params"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "ImageGeneration"
-      ],
-      "type": "object"
-    },
-    "exo__shared__types__commands__TextGeneration": {
-      "additionalProperties": false,
-      "properties": {
-        "TextGeneration": {
-          "additionalProperties": false,
-          "properties": {
-            "command_id": {
-              "type": "string"
-            },
-            "task_params": {
-              "$ref": "#/$defs/TextGenerationTaskParams"
-            }
-          },
-          "required": [
-            "task_params"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "TextGeneration"
-      ],
-      "type": "object"
-    },
-    "exo__shared__types__tasks__ImageEdits": {
-      "additionalProperties": false,
-      "properties": {
-        "ImageEdits": {
-          "additionalProperties": false,
-          "properties": {
-            "command_id": {
-              "type": "string"
-            },
-            "error_message": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "error_type": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "instance_id": {
-              "type": "string"
-            },
-            "task_id": {
-              "type": "string"
-            },
-            "task_params": {
-              "$ref": "#/$defs/ImageEditsTaskParams"
-            },
-            "task_status": {
-              "$ref": "#/$defs/TaskStatus"
-            }
-          },
-          "required": [
-            "command_id",
-            "instance_id",
-            "task_params"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "ImageEdits"
-      ],
-      "type": "object"
-    },
-    "exo__shared__types__tasks__ImageGeneration": {
-      "additionalProperties": false,
-      "properties": {
-        "ImageGeneration": {
-          "additionalProperties": false,
-          "properties": {
-            "command_id": {
-              "type": "string"
-            },
-            "error_message": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "error_type": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "instance_id": {
-              "type": "string"
-            },
-            "task_id": {
-              "type": "string"
-            },
-            "task_params": {
-              "$ref": "#/$defs/ImageGenerationTaskParams"
-            },
-            "task_status": {
-              "$ref": "#/$defs/TaskStatus"
-            }
-          },
-          "required": [
-            "command_id",
-            "instance_id",
-            "task_params"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "ImageGeneration"
-      ],
-      "type": "object"
-    },
-    "exo__shared__types__tasks__TextGeneration": {
-      "additionalProperties": false,
-      "properties": {
-        "TextGeneration": {
-          "additionalProperties": false,
-          "properties": {
-            "command_id": {
-              "type": "string"
-            },
-            "error_message": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "error_type": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "instance_id": {
-              "type": "string"
-            },
-            "task_id": {
-              "type": "string"
-            },
-            "task_params": {
-              "$ref": "#/$defs/TextGenerationTaskParams"
-            },
-            "task_status": {
-              "$ref": "#/$defs/TaskStatus"
-            }
-          },
-          "required": [
-            "command_id",
-            "instance_id",
-            "task_params"
-          ],
-          "type": "object",
-          "x-extra": "forbid",
-          "x-strict": true
-        }
-      },
-      "required": [
-        "TextGeneration"
-      ],
-      "type": "object"
     }
   },
   "code": {

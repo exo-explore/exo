@@ -60,7 +60,6 @@ def test_plan_requests_download_when_waiting_and_shard_not_downloaded():
         global_download_status={NODE_A: []},
         instances=instances,
         all_runners=all_runners,
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -114,7 +113,6 @@ def test_plan_loads_model_when_all_shards_downloaded_and_waiting():
         global_download_status=global_download_status,
         instances=instances,
         all_runners=all_runners,
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -158,7 +156,6 @@ def test_plan_does_not_request_download_when_shard_already_downloaded():
         global_download_status=global_download_status,
         instances=instances,
         all_runners=all_runners,
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -207,7 +204,6 @@ def test_plan_does_not_load_model_until_all_shards_downloaded_globally():
         global_download_status=global_download_status,
         instances=instances,
         all_runners=all_runners,
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -229,7 +225,6 @@ def test_plan_does_not_load_model_until_all_shards_downloaded_globally():
         global_download_status=global_download_status,
         instances=instances,
         all_runners=all_runners,
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
     )
@@ -269,7 +264,6 @@ def _plan_with(
         global_download_status={NODE_A: local},
         instances=instances,
         all_runners={RUNNER_1_ID: RunnerConnected(), RUNNER_2_ID: RunnerConnected()},
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
         failed_download_backoff=failed_backoff,
@@ -338,7 +332,6 @@ def test_plan_asks_for_nothing_no_local_runner_needs():
         global_download_status={NODE_A: [failed]},
         instances={},
         all_runners={},
-        tasks={},
         instance_backoff=KeyedBackoff(),
         download_backoff=KeyedBackoff(),
         failed_download_backoff=KeyedBackoff(),

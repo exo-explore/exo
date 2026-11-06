@@ -247,9 +247,6 @@ def make_api(state: State) -> tuple[API, AsyncMock]:
     api.membership = FakeMembership(NodeId("api-node"), *NODES)
     api.state = state
     api.paused = False
-    api._text_generation_queues = {}
-    api._image_generation_queues = {}
-    api._cancelled_command_ids = set()
     api._send = send = AsyncMock()
     api._setup_exception_handlers()
     api.app.post("/v1/chat/completions", response_model=None)(api.chat_completions)

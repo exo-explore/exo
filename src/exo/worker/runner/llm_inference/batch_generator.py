@@ -13,7 +13,7 @@ from exo.shared.constants import EXO_MAX_CONCURRENT_REQUESTS
 from exo.shared.request_errors import user_facing_detail
 from exo.shared.types.chunks import ErrorChunk, GenerationChunk, PrefillProgressChunk
 from exo.shared.types.common import ModelId
-from exo.shared.types.events import ChunkGenerated, Event
+from exo.shared.types.events import ChunkGenerated, RunnerEvent
 from exo.shared.types.tasks import (
     CANCEL_ALL_TASKS,
     GenerationTask,
@@ -117,7 +117,7 @@ class SequentialGenerator(Engine):
     model_id: ModelId
     device_rank: int
     cancel_receiver: MpReceiver[TaskId]
-    event_sender: MpSender[Event]
+    event_sender: MpSender[RunnerEvent]
     vision_processor: VisionProcessor | None = None
     check_for_cancel_every: int = 50
     # The longest context the model takes; 0 if unknown (see context_length)
@@ -387,7 +387,7 @@ class BatchGenerator(Engine):
     model_id: ModelId
     device_rank: int
     cancel_receiver: MpReceiver[TaskId]
-    event_sender: MpSender[Event]
+    event_sender: MpSender[RunnerEvent]
     check_for_cancel_every: int = 50
     vision_processor: VisionProcessor | None = None
     # The longest context the model takes; 0 if unknown (see context_length)
