@@ -13,6 +13,7 @@ from exo.worker.engines.mlx.models.family import (
     ModelClasses,
     ModelFamily,
 )
+from exo.worker.engines.mlx.models.qwen3.qwen3_5_decode import prepare_qwen3_5_decode
 from exo.worker.engines.mlx.models.qwen3.qwen4_exp import Model as Qwen4ExpModel
 from exo.worker.engines.mlx.models.qwen3.qwen4_exp import (
     ModelArgs as Qwen4ExpModelArgs,
@@ -30,6 +31,10 @@ from exo.worker.engines.mlx.models.qwen3.spec import SPEC
 def _attach_ngram_table(model: nn.Module, model_path: Path) -> None:
     assert isinstance(model, Qwen4ExpModel)
     model.attach_ngram_table(model_path)
+
+
+def _prepare_fused_decode(model: nn.Module, model_path: Path) -> None:
+    prepare_qwen3_5_decode(model)
 
 
 FAMILY = ModelFamily(
@@ -58,6 +63,9 @@ FAMILY = ModelFamily(
             model_class=Qwen3_5TextModel,
             tensor_parallel=QwenShardingStrategy,
             fix_pipeline_shard=fix_pipeline_shard,
+            # Fused single-token decode for the dense model, installed after loading (and
+            # after tensor or pipeline sharding)
+            post_load=_prepare_fused_decode,
         ),
         Architecture(
             model_type="qwen3_5_moe",
