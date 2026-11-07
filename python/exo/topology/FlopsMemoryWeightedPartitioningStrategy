@@ -1,0 +1,24 @@
+from typing import List
+from .partitioning_strategy import PartitioningStrategy, Partition
+from .topology import Topology
+
+class FlopsMemoryWeightedPartitioningStrategy(PartitioningStrategy):
+    def partition(self, topology: Topology) -> List[Partition]:
+        nodes = list(topology.all_nodes())
+        
+        # Weight = 60% memory + 40% compute (flops)
+        def get_weight(node):
+            return node[1].memory * 0.6 + node[1].flops * 0.4
+        
+        total_weight = sum(get_weight(node) for node in nodes)
+        nodes.sort(key=get_weight, reverse=True)
+        
+        partitions = []
+        start = 0.0
+        for node in nodes:
+            weight = get_weight(node)
+            end = start + (weight / total_weight)
+            partitions.append(Partition(node[0], start, end))
+            start = end
+        
+        return partitions
