@@ -14,12 +14,14 @@ reasoning_dialect = "tool_conditional"
 context_length = 1048576
 backends = ["MlxMetal"]
 # The checkpoint as published: FP4 experts and FP8 (32x32 blocks) dense weights load as MLX
-# mxfp4 / mxfp8 unchanged. Vision and the multi-token prediction layers are not loaded, and
-# the two engram tables (203 GB) stay in the downloaded files, read while running.
+# mxfp4 / mxfp8 unchanged. The multi-token prediction (DSpark) layers load as the draft head
+# for speculative decoding; vision is not loaded. The two engram tables (203 GB) are loaded
+# into GPU memory where they fit and otherwise stay in the downloaded files, read while
+# running.
 [storage_size]
 in_bytes = 510296708312
 [memory_size]
-in_bytes = 300155315648
+in_bytes = 308088445456
 
 # Source: https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash
 [sampling_defaults]

@@ -13,17 +13,25 @@ Provenance:
 Local changes against mlx-lm's file:
 - Engram at engram_layer_ids (mlx-lm raises on the official config and drops the engram
   weights). The tables stay in the checkpoint files, memory-mapped and read on the host
-  (engram_tables="host", the default: no GPU memory), or are loaded and gathered on the GPU
-  (engram_tables="device"). Model.load_engram(model_path) attaches the tokenizer's
-  compressed token map and the memory maps once the weights are loaded.
+  (engram_tables="host": no GPU memory), or are loaded and gathered on the GPU
+  (engram_tables="device"); "auto" (the default) loads the tables that fit in GPU memory,
+  in layer order, and leaves the rest on the host. Model.load_engram(model_path) attaches
+  the tokenizer's compressed token map, the memory maps and the loaded tables once the
+  weights are loaded.
 - RoPE frequencies are computed as the reference computes them, rather than by mlx-lm's
   YarnRoPE (so global rope patches do not change them).
 - Power-of-two quantization scales are computed on the float32 bits, as the reference
   kernels do (log2 + ceil can be one off just above a power of two).
-- The logits are float32, from a float32 head, as the reference's ParallelHead.
+- The logits are float32 (float32 products and sums of the bf16 head), as the
+  reference's ParallelHead.
 - Pipeline stages can be laid out in either rank order (exo gives rank 0 the first layers)
   and evaluate around their sends and receives.
-- LayerCache can be snapshotted for exo's prefix cache (prefix_cache_snapshot).
+- LayerCache can be snapshotted for exo's prefix cache (prefix_cache_snapshot), and can
+  record a forward and keep only its first tokens (speculative decoding).
+- The DSpark draft head (the checkpoint's mtp.* layers; the reference's DSparkBlock and
+  forward_spec) as DraftModel, for speculative decoding (speculative.py).
+- Fused Metal kernels for the decode path (kernels.py), each with the plain ops as the
+  fallback.
 - Strict typing; the generic n-gram hash is written out for numpy and for MLX.
 """
 
@@ -31,8 +39,10 @@ import json
 import math
 import re
 import struct
+import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol, Self, cast
 
@@ -41,8 +51,11 @@ import mlx.nn as nn
 import numpy as np
 import numpy.typing as npt
 from mlx.nn.layers.distributed import shard_inplace, shard_linear, sum_gradients
+from mlx.utils import tree_flatten
 from mlx_lm.models.base import BaseModelArgs
 from mlx_lm.models.switch_layers import SwitchGLU, SwitchLinear
+
+from exo.worker.engines.mlx.models.deepseek_v41 import kernels
 
 IntArray = npt.NDArray[np.int64]
 ByteArray = npt.NDArray[np.uint8]
@@ -97,10 +110,30 @@ class ModelArgs(BaseModelArgs):
     engram_head_dim: int = 0
     engram_pad_token_id: int = 2
     engram_compressed_vocab_size: int = 0
+    # The DSpark draft head (the checkpoint's mtp.* layers), for speculative decoding.
+    num_nextn_predict_layers: int = 0
+    dspark_block_size: int = 0
+    dspark_noise_token_id: int = 0
+    dspark_target_layer_ids: tuple[int, ...] = ()
+    dspark_markov_rank: int = 256
+    dspark_n_routed_experts: int = 0
+    dspark_num_experts_per_tok: int = 0
+    # load the draft head (when the checkpoint has one)
+    load_draft: bool = True
     # "host": the engram tables stay in the checkpoint files and their rows are read
     # through a memory map (no GPU memory); "device": they are loaded and gathered on
-    # the GPU.
-    engram_tables: str = "host"
+    # the GPU; "auto": the tables that fit in GPU memory are loaded, the others stay on
+    # the host.
+    engram_tables: str = "auto"
+
+    @property
+    def has_draft(self) -> bool:
+        return (
+            self.load_draft
+            and self.num_nextn_predict_layers > 0
+            and self.dspark_block_size > 1
+            and len(self.dspark_target_layer_ids) > 0
+        )
 
     @classmethod
     def from_dict(cls, params: dict[str, object]) -> Self:
@@ -118,11 +151,13 @@ class ModelArgs(BaseModelArgs):
         self.index_source_layer_ids = tuple(self.index_source_layer_ids)
         self.engram_layer_ids = tuple(self.engram_layer_ids)
         self.engram_num_embeddings = tuple(self.engram_num_embeddings)
+        self.dspark_target_layer_ids = tuple(self.dspark_target_layer_ids)
         if len(self.engram_num_embeddings) != len(self.engram_layer_ids):
             raise ValueError("engram_num_embeddings needs one entry per engram layer")
-        if self.engram_tables not in ("host", "device"):
+        if self.engram_tables not in ("host", "device", "auto"):
             raise ValueError(
-                f"engram_tables must be 'host' or 'device', not {self.engram_tables!r}"
+                "engram_tables must be 'host', 'device' or 'auto', not "
+                f"{self.engram_tables!r}"
             )
 
 
@@ -171,6 +206,10 @@ class RoPE(nn.Module):
         super().__init__()
         self.dims = dims
         self._periods = rope_periods(dims, base, scaling)
+
+    @property
+    def periods(self) -> mx.array:
+        return self._periods
 
     def __call__(
         self, x: mx.array, offset: int = 0, scale: float = 1.0, inverse: bool = False
@@ -541,6 +580,20 @@ class NgramHasher:
         ids: IntArray = np.concatenate(hashes, axis=-1) + self.offsets
         return ids, window[:, -n:]
 
+    def advance_history(
+        self, history: mx.array | None, tokens: mx.array
+    ) -> mx.array | None:
+        """The history after tokens [B, n] (on the device; None stays None for n = 0)."""
+        if tokens.shape[1] == 0:
+            return history
+        if history is None:
+            history = mx.array(self.initial_history(tokens.shape[0]))
+        token_map = (
+            mx.array(self.token_map) if self._device is None else self._device[0]
+        )
+        window = mx.concatenate([history, token_map[tokens]], axis=1)
+        return window[:, -self.history_length :]
+
     def hash_device(
         self, tokens: mx.array, history: mx.array
     ) -> tuple[mx.array, mx.array]:
@@ -564,6 +617,30 @@ class NgramHasher:
             hashes.append(rolling[..., None] % primes[shift - 1])
         ids = mx.concatenate(hashes, axis=-1) + offsets
         return ids, window[:, -n:]
+
+
+_READERS = ThreadPoolExecutor(max_workers=16, thread_name_prefix="engram-rows")
+_ROWS_PER_READ = 4
+
+
+def _concurrent_take(table: ByteArray, flat: IntArray) -> ByteArray:
+    """np.take of rows of a memory-mapped table, split over threads: numpy releases the
+    GIL while it copies, so rows that are not in the page cache are read from the SSD
+    concurrently rather than one page fault at a time."""
+    count = np.size(flat)
+    if count <= _ROWS_PER_READ:
+        return np.take(table, flat, axis=0)
+    out = np.empty((count, np.size(table, 1)), dtype=table.dtype)
+    parts = min(64, -(-count // _ROWS_PER_READ))
+    bounds = [count * i // parts for i in range(parts + 1)]
+
+    def read(i: int) -> None:
+        lo, hi = bounds[i], bounds[i + 1]
+        np.take(table, flat[lo:hi], axis=0, out=out[lo:hi])
+
+    for future in [_READERS.submit(read, i) for i in range(parts)]:
+        future.result()
+    return out
 
 
 @dataclass(frozen=True)
@@ -608,8 +685,8 @@ class HostEngramTable:
     def gather(self, ids: IntArray) -> tuple[mx.array, mx.array]:
         shape = [np.size(ids, axis) for axis in range(ids.ndim)]
         flat = ids.reshape(-1)
-        rows = np.take(self.weight, flat, axis=0)
-        scales = np.take(self.scale, flat, axis=0)
+        rows = _concurrent_take(self.weight, flat)
+        scales = _concurrent_take(self.scale, flat)
         return (
             mx.reshape(mx.array(rows), [*shape, -1]),
             mx.reshape(mx.array(scales), [*shape, -1]),
@@ -628,6 +705,7 @@ class EngramEmbedding(nn.Module):
 
     def __init__(self, rows: int, dim: int, on_device: bool):
         super().__init__()
+        self.rows = rows
         self.dim = dim
         self.on_device = on_device
         if on_device:
@@ -641,6 +719,29 @@ class EngramEmbedding(nn.Module):
         values = mx.from_fp8(rows, mx.float32).reshape(*rows.shape[:-1], -1, 32)
         values = values * _e8m0_to_float(scales)[..., None]
         return mx.reshape(values, rows.shape).astype(dtype)
+
+    @property
+    def nbytes_table(self) -> int:
+        """Bytes of the table and its scales."""
+        return self.rows * (self.dim + self.dim // 32)
+
+    def load_to_device(self, model_path: Path, weight_key: str, scale_key: str) -> None:
+        """Load the table from the checkpoint into GPU memory."""
+        index = cast(
+            dict[str, object],
+            json.loads((model_path / "model.safetensors.index.json").read_text()),
+        )
+        weight_map = cast(dict[str, str], index["weight_map"])
+        loaded: list[mx.array] = []
+        for key in (weight_key, scale_key):
+            tensors = cast(
+                dict[str, mx.array], mx.load(str(model_path / weight_map[key]))
+            )
+            loaded.append(tensors[key].view(mx.uint8))
+        self.weight, self.scale = loaded
+        mx.eval(self.weight, self.scale)
+        self.on_device = True
+        self._host = None
 
     def lookup_device(self, ids: mx.array, dtype: mx.Dtype) -> mx.array:
         return self.dequantize(self.weight[ids], self.scale[ids], dtype)
@@ -693,6 +794,9 @@ class Engram(nn.Module):
                 "after loading the weights"
             )
         batch = inputs.shape[0]
+        if cache.record is not None:
+            cache.record.tokens = inputs
+            cache.record.hasher = hasher
         if self.embed.on_device:
             history = cache.ngram_history
             if history is None:
@@ -737,10 +841,32 @@ class Engram(nn.Module):
 # Attention
 
 
+@dataclass
+class _Record:
+    """A layer cache before a recorded forward, and the rows that forward added: enough
+    to keep only the forward's first n tokens (speculative decoding drops the rejected
+    ones)."""
+
+    offset: int
+    window: mx.array | None
+    compress_kv: mx.array | None
+    index_k: mx.array | None
+    pending_kv: mx.array | None
+    pending_gate: mx.array | None
+    ngram_history: mx.array | None
+    new_window: mx.array | None = None  # the forward's window rows [B, L, D]
+    ratio: int = 0  # the layer's compressor ratio (0: no compressor)
+    raw_kv: mx.array | None = None  # the compressor's rows of the forward (ratio > 1)
+    raw_gate: mx.array | None = None
+    tokens: mx.array | None = None  # the forward's tokens (engram layers)
+    hasher: "NgramHasher | None" = None
+
+
 class LayerCache:
     """Cache for one layer: the sliding window, the closed compressed groups and their
     index keys, the rows of the group still filling up, and, for an engram layer, the
-    n-gram history (the last compressed token ids)."""
+    n-gram history (the last compressed token ids). The last layer's cache also carries
+    the draft head's state, when there is a draft head."""
 
     def __init__(self, window_size: int):
         self.window_size = window_size
@@ -751,15 +877,79 @@ class LayerCache:
         self.pending_kv: mx.array | None = None
         self.pending_gate: mx.array | None = None
         self.ngram_history: mx.array | None = None
+        self.draft: DraftState | None = None
+        self.record: _Record | None = None
 
     def update_window(self, kv: mx.array) -> mx.array:
         """The window with kv appended; keeps the last window_size rows."""
+        if self.record is not None:
+            self.record.new_window = kv
         window = _append(self.window, kv)
         self.window = window[:, -self.window_size :]
         self.offset += kv.shape[1]
         return window
 
+    def begin_record(self) -> None:
+        """Record the next forward so that `keep` can cut it back."""
+        self.record = _Record(
+            offset=self.offset,
+            window=self.window,
+            compress_kv=self.compress_kv,
+            index_k=self.index_k,
+            pending_kv=self.pending_kv,
+            pending_gate=self.pending_gate,
+            ngram_history=self.ngram_history,
+        )
+        if self.draft is not None:
+            self.draft.recording = True
+
+    def keep(self, n: int) -> None:
+        """Keep only the first n tokens of the recorded forward, as if it had run on
+        them alone, and stop recording."""
+        record = self.record
+        self.record = None
+        if self.draft is not None:
+            self.draft.commit(n)
+        if record is None or record.new_window is None:
+            return
+        length = record.new_window.shape[1]
+        if n >= length:
+            return
+        window = (
+            _append(record.window, record.new_window[:, :n]) if n else record.window
+        )
+        self.window = None if window is None else window[:, -self.window_size :]
+        self.offset = record.offset + n
+        if record.ratio:
+            before = 0 if record.compress_kv is None else record.compress_kv.shape[1]
+            if record.ratio == 1:
+                groups = n
+                self.pending_kv, self.pending_gate = (
+                    record.pending_kv,
+                    record.pending_gate,
+                )
+            else:
+                assert record.raw_kv is not None and record.raw_gate is not None
+                pending = 0 if record.pending_kv is None else record.pending_kv.shape[1]
+                groups = (pending + n) // record.ratio
+                rows_kv = _append(record.pending_kv, record.raw_kv[:, :n])
+                rows_gate = _append(record.pending_gate, record.raw_gate[:, :n])
+                self.pending_kv = rows_kv[:, groups * record.ratio :]
+                self.pending_gate = rows_gate[:, groups * record.ratio :]
+            if self.compress_kv is not None:
+                kept = self.compress_kv[:, : before + groups]
+                self.compress_kv = kept if before + groups else record.compress_kv
+            if self.index_k is not None and self.index_k is not record.index_k:
+                before_k = 0 if record.index_k is None else record.index_k.shape[1]
+                kept = self.index_k[:, : before_k + groups]
+                self.index_k = kept if before_k + groups else record.index_k
+        if record.tokens is not None and record.hasher is not None:
+            self.ngram_history = record.hasher.advance_history(
+                record.ngram_history, record.tokens[:, :n]
+            )
+
     def _arrays(self) -> list[mx.array | None]:
+        draft = [] if self.draft is None else list(self.draft.windows)
         return [
             self.window,
             self.compress_kv,
@@ -767,6 +957,7 @@ class LayerCache:
             self.pending_kv,
             self.pending_gate,
             self.ngram_history,
+            *draft,
         ]
 
     @property
@@ -796,6 +987,8 @@ class LayerCache:
         copy.pending_kv = self.pending_kv
         copy.pending_gate = self.pending_gate
         copy.ngram_history = self.ngram_history
+        if self.draft is not None:
+            copy.draft = self.draft.snapshot()
         return copy
 
 
@@ -813,12 +1006,17 @@ class Compressor(nn.Module):
     ) -> tuple[mx.array | None, int]:
         """Pool each full group of ratio tokens into one latent. Returns the latents (None
         if no group closed) and the index of the first one."""
+        if cache.record is not None:
+            cache.record.ratio = self.ratio
         if self.ratio == 1:
             return self.kv_norm(self.kv_proj(x)), start_pos
         h = x.astype(mx.float32)
         pending = 0 if cache.pending_kv is None else cache.pending_kv.shape[1]
-        kv = _append(cache.pending_kv, self.kv_proj(h))
-        gate = _append(cache.pending_gate, self.gate_proj(h))
+        raw_kv, raw_gate = self.kv_proj(h), self.gate_proj(h)
+        if cache.record is not None:
+            cache.record.raw_kv, cache.record.raw_gate = raw_kv, raw_gate
+        kv = _append(cache.pending_kv, raw_kv)
+        gate = _append(cache.pending_gate, raw_gate)
         full = kv.shape[1] - kv.shape[1] % self.ratio
         cache.pending_kv = kv[:, full:]
         cache.pending_gate = gate[:, full:]
@@ -967,6 +1165,7 @@ class Attention(nn.Module):
         self.head_dim = args.head_dim
         self.rope_dim = args.qk_rope_head_dim
         self.o_groups = args.o_groups
+        self.norm_eps = args.rms_norm_eps
         ratios = args.compress_ratios
         self.ratio = int(ratios[layer_id]) if layer_id < len(ratios) else 0
         self.is_kv_source = layer_id in args.kv_source_layer_ids
@@ -1017,11 +1216,19 @@ class Attention(nn.Module):
         q = self.q_b_proj(q_residual).reshape(
             batch, length, self.num_heads, self.head_dim
         )
-        q = _apply_rope(q, self.rope, rope_dim=self.rope_dim, offset=start_pos)
 
-        kv = self.kv_norm(self.kv_proj(x))
-        kv = _apply_rope(kv, self.rope, rope_dim=self.rope_dim, offset=start_pos)
-        kv = fake_quant_fp8(kv, 32)
+        kv = kernels.kv_epilogue(
+            self.kv_proj(x),
+            self.kv_norm.weight,
+            eps=self.norm_eps,
+            periods=self.rope.periods,
+            rope_dim=self.rope_dim,
+            start_pos=start_pos,
+        )
+        if kv is None:
+            kv = self.kv_norm(self.kv_proj(x))
+            kv = _apply_rope(kv, self.rope, rope_dim=self.rope_dim, offset=start_pos)
+            kv = fake_quant_fp8(kv, 32)
         kvs = [cache.update_window(kv)]
         indices = [window_idx]
         if self.ratio:
@@ -1049,12 +1256,29 @@ class Attention(nn.Module):
                 kvs.append(compressed)
                 indices.append(topk_idx)
 
-        output = _sparse_attention(
-            q, kvs, indices, sinks=self.sinks, scale=1.0 / math.sqrt(self.head_dim)
+        scale = 1.0 / math.sqrt(self.head_dim)
+        output = kernels.attention_with_rope(
+            q,
+            kvs[0],
+            indices[0],
+            kvs[1] if len(kvs) > 1 else None,
+            indices[1] if len(indices) > 1 else None,
+            sinks=self.sinks,
+            scale=scale,
+            periods=self.rope.periods,
+            rope_dim=self.rope_dim,
+            start_pos=start_pos,
         )
-        output = _apply_rope(
-            output, self.rope, rope_dim=self.rope_dim, offset=start_pos, inverse=True
-        )
+        if output is None:
+            q = _apply_rope(q, self.rope, rope_dim=self.rope_dim, offset=start_pos)
+            output = _sparse_attention(q, kvs, indices, sinks=self.sinks, scale=scale)
+            output = _apply_rope(
+                output,
+                self.rope,
+                rope_dim=self.rope_dim,
+                offset=start_pos,
+                inverse=True,
+            )
         output = output.reshape(batch * length, self.o_groups, 1, -1)
         output = cast(mx.array, self.o_a_proj(output, self._group_ids))
         return self.o_b_proj(output.reshape(batch, length, -1))
@@ -1098,6 +1322,9 @@ class DeepseekV41SwiGLU(nn.Module):
         self.limit = limit
 
     def __call__(self, up: mx.array, gate: mx.array) -> mx.array:
+        fused = kernels.swiglu(up, gate, self.limit)
+        if fused is not None:
+            return fused
         dtype = up.dtype
         gate = gate.astype(mx.float32)
         up = up.astype(mx.float32)
@@ -1142,6 +1369,17 @@ class Router(nn.Module):
         self.route_scale = args.routed_scaling_factor
 
     def route(self, x: mx.array) -> tuple[mx.array, mx.array]:
+        if self.score_func == "sqrtsoftplus":
+            fused = kernels.route(
+                kernels.head_logits(x, self.weight),
+                self.e_score_correction_bias,
+                top_k=self.top_k,
+                gate_temp=self.gate_temp,
+                norm_topk_prob=self.norm_topk_prob,
+                route_scale=self.route_scale,
+            )
+            if fused is not None:
+                return fused
         logits = x.astype(mx.float32) @ self.weight.astype(mx.float32).T
         logits = logits / self.gate_temp
         if self.score_func == "sigmoid":
@@ -1171,6 +1409,9 @@ class Experts(nn.Module):
 
     def __call__(self, x: mx.array, indices: mx.array, weights: mx.array) -> mx.array:
         routed = self.switch_mlp(x, indices)
+        return self.combine(routed, weights)
+
+    def combine(self, routed: mx.array, weights: mx.array) -> mx.array:
         return mx.sum(
             routed.astype(mx.float32) * weights[..., None].astype(mx.float32), axis=1
         )
@@ -1191,8 +1432,20 @@ class MoE(nn.Module):
         shape = x.shape
         flat = x.reshape(-1, self.dim)
         indices, weights = self.gate.route(flat)
-        routed = self.experts(flat, indices, weights)
-        out = routed + self.shared_experts(flat).astype(mx.float32)
+        routed_rows = self.experts.switch_mlp(flat, indices)
+        shared = self.shared_experts(flat)
+        fused = kernels.moe_combine(
+            routed_rows,
+            weights,
+            shared,
+            mx.float32 if self.sharding_group is not None else x.dtype,
+        )
+        if fused is not None:
+            if self.sharding_group is not None:
+                fused = mx.distributed.all_sum(fused, group=self.sharding_group)
+            return mx.reshape(fused, shape).astype(x.dtype)
+        routed = self.experts.combine(routed_rows, weights)
+        out = routed + shared.astype(mx.float32)
         if self.sharding_group is not None:
             out = mx.distributed.all_sum(out, group=self.sharding_group)
         return mx.reshape(out, shape).astype(x.dtype)
@@ -1202,6 +1455,7 @@ class DecoderLayer(nn.Module):
     def __init__(self, args: ModelArgs, layer_id: int):
         super().__init__()
         self.layer_idx = layer_id
+        self.norm_eps = args.rms_norm_eps
         self.self_attn = Attention(args, layer_id)
         self.mlp = MoE(args)
         self.input_layernorm = nn.RMSNorm(args.hidden_size, eps=args.rms_norm_eps)
@@ -1226,9 +1480,36 @@ class DecoderLayer(nn.Module):
         window_idx: mx.array,
         cache: LayerCache,
         shared: SharedState,
-    ) -> tuple[mx.array, mx.array]:
+        partials: mx.array | None = None,
+        next_hc: "HyperConnection | None" = None,
+        fused_expand: bool = False,
+        submit_before_host_reads: bool = False,
+    ) -> tuple[mx.array, mx.array, mx.array | None]:
+        """Returns the streams, the pre mix for the next layer's input and, on the fused
+        path, that layer's mix partials (when next_hc, its attention hyper-connection, is
+        given: the expand at the end of this layer computes them). fused_expand: without
+        next_hc, still expand with the fused kernel (a pipeline stage's last layer, so the
+        next stage gets the streams one device computes)."""
         if self.engram is not None:
+            if not self.engram.embed.on_device and submit_before_host_reads:
+                # The host reads below need this step's tokens. Start the layers before
+                # this one on the GPU first, so they run while the rows are read and
+                # the rest of the step is built.
+                mx.async_eval(streams, pre_mix)
             streams = self.engram(streams, inputs, cache)
+            partials = None
+        if kernels.hc_fusable(streams):
+            return self._forward_fused(
+                streams,
+                pre_mix,
+                start_pos=start_pos,
+                window_idx=window_idx,
+                cache=cache,
+                shared=shared,
+                partials=partials,
+                next_hc=next_hc,
+                fused_expand=fused_expand,
+            )
         # The mix a sublayer computes is used by the next one.
         attn_pre, attn_post, attn_comb = self.attn_hc.mixes(streams)
         h = self.input_layernorm(_collapse(streams, pre_mix))
@@ -1240,7 +1521,303 @@ class DecoderLayer(nn.Module):
         ffn_pre, ffn_post, ffn_comb = self.ffn_hc.mixes(streams)
         h = self.mlp(self.post_attention_layernorm(_collapse(streams, attn_pre)))
         streams = _expand(h, streams, ffn_post, ffn_comb)
-        return streams, ffn_pre
+        return streams, ffn_pre, None
+
+    def _finish(
+        self,
+        hc: HyperConnection,
+        partials: mx.array,
+        streams: mx.array,
+        pre_prev: mx.array,
+        norm: nn.RMSNorm,
+    ) -> tuple[mx.array, mx.array, mx.array, mx.array]:
+        return kernels.hc_finish(
+            partials,
+            streams,
+            pre_prev,
+            scale=hc.scale,
+            base=hc.base,
+            norm_weight=norm.weight,
+            norm_eps=self.norm_eps,
+            hc_eps=hc.hc_eps,
+            iters=hc.iters,
+        )
+
+    def _forward_fused(
+        self,
+        streams: mx.array,
+        pre_mix: mx.array,
+        *,
+        start_pos: int,
+        window_idx: mx.array,
+        cache: LayerCache,
+        shared: SharedState,
+        partials: mx.array | None,
+        next_hc: "HyperConnection | None",
+        fused_expand: bool = False,
+    ) -> tuple[mx.array, mx.array, mx.array | None]:
+        """forward with each sublayer boundary (expand, the next mixes, collapse and norm)
+        in two kernels."""
+        if partials is None:
+            streams, partials = kernels.hc_partials(streams, self.attn_hc.fn)
+        attn_pre, attn_post, attn_comb, h = self._finish(
+            self.attn_hc, partials, streams, pre_mix, self.input_layernorm
+        )
+        h = self.self_attn(
+            h, start_pos=start_pos, window_idx=window_idx, cache=cache, shared=shared
+        )
+        streams, partials = kernels.hc_partials(
+            streams, self.ffn_hc.fn, (h, attn_post, attn_comb)
+        )
+        ffn_pre, ffn_post, ffn_comb, h = self._finish(
+            self.ffn_hc, partials, streams, attn_pre, self.post_attention_layernorm
+        )
+        h = self.mlp(h)
+        if next_hc is None and fused_expand:
+            # The expand doesn't depend on the matvec weights, and its partials are
+            # dropped: the next stage's first layer computes them from these streams.
+            streams, _ = kernels.hc_partials(
+                streams, self.ffn_hc.fn, (h, ffn_post, ffn_comb)
+            )
+            return streams, ffn_pre, None
+        if next_hc is None:
+            return _expand(h, streams, ffn_post, ffn_comb), ffn_pre, None
+        streams, partials = kernels.hc_partials(
+            streams, next_hc.fn, (h, ffn_post, ffn_comb)
+        )
+        return streams, ffn_pre, partials
+
+
+# ---------------------------------------------------------------------------------------
+# The DSpark draft head (speculative decoding)
+
+
+class DraftState:
+    """The draft head's cache: for each draft layer, the window of KV rows it computes from
+    the main model's hidden states at the target layers (the last window_size main
+    positions). Rows of a recorded main forward wait in `pending` until `commit`."""
+
+    def __init__(self, n_layers: int, window_size: int):
+        self.window_size = window_size
+        self.windows: list[mx.array | None] = [None] * n_layers
+        self.offset = 0  # main positions seen
+        self.recording = False
+        self._pending: list[mx.array] | None = None
+        self._pending_start = 0
+
+    def add(self, rows: list[mx.array], start: int, length: int) -> None:
+        """rows: per layer [B, r, D], the last r of the forward's `length` positions,
+        which start at `start`."""
+        if self.recording:
+            self._pending = rows
+            self._pending_start = start + length - rows[0].shape[1]
+            return
+        self._append(rows)
+        self.offset = start + length
+
+    def _append(self, rows: list[mx.array]) -> None:
+        for i, r in enumerate(rows):
+            window = _append(self.windows[i], r)
+            self.windows[i] = window[:, -self.window_size :]
+
+    def commit(self, n: int) -> None:
+        """Keep the first n positions of the recorded forward."""
+        self.recording = False
+        pending, self._pending = self._pending, None
+        if pending is None:
+            return
+        skip = max(0, self.offset - self._pending_start)
+        take = self.offset + n - self._pending_start - skip
+        # positions [pending_start + skip, offset + n)
+        if take > 0:
+            self._append([r[:, skip : skip + take] for r in pending])
+        self.offset += n
+
+    def snapshot(self) -> "DraftState":
+        mx.eval(*[w for w in self.windows if w is not None])
+        copy = DraftState(len(self.windows), self.window_size)
+        copy.windows = list(self.windows)
+        copy.offset = self.offset
+        return copy
+
+
+@dataclass
+class _DraftView:
+    """What a draft layer's attention reads: its window of main-model KV rows."""
+
+    window: mx.array | None
+
+
+class DraftAttention(Attention):
+    """The draft layers' attention: the block's queries attend to every row of the window
+    of main-model KV and to every row of the block itself (no causal mask)."""
+
+    def __call__(
+        self,
+        x: mx.array,
+        *,
+        start_pos: int,
+        window_idx: mx.array,
+        cache: LayerCache,
+        shared: SharedState,
+    ) -> mx.array:
+        view = cast(_DraftView, cast(object, cache))
+        batch, length, _ = x.shape
+        q = self.q_b_proj(self.q_a_norm(self.q_a_proj(x))).reshape(
+            batch, length, self.num_heads, self.head_dim
+        )
+        kv = self.window_rows(x, start_pos)
+        rows = kv if view.window is None else mx.concatenate([view.window, kv], axis=1)
+        idx = mx.broadcast_to(
+            mx.arange(rows.shape[1], dtype=mx.int32), (batch, length, rows.shape[1])
+        )
+        scale = 1.0 / math.sqrt(self.head_dim)
+        output = kernels.attention_with_rope(
+            q,
+            rows,
+            idx,
+            None,
+            None,
+            sinks=self.sinks,
+            scale=scale,
+            periods=self.rope.periods,
+            rope_dim=self.rope_dim,
+            start_pos=start_pos,
+        )
+        if output is None:
+            q = _apply_rope(q, self.rope, rope_dim=self.rope_dim, offset=start_pos)
+            output = _sparse_attention(q, [rows], [idx], sinks=self.sinks, scale=scale)
+            output = _apply_rope(
+                output,
+                self.rope,
+                rope_dim=self.rope_dim,
+                offset=start_pos,
+                inverse=True,
+            )
+        output = output.reshape(batch * length, self.o_groups, 1, -1)
+        output = cast(mx.array, self.o_a_proj(output, self._group_ids))
+        return self.o_b_proj(output.reshape(batch, length, -1))
+
+    def window_rows(self, x: mx.array, start_pos: int) -> mx.array:
+        """KV rows of x at positions start_pos.. (norm, RoPE, the FP8 round trip)."""
+        kv = kernels.kv_epilogue(
+            self.kv_proj(x),
+            self.kv_norm.weight,
+            eps=self.norm_eps,
+            periods=self.rope.periods,
+            rope_dim=self.rope_dim,
+            start_pos=start_pos,
+        )
+        if kv is None:
+            kv = self.kv_norm(self.kv_proj(x))
+            kv = _apply_rope(kv, self.rope, rope_dim=self.rope_dim, offset=start_pos)
+            kv = fake_quant_fp8(kv, 32)
+        return kv
+
+
+class DraftModel(nn.Module):
+    """DeepSeek-V4.1's DSpark draft head, as the reference's DSparkBlock / forward_spec:
+    from the main model's hidden states at the target layers and the token it just
+    sampled, one pass of the draft layers over a block of block_size positions (the
+    token, then noise tokens) gives the logits of the next block_size tokens; a low-rank
+    Markov head adds a bias from each drafted token to the next one's logits."""
+
+    def __init__(self, args: ModelArgs):
+        super().__init__()
+        draft_args = replace(
+            args,
+            n_routed_experts=args.dspark_n_routed_experts or args.n_routed_experts,
+            num_experts_per_tok=args.dspark_num_experts_per_tok
+            or args.num_experts_per_tok,
+            engram_layer_ids=(),
+            engram_num_embeddings=(),
+        )
+        first = args.num_hidden_layers
+        self.layers: list[DecoderLayer] = []
+        for i in range(args.num_nextn_predict_layers):
+            layer = DecoderLayer(draft_args, first + i)
+            layer.self_attn = DraftAttention(draft_args, first + i)
+            self.layers.append(layer)
+        targets = len(args.dspark_target_layer_ids)
+        self.main_proj = nn.Linear(
+            args.hidden_size * targets, args.hidden_size, bias=False
+        )
+        self.main_norm = nn.RMSNorm(args.hidden_size, eps=args.rms_norm_eps)
+        self.norm = nn.RMSNorm(args.hidden_size, eps=args.rms_norm_eps)
+        self.markov_embed = nn.Embedding(args.vocab_size, args.dspark_markov_rank)
+        self.markov_head = nn.Linear(
+            args.dspark_markov_rank, args.vocab_size, bias=False
+        )
+        self.confidence = mx.zeros(
+            (1, args.hidden_size + args.dspark_markov_rank), dtype=mx.float32
+        )
+        self.block_size = args.dspark_block_size
+        self.noise_token_id = args.dspark_noise_token_id
+        self.hc = args.hc_mult
+        self.window_size = args.sliding_window
+
+    def make_state(self) -> DraftState:
+        return DraftState(len(self.layers), self.window_size)
+
+    def observe(self, hidden: mx.array, start_pos: int, state: DraftState) -> None:
+        """Add the window rows of a main forward's positions (hidden [B, L, targets * D],
+        positions start_pos..): only the last window_size can still be attended to."""
+        length = hidden.shape[1]
+        keep = min(length, self.window_size)
+        h = hidden[:, length - keep :]
+        main_x = self.main_norm(self.main_proj(h))
+        first = start_pos + length - keep
+        rows = [
+            cast(DraftAttention, layer.self_attn).window_rows(main_x, first)
+            for layer in self.layers
+        ]
+        state.add(rows, start_pos, length)
+
+    def block(
+        self,
+        token: mx.array,
+        start_pos: int,
+        state: DraftState,
+        embed: nn.Embedding,
+    ) -> tuple[mx.array, mx.array]:
+        """The draft pass for the block that starts with `token` [B] at position
+        start_pos. Returns the normed block hidden states [B, block, D] (for the head) and
+        the collapsed ones before the norm (for the confidence head)."""
+        batch = token.shape[0]
+        ids = mx.concatenate(
+            [
+                token.reshape(batch, 1).astype(mx.int32),
+                mx.full((batch, self.block_size - 1), self.noise_token_id, mx.int32),
+            ],
+            axis=1,
+        )
+        h = embed(ids)
+        streams = mx.broadcast_to(
+            h[:, :, None, :], (*h.shape[:2], self.hc, h.shape[-1])
+        )
+        pre_mix = mx.zeros((batch, self.block_size, self.hc), dtype=mx.float32)
+        pre_mix[..., 0] = 1.0
+        partials: mx.array | None = None
+        for i, layer in enumerate(self.layers):
+            following = self.layers[i + 1] if i + 1 < len(self.layers) else None
+            streams, pre_mix, partials = layer.forward(
+                streams,
+                pre_mix,
+                inputs=ids,
+                start_pos=start_pos,
+                window_idx=mx.zeros((0,), dtype=mx.int32),
+                cache=cast(LayerCache, cast(object, _DraftView(state.windows[i]))),
+                shared={},
+                partials=partials,
+                next_hc=None if following is None else following.attn_hc,
+            )
+        x = _collapse(streams, pre_mix)
+        return self.norm(x), x
+
+    def markov(self, tokens: mx.array) -> tuple[mx.array, mx.array]:
+        """The Markov head for tokens [B]: (float32 logit bias [B, V], embedding [B, r])."""
+        embedded = self.markov_embed(tokens)
+        return kernels.head_logits(embedded, self.markov_head.weight), embedded
 
 
 # ---------------------------------------------------------------------------------------
@@ -1380,6 +1957,13 @@ class TextModel(nn.Module):
         self._stage: PipelineStage | None = None
         # Set by Model.shard for tensor parallelism.
         self.tensor_group: mx.distributed.Group | None = None
+        # When the previous forward pass started (monotonic seconds), to tell when the
+        # GPU has been idle.
+        self._last_forward = -math.inf
+        # The draft head's inputs: the streams at the input of these layers, averaged
+        # over the hyper-connection copies (set by Model when it has a draft head).
+        self.target_layer_ids: tuple[int, ...] = ()
+        self.target_hidden: mx.array | None = None
 
     @property
     def pipeline_layers(self) -> list[DecoderLayer]:
@@ -1480,6 +2064,9 @@ class TextModel(nn.Module):
     def __call__(
         self, inputs: mx.array, cache: list[LayerCache] | None = None
     ) -> mx.array:
+        now = time.monotonic()
+        after_idle = now - self._last_forward > _IDLE_S
+        self._last_forward = now
         h = self.embed_tokens(inputs)
         batch, length, _ = h.shape
         layers = self.pipeline_layers
@@ -1505,8 +2092,17 @@ class TextModel(nn.Module):
                 stage, streams, start_pos, caches[0], shared
             )
 
-        for layer, layer_cache in zip(layers, caches, strict=True):
-            streams, pre_mix = layer.forward(
+        partials: mx.array | None = None
+        targets: list[mx.array] = []
+        self.target_hidden = None
+        for i, (layer, layer_cache) in enumerate(zip(layers, caches, strict=True)):
+            if layer.layer_idx in self.target_layer_ids:
+                # the reference's h.mean(dim=2): a float32 mean, in the streams' dtype
+                targets.append(
+                    mx.mean(streams.astype(mx.float32), axis=2).astype(streams.dtype)
+                )
+            following = layers[i + 1] if i + 1 < len(layers) else None
+            streams, pre_mix, partials = layer.forward(
                 streams,
                 pre_mix,
                 inputs=inputs,
@@ -1514,13 +2110,34 @@ class TextModel(nn.Module):
                 window_idx=window_idx,
                 cache=layer_cache,
                 shared=shared,
+                partials=partials,
+                next_hc=following.attn_hc
+                if following is not None and following.engram is None
+                else None,
+                # A stage's last layer expands as that layer does on one device, where
+                # the next layer (not an engram layer) follows it.
+                fused_expand=following is None
+                and stage is not None
+                and stage.next_rank is not None
+                and layer.layer_idx + 1 not in self.args.engram_layer_ids,
+                # Not under tensor parallelism: a rank's GPU must not wait in a
+                # collective while the other rank still reads rows.
+                submit_before_host_reads=self.tensor_group is None,
             )
 
-        if self.tensor_group is not None and self.args.engram_tables == "host":
-            # The host engram reads above (made while the graph is built) can take seconds
-            # on one rank and not on another, e.g. when its page cache is cold. Let every
-            # rank finish them before any starts the graph: otherwise its GPU sits in the
-            # first all-reduce that long, and Metal times the command buffer out.
+        if targets and len(targets) == len(self.target_layer_ids):
+            self.target_hidden = mx.concatenate(targets, axis=-1)
+        if self.tensor_group is not None:
+            # Some work before the graph can take seconds on one rank and not on another:
+            # the host engram reads above (made while the graph is built), e.g. when the
+            # page cache is cold, and after the GPU has been idle, macOS re-wiring MLX's
+            # buffers, which the first GPU command pays for (seconds at a few hundred GB).
+            # Let every rank finish both before any starts the graph: otherwise its GPU
+            # sits in the first all-reduce that long, and Metal times the command buffer
+            # out. The re-wire is a local GPU command, so each rank decides on its own;
+            # the barrier is a collective, so every rank meets there on every pass.
+            if after_idle:
+                mx.eval(mx.zeros((1,)) + 1)
             mx.eval(
                 mx.distributed.all_sum(
                     mx.array(1.0),
@@ -1536,8 +2153,11 @@ class TextModel(nn.Module):
                 caches[-1].window = mx.depends(last_window, sent)
         out = _collapse(streams, pre_mix)
         if stage is not None and stage.group.size() > 1:
-            # Every rank needs the last stage's output.
+            # Every rank needs the last stage's output. Evaluate the gather on its own
+            # first: a GPU op in the same evaluation would make a GPU command buffer wait
+            # on the network.
             gathered = mx.distributed.all_gather(out, group=stage.group)
+            mx.eval(gathered)
             out = gathered[stage.last_rank * batch : (stage.last_rank + 1) * batch]
         return self.norm(out)
 
@@ -1596,9 +2216,84 @@ def _repack(weight: mx.array, scale: mx.array) -> tuple[mx.array, mx.array]:
     return weight.view(mx.uint32), scale
 
 
+# GPU memory left free for activations, caches and prefill temporaries when deciding
+# whether an engram table goes on the GPU.
+# macOS drops the wired residency of GPU buffers after about 2 s of GPU idle; a gap
+# between forward passes longer than this may have to re-wire first.
+_IDLE_S = 1.0
+_ENGRAM_DEVICE_RESERVE = 48 * 1024**3
+
+
 def _shard_groups(_path: str, _weight: mx.array) -> int:
     """o_a_proj's weight is [groups, rank, in]: split it by group."""
     return 0
+
+
+_DRAFT_HEAD_KEYS = {
+    "main_proj.weight": "draft.main_proj.weight",
+    "main_norm.weight": "draft.main_norm.weight",
+    "norm.weight": "draft.norm.weight",
+    "markov_head.embed.weight": "draft.markov_embed.weight",
+    "markov_head.head.weight": "draft.markov_head.weight",
+    "confidence_head.proj.weight": "draft.confidence",
+}
+
+
+def _sanitize_draft(
+    weights: dict[str, mx.array], n_layers: int, o_groups: int
+) -> dict[str, mx.array]:
+    """The checkpoint's mtp.{i}.* (DSpark) weights as the DraftModel's: the layers
+    renamed as the main layers, their FP8 / FP4 weights kept packed."""
+    clean: dict[str, mx.array] = {}
+    experts: dict[tuple[int, str], dict[int, dict[str, mx.array]]] = {}
+    for key, value in weights.items():
+        match = re.match(r"mtp\.(\d+)\.(.*)", key)
+        if match is None or int(match.group(1)) >= n_layers:
+            continue
+        layer, rest = int(match.group(1)), match.group(2)
+        if rest.endswith(".gate.bias_vl"):
+            continue
+        expert = re.fullmatch(r"ffn\.experts\.(\d+)\.(w[123])\.(weight|scale)", rest)
+        if expert is not None:
+            index, projection, kind = expert.groups()
+            rows = experts.setdefault((layer, projection), {})
+            rows.setdefault(int(index), {})[kind] = value
+            continue
+        if (
+            rest.endswith(".scale")
+            and f"mtp.{layer}.{rest.removesuffix('.scale')}.weight" in weights
+        ):
+            continue
+        scale = (
+            weights.get(f"mtp.{layer}.{rest.removesuffix('.weight')}.scale")
+            if rest.endswith(".weight")
+            else None
+        )
+        if rest in _DRAFT_HEAD_KEYS:
+            name = _DRAFT_HEAD_KEYS[rest]
+        else:
+            name = _rename(f"layers.{layer}.{rest}").replace("model.", "draft.", 1)
+        if scale is not None:
+            value, scale = _repack(value, scale)
+        if name.endswith(".o_a_proj.weight"):
+            value = value.reshape(o_groups, -1, value.shape[-1])
+            if scale is not None:
+                scale = scale.reshape(o_groups, -1, scale.shape[-1])
+        if name == "draft.confidence":
+            value = value.astype(mx.float32)
+        clean[name] = value
+        if scale is not None:
+            clean[f"{name.removesuffix('weight')}scales"] = scale
+    for (layer, projection), rows in experts.items():
+        parts = [rows[index] for index in sorted(rows)]
+        name = f"draft.layers.{layer}.mlp.experts.switch_mlp.{_EXPERT_PROJ[projection]}"
+        value = mx.stack([part["weight"] for part in parts])
+        if "scale" in parts[0]:
+            scales = mx.stack([part["scale"] for part in parts])
+            value, scales = _repack(value, scales)
+            clean[f"{name}.scales"] = scales
+        clean[f"{name}.weight"] = value
+    return clean
 
 
 class Model(nn.Module):
@@ -1607,21 +2302,38 @@ class Model(nn.Module):
         self.args = config
         self.model_type = config.model_type
         self.model = TextModel(config)
-        # float32, as the reference's ParallelHead: the logits come out in float32
+        # bf16 as stored; the logits come out in float32, as the reference's ParallelHead
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.draft: DraftModel | None = DraftModel(config) if config.has_draft else None
+        if self.draft is not None:
+            self.model.target_layer_ids = config.dspark_target_layer_ids
 
     def __call__(
         self, inputs: mx.array, cache: list[LayerCache] | None = None
     ) -> mx.array:
+        start_pos = cache[0].offset if cache else 0
         out = self.model(inputs, cache)
-        return out.astype(mx.float32) @ self.lm_head.weight.astype(mx.float32).T
+        if self.draft is not None and cache and cache[-1].draft is not None:
+            hidden = self.model.target_hidden
+            if hidden is not None:
+                self.draft.observe(hidden, start_pos, cache[-1].draft)
+        # float32 logits of the bf16 head (exact products, float32 sums)
+        return kernels.head_logits(out, self.lm_head.weight)
+
+    def drop_draft(self) -> None:
+        """Run without the draft head (its weights are not loaded or kept)."""
+        self.draft = None
+        self.model.target_layer_ids = ()
 
     @property
     def layers(self) -> list[DecoderLayer]:
         return self.model.pipeline_layers
 
     def make_cache(self) -> list[LayerCache]:
-        return self.model.make_cache()
+        caches = self.model.make_cache()
+        if self.draft is not None and caches:
+            caches[-1].draft = self.draft.make_state()
+        return caches
 
     def load_engram(self, model_path: Path) -> None:
         """Attach what the engram layers need besides their weights: the hashing (from the
@@ -1638,6 +2350,15 @@ class Model(nn.Module):
                 "match the tables."
             )
         layout = EngramLayout.from_args(self.args)
+        on_device = self._engram_tables_on_device(engrams)
+        for engram in engrams[:on_device]:
+            if not engram.embed.on_device:
+                layer_id = self.args.engram_layer_ids[engram.layer_index]
+                engram.embed.load_to_device(
+                    model_path,
+                    f"layers.{layer_id}.engram.embed.weight",
+                    f"layers.{layer_id}.engram.embed.scale",
+                )
         for engram in engrams:
             hasher = NgramHasher(
                 layout,
@@ -1655,6 +2376,46 @@ class Model(nn.Module):
                     f"layers.{layer_id}.engram.embed.scale",
                 )
             engram.attach(hasher, table)
+
+    def _engram_tables_on_device(self, engrams: list[Engram]) -> int:
+        """How many of the engram layers (in layer order) get their table in GPU memory:
+        all for "device", none for "host"; for "auto" as many as fit next to the weights
+        with room to spare for activations and caches. Tensor-parallel ranks agree on the
+        smallest count."""
+        if self.args.engram_tables == "device":
+            return len(engrams)
+        if self.args.engram_tables == "host" or not mx.metal.is_available():
+            return 0
+        # the weights may not be evaluated yet: count them, not just what is allocated
+        weights = sum(
+            v.nbytes
+            for _, v in cast(
+                list[tuple[str, mx.array]], tree_flatten(self.parameters())
+            )
+        )
+        used = max(int(mx.get_active_memory()), weights)
+        free = int(mx.device_info()["max_recommended_working_set_size"]) - used
+        free -= _ENGRAM_DEVICE_RESERVE
+        count = 0
+        for engram in engrams:
+            if engram.embed.on_device:
+                count += 1
+                continue
+            if engram.embed.nbytes_table > free:
+                break
+            free -= engram.embed.nbytes_table
+            count += 1
+        group = self.model.tensor_group
+        if group is not None and group.size() > 1:
+            counts = mx.distributed.all_gather(
+                mx.array([count]),
+                group=group,
+                stream=mx.default_stream(mx.Device(mx.cpu)),
+            )
+            # evaluated on its own, then read on the host: no GPU op waits on it
+            mx.eval(counts)
+            count = min(cast(list[int], counts.tolist()))
+        return count
 
     def shard(self, group: mx.distributed.Group) -> None:
         """Tensor parallelism: each rank keeps its whole output groups (and their heads),
@@ -1690,13 +2451,21 @@ class Model(nn.Module):
 
     def sanitize(self, weights: dict[str, mx.array]) -> dict[str, mx.array]:
         """Rename the checkpoint's keys and keep its fp8 / fp4 weights packed (as mxfp8 /
-        mxfp4, which they are bit for bit). Drops what the text model does not run (vision,
-        MTP, the image routing bias), layers past num_hidden_layers, and, for host engram
-        tables, the tables (they are read from the files)."""
+        mxfp4, which they are bit for bit). Maps the MTP (DSpark) layers onto the draft head
+        when there is one. Drops what the text model does not run (vision, the image routing
+        bias), layers past num_hidden_layers, and the engram tables unless they are loaded
+        as weights (engram_tables="device"; otherwise load_engram attaches them)."""
         if any(key.startswith("model.") for key in weights):
             return weights
         n_layers = self.args.num_hidden_layers
-        host_tables = self.args.engram_tables == "host"
+        host_tables = self.args.engram_tables in ("host", "auto")
+        draft_weights: dict[str, mx.array] = {}
+        if self.draft is not None:
+            draft_weights = _sanitize_draft(
+                {k: v for k, v in weights.items() if k.startswith("mtp.")},
+                self.args.num_nextn_predict_layers,
+                self.args.o_groups,
+            )
 
         def keep(key: str) -> bool:
             if key.startswith(_DROP_PREFIXES) or key.endswith(".gate.bias_vl"):
@@ -1738,8 +2507,6 @@ class Model(nn.Module):
                 value = value.reshape(self.args.o_groups, -1, value.shape[-1])
                 if scale is not None:
                     scale = scale.reshape(self.args.o_groups, -1, scale.shape[-1])
-            if name == "lm_head.weight":
-                value = value.astype(mx.float32)
             clean[name] = value
             if scale is not None:
                 clean[f"{name.removesuffix('weight')}scales"] = scale
@@ -1759,6 +2526,7 @@ class Model(nn.Module):
                 value, scales = _repack(value, scales)
                 clean[f"{name}.scales"] = scales
             clean[f"{name}.weight"] = value
+        clean.update(draft_weights)
         return clean
 
     @property
@@ -1772,6 +2540,7 @@ class Model(nn.Module):
             "compressor.",
             "lm_head",
             "engram.embed",
+            "draft.confidence",
         )
 
         def predicate(key: str) -> bool:

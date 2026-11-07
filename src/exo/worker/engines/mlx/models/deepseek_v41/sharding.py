@@ -36,6 +36,8 @@ def pipeline_parallel(
     compressed KV / index keys / top-k state to the next stage itself (rank r runs the
     layers just before rank r + 1's)."""
     assert isinstance(model, Model)
+    # Speculative decoding runs on one device or under tensor parallelism only.
+    model.drop_draft()
     rank, size = model_shard_meta.device_rank, model_shard_meta.world_size
     assert rank == group.rank() and size == group.size()
     model.model.set_pipeline_stage(

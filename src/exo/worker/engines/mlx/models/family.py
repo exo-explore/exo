@@ -3,11 +3,12 @@ prompts, how to parse its output, how to load its tokenizer, and optionally its 
 classes. Each family folder's ``family.py`` defines one ``ModelFamily``; ``registry.py``
 collects them."""
 
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, final
 
+import mlx.core as mx
 import mlx.nn as nn
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
@@ -66,6 +67,35 @@ class OutputParser:
 
 @final
 @dataclass(frozen=True)
+class SamplingParameters:
+    """The parameters of exo's sampler (mlx-lm's make_sampler) for one request."""
+
+    temperature: float
+    top_p: float
+    min_p: float
+    top_k: int
+
+
+LogitsProcessor = Callable[[mx.array, mx.array], mx.array]
+
+# (model, prompt tokens, max tokens, sampling, logits processors, the prompt's cache) ->
+# (token, log-probs) pairs as mlx-lm's generate_step yields them, or None to decode with
+# generate_step.
+TokenGenerator = Callable[
+    [
+        nn.Module,
+        mx.array,
+        int,
+        SamplingParameters,
+        Sequence[LogitsProcessor],
+        Sequence[Any],
+    ],
+    Generator[tuple[int, mx.array]] | None,
+]
+
+
+@final
+@dataclass(frozen=True)
 class Architecture:
     """One mlx-lm model class, i.e. one config.json model_type after mlx-lm's remapping.
 
@@ -96,6 +126,10 @@ class Architecture:
     # its template's think tags are exactly the model's format (e.g. a bare `</think>`
     # that closes thinking when it is off), so exo leaves an unmatched `</think>` as it is.
     exact_think_tags: bool = False
+    # Decodes in place of mlx-lm's generate_step (e.g. speculatively, with a draft head
+    # the model carries). It must draw every token from the same distribution as exo's
+    # sampler.
+    token_generator: TokenGenerator | None = None
 
 
 @final
