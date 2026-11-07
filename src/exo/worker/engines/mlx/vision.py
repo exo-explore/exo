@@ -729,7 +729,9 @@ def _find_media_regions(
     for i, region in enumerate(regions):
         if i < len(images):
             img = decode_base64_image(images[i])
-            region.content_hash = hashlib.sha256(img.tobytes()).hexdigest()
+            h = hashlib.sha256(f"{img.width}x{img.height}".encode())
+            h.update(img.tobytes())
+            region.content_hash = h.hexdigest()
         else:
             logger.warning(f"Media region {i} has no corresponding image")
 
@@ -758,6 +760,7 @@ class VisionProcessor:
         h = hashlib.sha256()
         for img in images:
             pil = decode_base64_image(img)
+            h.update(f"{pil.width}x{pil.height}".encode())
             h.update(pil.tobytes())
         return h.hexdigest()
 
