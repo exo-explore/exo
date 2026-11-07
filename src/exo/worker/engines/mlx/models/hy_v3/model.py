@@ -245,7 +245,7 @@ def float32_router_logits(gate: nn.Module, x: mx.array) -> mx.array:
     weight = gate["weight"]
     assert isinstance(weight, mx.array)
     if isinstance(gate, nn.QuantizedLinear):
-        mode = cast(str, gate.mode)
+        mode = gate.mode
         if mode != "affine":
             return gate(x)
         scales = gate["scales"]
@@ -257,8 +257,8 @@ def float32_router_logits(gate: nn.Module, x: mx.array) -> mx.array:
             scales.astype(mx.float32),
             biases.astype(mx.float32),
             transpose=True,
-            group_size=cast(int, gate.group_size),
-            bits=cast(int, gate.bits),
+            group_size=gate.group_size,
+            bits=gate.bits,
             mode=mode,
         )
     return x @ weight.astype(mx.float32).T

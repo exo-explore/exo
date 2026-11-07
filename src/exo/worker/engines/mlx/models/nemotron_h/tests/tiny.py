@@ -39,3 +39,12 @@ CONFIG: dict[str, Any] = {
     "routed_scaling_factor": 2.5,
 }
 PROMPT = [[1, 23, 45, 6, 17, 38, 52, 9, 11, 60, 2, 33]]
+
+# Nemotron 3 Nano / 3.5 Lightning's MoE: no latent projection, and a shared expert twice
+# the routed experts' width (folded into them by fold_shared_experts).
+NANO_CONFIG: dict[str, Any] = {
+    **CONFIG,
+    "layers_block_type": ["mamba", "moe", "mamba", "attention", "moe", "mamba", "moe"],
+    "moe_latent_size": None,
+    "moe_shared_expert_intermediate_size": 192,
+}
