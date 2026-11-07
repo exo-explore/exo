@@ -33,6 +33,10 @@
 #     compressor keeps each row's own last window (_carry_last_window); merge / extend /
 #     extract keep every row's carry and pool length, also for the fixed decode buffer
 #     (_buffer_row_lengths, _set_row_lengths), and a missing overlap gate is -inf.
+#   - performance changes that keep those numerics, each marked "exo perf" in place: the
+#     FP8 projections held as mxfp8 (Fp8BlockLinear), prefill attention over the keys
+#     each query can see (_prefill_attention), decode attention kernels, the rounding,
+#     hyper-connection and indexer-scoring kernels, and whole-head RoPE.
 # Everything else below is the file as it was at that commit. exo loads it for
 # config model_type "deepseek_v4" through exo.worker.engines.mlx.models.get_model_classes.
 # Delete this copy once upstream mlx-lm ships a deepseek_v4 that exo can use.
@@ -130,6 +134,98 @@ class ModelArgs(BaseModelArgs):
     rope_scaling: Optional[Dict] = None
     rms_norm_eps: float = 1e-6
 
+    # exo perf: the official checkpoints' FP8 format (see Fp8BlockLinear)
+    quantization_config: Optional[Dict] = None
+
+    @property
+    def fp8_block_weights(self) -> bool:
+        """True for DeepSeek's own FP8 checkpoints: e4m3 weights with power-of-two
+        (ue8m0) scales over 128x128 blocks. Their dense projections are kept in that
+        format (as MLX mxfp8) instead of being expanded to bf16."""
+        qc = self.quantization_config or {}
+        return (
+            qc.get("quant_method") == "fp8"
+            and qc.get("fmt", "e4m3") == "e4m3"
+            and qc.get("scale_fmt") == "ue8m0"
+            and list(qc.get("weight_block_size") or ()) == [128, 128]
+        )
+
+
+# --------------------------------------------------------------------------- #
+# exo perf: FP8 dense projections kept in their checkpoint format             #
+# --------------------------------------------------------------------------- #
+# DeepSeek's checkpoints store the dense projections as FP8 (e4m3) with one
+# power-of-two (ue8m0) scale per 128x128 block. Repeating each block scale over
+# its 32-wide groups makes that exactly an MLX mxfp8 weight (e4m3 values, one
+# ue8m0 scale per 32): the dequantized values are bit-identical to the bf16
+# expansion. Decode reads half the bytes; prefill dequantizes to bf16 first,
+# which is faster than the quantized matmul there and gives exactly the bf16
+# GEMM's result.
+
+# At or above this many input rows, dequantize and run the bf16 matmul.
+_FP8_DEQUANT_MIN_ROWS = 512
+
+
+def _fp8_rows(x: mx.array) -> int:
+    return x.size // x.shape[-1]
+
+
+class Fp8BlockLinear(nn.QuantizedLinear):
+    def __init__(self, input_dims: int, output_dims: int, bias: bool = False):
+        nn.Module.__init__(self)
+        self.group_size, self.bits, self.mode = 32, 8, "mxfp8"
+        self.weight = mx.zeros((output_dims, input_dims // 4), dtype=mx.uint32)
+        self.scales = mx.zeros((output_dims, input_dims // 32), dtype=mx.uint8)
+        self.biases = None
+        if bias:
+            self.bias = mx.zeros((output_dims,))
+        self.freeze()
+
+    def dense_weight(self, dtype) -> mx.array:
+        return mx.dequantize(
+            self["weight"], self["scales"], group_size=32, bits=8, mode="mxfp8",
+            dtype=dtype,
+        )
+
+    def __call__(self, x: mx.array) -> mx.array:
+        if _fp8_rows(x) < _FP8_DEQUANT_MIN_ROWS:
+            return super().__call__(x)
+        y = x @ self.dense_weight(x.dtype).T
+        if "bias" in self:
+            y = y + self["bias"]
+        return y
+
+
+def _dense_linear(args: "ModelArgs", input_dims: int, output_dims: int, bias: bool = False):
+    """A projection that the checkpoint stores in FP8: Fp8BlockLinear for DeepSeek's own
+    FP8 checkpoints (when the dims fit mxfp8 groups), nn.Linear otherwise."""
+    if args.fp8_block_weights and input_dims % 32 == 0:
+        return Fp8BlockLinear(input_dims, output_dims, bias=bias)
+    return nn.Linear(input_dims, output_dims, bias=bias)
+
+
+def _ue8m0_bytes(name: str, scale: mx.array) -> mx.array:
+    """A checkpoint's ue8m0 block scales as their exponent bytes. MLX loads F8_E8M0 as
+    uint8 (the bytes themselves). Float scales must be exact powers of two; a float32
+    power of two's exponent field is its ue8m0 byte (both biased by 127)."""
+    if scale.dtype == mx.uint8:
+        return scale
+    bits = scale.astype(mx.float32).view(mx.int32)
+    exponent = mx.bitwise_and(mx.right_shift(bits, 23), 0xFF)
+    exact = mx.all((mx.bitwise_and(bits, (1 << 23) - 1) == 0) & (exponent > 0) & (bits > 0))
+    if not exact.item():
+        raise ValueError(f"{name}: an FP8 block scale is not a power of two (scale_fmt ue8m0)")
+    return exponent.astype(mx.uint8)
+
+
+def _fp8_block_to_mxfp8(weight: mx.array, scale: mx.array):
+    """FP8 weight [M, N] (uint8 e4m3 bytes) and ue8m0 block scales [ceil(M/128),
+    ceil(N/128)] (uint8) -> mxfp8 (packed uint32 [M, N/4], scales uint8 [M, N/32])."""
+    m, n = weight.shape
+    packed = weight.astype(mx.uint8).view(mx.uint32).reshape(m, n // 4)
+    scales = mx.repeat(mx.repeat(scale.astype(mx.uint8), 128, axis=0)[:m], 4, axis=1)
+    return packed, scales[:, : n // 32]
+
 
 # --------------------------------------------------------------------------- #
 # RoPE (traditional pair-wise, YaRN-aware, supports inverse rotation)         #
@@ -189,6 +285,18 @@ class DeepseekV4RoPE(nn.Module):
     @property
     def freqs(self) -> mx.array:
         return self._freqs[0]
+
+    def head_freqs(self, head_dim: int) -> mx.array:
+        """exo perf: periods for rotating a whole ``head_dim`` vector whose last ``dims``
+        are the RoPE dims: the leading pairs get an infinite period (angle 0: cos 1, sin 0),
+        so they pass through unchanged. One rope kernel instead of slice + rope +
+        concatenate; the output is bit-identical."""
+        cache = self.__dict__.setdefault("_head_freqs", {})
+        if head_dim not in cache:
+            lead = mx.full(((head_dim - self.dims) // 2,), math.inf, dtype=mx.float32)
+            cache[head_dim] = mx.concatenate([lead, self.freqs])
+            mx.eval(cache[head_dim])
+        return cache[head_dim]
 
     def __call__(self, x: mx.array, offset=0, inverse: bool = False) -> mx.array:
         """``offset`` may be a Python int (all sequences at the same position)
@@ -569,6 +677,98 @@ def hc_sinkhorn_collapse(mixes, scale, base, x, hc_mult, sinkhorn_iters, eps):
     return collapsed, post, comb
 
 
+# exo perf: two kernels for the hyper-connections around every attention and MoE block.
+#   - hc mix (decode-sized calls): mixes = rms_norm(x, fp32) @ fn.T as one kernel, one
+#     threadgroup per (row, mix): the sum of squares and the dot product in one pass,
+#     then dot * rsqrt(mean + eps). It replaces a cast, an RMSNorm and a matmul; the
+#     float32 result differs only by summation order.
+#   - hc post: y[j] = post[j] * f + sum_i comb[i, j] * residual[i] in float32, one
+#     kernel instead of a cast, a matmul and an elementwise kernel (and no float32
+#     copy of the residual in prefill).
+_HC_MIX_MAX_ROWS = 32
+
+
+def _make_hc_mix_kernel():
+    if mx.default_device() != mx.gpu or not mx.metal.is_available():
+        return None
+    source = """
+        uint tid = thread_position_in_threadgroup.x;
+        uint tg = threadgroup_position_in_grid.x;
+        uint lane = tid % 32;
+        uint sg = tid / 32;
+        uint j = tg % MIX;
+        uint row = tg / MIX;
+        using bf4 = vec<bfloat16_t, 4>;
+        const device bf4* xr = (const device bf4*)(x + row * N);
+        const device float4* w = (const device float4*)(fn + j * N);
+        float ss = 0.0f;
+        float dot = 0.0f;
+        for (uint i = tid; i < N / 4; i += 256) {
+            float4 v = float4(xr[i]);
+            ss += metal::dot(v, v);
+            dot += metal::dot(v, w[i]);
+        }
+        ss = simd_sum(ss);
+        dot = simd_sum(dot);
+        threadgroup float s_ss[8];
+        threadgroup float s_dot[8];
+        if (lane == 0) {
+            s_ss[sg] = ss;
+            s_dot[sg] = dot;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (tid == 0) {
+            float t_ss = 0.0f;
+            float t_dot = 0.0f;
+            for (uint k = 0; k < 8; ++k) {
+                t_ss += s_ss[k];
+                t_dot += s_dot[k];
+            }
+            mixes[row * MIX + j] = t_dot * metal::rsqrt(t_ss / float(N) + eps[0]);
+        }
+    """
+    return mx.fast.metal_kernel(
+        name="dsv4_hc_mix",
+        input_names=["x", "fn", "eps"],
+        output_names=["mixes"],
+        source=source,
+    )
+
+
+def _make_hc_post_kernel():
+    if mx.default_device() != mx.gpu or not mx.metal.is_available():
+        return None
+    source = """
+        uint gid = thread_position_in_grid.x;
+        constexpr uint D4 = D / 4;
+        uint d4 = gid % D4;
+        uint rj = gid / D4;
+        uint j = rj % 4;
+        uint row = rj / 4;
+        using bf4 = vec<bfloat16_t, 4>;
+        const device bf4* f4 = (const device bf4*)f_out;
+        const device bf4* r4 = (const device bf4*)residual;
+        device bf4* o4 = (device bf4*)out;
+        const device float* c = comb + row * 16;
+        float4 y = post[row * 4 + j] * float4(f4[row * D4 + d4]);
+        float4 acc = c[0 * 4 + j] * float4(r4[(row * 4 + 0) * D4 + d4]);
+        acc += c[1 * 4 + j] * float4(r4[(row * 4 + 1) * D4 + d4]);
+        acc += c[2 * 4 + j] * float4(r4[(row * 4 + 2) * D4 + d4]);
+        acc += c[3 * 4 + j] * float4(r4[(row * 4 + 3) * D4 + d4]);
+        o4[(row * 4 + j) * D4 + d4] = bf4(y + acc);
+    """
+    return mx.fast.metal_kernel(
+        name="dsv4_hc_post",
+        input_names=["f_out", "residual", "post", "comb"],
+        output_names=["out"],
+        source=source,
+    )
+
+
+_hc_mix_kernel = _make_hc_mix_kernel()
+_hc_post_kernel = _make_hc_post_kernel()
+
+
 class HyperConnection(nn.Module):
     """Per-block mHC: projects an ``[..., hc, D]`` state to ``pre``/``post``/``comb``.
 
@@ -600,18 +800,35 @@ class HyperConnection(nn.Module):
         self.scale = mx.zeros((3,), dtype=mx.float32)
         # Cache so the kernel launch doesn't allocate a new mx.array each call.
         self._eps_arr = mx.array([hc_eps], dtype=mx.float32)
+        self._rms_eps_arr = mx.array([norm_eps], dtype=mx.float32)
 
     def hc_pre(self, x: mx.array):
         # x: [B, S, hc, D]  ->  (y [B, S, D], post [B, S, hc], comb [B, S, hc, hc])
         B, S, hc, D = x.shape
-        # mx.fast.rms_norm is Apple's optimized Metal kernel for the RMS+rsqrt
-        # path; replacing it with a hand-rolled compile-fuse regresses prefill
-        # because the manual rsqrt(mean(x*x)) chain doesn't dispatch to the
-        # same fused kernel as fast.rms_norm.
-        xf = mx.fast.rms_norm(
-            x.reshape(B, S, hc * D).astype(mx.float32), None, self.norm_eps
-        )
-        mixes = xf @ self.fn.T
+        if (
+            _hc_mix_kernel is not None
+            and B * S <= _HC_MIX_MAX_ROWS
+            and x.dtype == mx.bfloat16
+            and (hc * D) % 1024 == 0
+        ):
+            mix = self.fn.shape[0]
+            mixes = _hc_mix_kernel(
+                inputs=[x, self.fn, self._rms_eps_arr],
+                template=[("N", hc * D), ("MIX", mix)],
+                grid=(B * S * mix * 256, 1, 1),
+                threadgroup=(256, 1, 1),
+                output_shapes=[(B, S, mix)],
+                output_dtypes=[mx.float32],
+            )[0]
+        else:
+            # mx.fast.rms_norm is Apple's optimized Metal kernel for the RMS+rsqrt
+            # path; replacing it with a hand-rolled compile-fuse regresses prefill
+            # because the manual rsqrt(mean(x*x)) chain doesn't dispatch to the
+            # same fused kernel as fast.rms_norm.
+            xf = mx.fast.rms_norm(
+                x.reshape(B, S, hc * D).astype(mx.float32), None, self.norm_eps
+            )
+            mixes = xf @ self.fn.T
         # Fused sinkhorn + collapse — single Metal dispatch when HC=4 and x is
         # bf16; falls back to separate sinkhorn-then-matmul-collapse otherwise.
         return hc_sinkhorn_collapse(
@@ -630,6 +847,22 @@ class HyperConnection(nn.Module):
         # residual [B, S, hc, D]      (input dtype)
         # post     [B, S, hc]         (fp32, from sinkhorn)
         # comb     [B, S, hc, hc]     (fp32, from sinkhorn)
+        if (
+            _hc_post_kernel is not None
+            and residual.shape[-2] == 4
+            and f_out.dtype == mx.bfloat16
+            and residual.dtype == mx.bfloat16
+            and f_out.shape[-1] % 4 == 0
+        ):
+            B, S, hc, D = residual.shape
+            return _hc_post_kernel(
+                inputs=[f_out, residual, post, comb],
+                template=[("D", D)],
+                grid=(B * S * hc * (D // 4), 1, 1),
+                threadgroup=(256, 1, 1),
+                output_shapes=[residual.shape],
+                output_dtypes=[f_out.dtype],
+            )[0]
         return _hc_expand_ops(f_out, residual, post, comb)
 
 
@@ -1523,13 +1756,13 @@ def _compressor_split(kv_gate, split):
 
 @mx.compile
 def _compressor_norm_strided_rope(c, norm_w, norm_eps, offset, rd, scale, freqs):
-    """Fused: RMSNorm + strided rope on the last rd dims."""
+    """Fused: RMSNorm + strided rope on the last rd dims (``freqs`` covers the whole
+    row, see DeepseekV4RoPE.head_freqs)."""
     c = mx.fast.rms_norm(c, norm_w, norm_eps)
-    rotated = mx.fast.rope(
-        c[..., -rd:], rd, traditional=True, base=None,
+    return mx.fast.rope(
+        c, c.shape[-1], traditional=True, base=None,
         scale=scale, offset=offset, freqs=freqs,
     )
-    return mx.concatenate([c[..., :-rd], rotated], axis=-1)
 
 
 def _carry_last_window(
@@ -1767,7 +2000,7 @@ class Compressor(nn.Module):
                 int(pool_base) // ratio,
                 self.rope_head_dim,
                 float(ratio),
-                self.rope.freqs,
+                self.rope.head_freqs(d),
             )
         # exo fix: the reference's FP4 (indexer) / FP8 (attention) rounding of new rows
         if key == _K_IDX:
@@ -1854,27 +2087,195 @@ def _block_round(x: mx.array, block: int, fp4: bool) -> mx.array:
     return (y * s).reshape(shape).astype(dtype)
 
 
-def _fp8_kv_sim(kv: mx.array, rd: int) -> mx.array:
+@mx.compile
+def _fp8_kv_sim_ops(kv: mx.array, rd: int) -> mx.array:
     return mx.concatenate([_block_round(kv[..., :-rd], 64, False), kv[..., -rd:]], axis=-1)
+
+
+# exo perf: _block_round as one Metal kernel (the ops above are ~10 kernels even when
+# compiled, and decode runs them on a few hundred values per layer). One simdgroup per
+# block; the same float32 steps as _block_round, so the output is bit-identical (the
+# tests compare the two, and e4m3 rounding against mx.to_fp8 on every bf16 value).
+def _make_block_round_kernel():
+    if mx.default_device() != mx.gpu or not mx.metal.is_available():
+        return None
+    source = """
+        uint gid = thread_position_in_grid.x;
+        uint lane = gid % 32;
+        uint blk = gid / 32;
+        constexpr uint NB = (N + BLOCK - 1) / BLOCK;
+        constexpr uint EPL = BLOCK / 32;
+        // _block_round's constants: qmax, and amin (1e-4, or 6 * 2**-126 for FP4)
+        const float QMAX = FP4 ? 6.0f : 448.0f;
+        const float AMIN = FP4 ? as_type<float>(0x01C00000) : 1e-4f;
+        uint row = blk / NB;
+        uint col0 = (blk % NB) * BLOCK;
+        uint base = row * N + col0;
+        if (col0 >= NR) {
+            for (uint i = 0; i < EPL; ++i) {
+                uint c = col0 + lane + 32 * i;
+                if (c < N) {
+                    out[row * N + c] = static_cast<OUT_T>(inp[row * N + c]);
+                }
+            }
+            return;
+        }
+        float v[EPL];
+        float amax = 0.0f;
+        for (uint i = 0; i < EPL; ++i) {
+            float x = static_cast<float>(inp[base + lane + 32 * i]);
+            if (VIA_BF16) {
+                x = static_cast<float>(static_cast<bfloat16_t>(x));
+            }
+            v[i] = x;
+            amax = metal::max(amax, metal::abs(x));
+        }
+        amax = simd_max(amax);
+        amax = metal::max(amax, AMIN);
+        float t = amax * (1.0f / QMAX);
+        int tb = as_type<int>(t);
+        int e = ((tb >> 23) & 0xFF) - 127 + (((tb & 0x7FFFFF) != 0) ? 1 : 0);
+        float s = as_type<float>((e + 127) << 23);
+        float inv_s = as_type<float>((127 - e) << 23);
+        for (uint i = 0; i < EPL; ++i) {
+            float y = metal::clamp(v[i] * inv_s, -QMAX, QMAX);
+            float a = metal::abs(y);
+            float q;
+            if (FP4) {
+                q = a <= 0.25f ? 0.0f : a < 0.75f ? 0.5f : a <= 1.25f ? 1.0f
+                  : a < 1.75f ? 1.5f : a <= 2.5f ? 2.0f : a < 3.5f ? 3.0f
+                  : a <= 5.0f ? 4.0f : 6.0f;
+                y = y < 0.0f ? -q : q;
+            } else {
+                int ea = metal::max(((as_type<int>(a) >> 23) & 0xFF) - 127, -6);
+                float ulp = as_type<float>((ea - 3 + 127) << 23);
+                float inv_ulp = as_type<float>((127 - (ea - 3)) << 23);
+                q = metal::min(metal::rint(a * inv_ulp) * ulp, 448.0f);
+                y = metal::copysign(q, y);
+            }
+            out[base + lane + 32 * i] = static_cast<OUT_T>(y * s);
+        }
+    """
+    return mx.fast.metal_kernel(
+        name="dsv4_block_round",
+        input_names=["inp"],
+        output_names=["out"],
+        source=source,
+    )
+
+
+_block_round_kernel = _make_block_round_kernel()
+
+
+def _block_round_fused(
+    x: mx.array, block: int, fp4: bool, rounded: int, out_dtype, via_bf16: bool = False
+) -> mx.array:
+    """_block_round over the first `rounded` values of each row of x (the rest copied),
+    as one kernel. x may be float32 when via_bf16 (it is rounded to bf16 first)."""
+    n = x.shape[-1]
+    rows = x.size // n
+    nb = (n + block - 1) // block
+    return _block_round_kernel(
+        inputs=[x],
+        template=[
+            ("N", n), ("NR", rounded), ("BLOCK", block), ("FP4", fp4),
+            ("VIA_BF16", via_bf16), ("OUT_T", out_dtype),
+        ],
+        grid=(rows * nb * 32, 1, 1),
+        threadgroup=(256, 1, 1),
+        output_shapes=[x.shape],
+        output_dtypes=[out_dtype],
+    )[0]
+
+
+def _fp8_kv_sim(kv: mx.array, rd: int) -> mx.array:
+    n = kv.shape[-1]
+    if _block_round_kernel is None or (n - rd) % 64 or rd % 64:
+        return _fp8_kv_sim_ops(kv, rd)
+    return _block_round_fused(kv, 64, False, n - rd, kv.dtype)
 
 
 _HADAMARD: Dict[int, mx.array] = {}
 
 
-def _fp4_indexer_sim(x: mx.array) -> mx.array:
-    n = x.shape[-1]
+def _hadamard(n: int) -> mx.array:
     if n not in _HADAMARD:
         h = mx.array([[1.0]])
         while h.shape[0] < n:
             h = mx.concatenate([mx.concatenate([h, h], 1), mx.concatenate([h, -h], 1)], 0)
         _HADAMARD[n] = h * (n**-0.5)
-    rotated = (x.astype(mx.float32) @ _HADAMARD[n].T).astype(x.dtype)
+        mx.eval(_HADAMARD[n])
+    return _HADAMARD[n]
+
+
+@mx.compile
+def _fp4_rotate_round(x: mx.array, hadamard: mx.array) -> mx.array:
+    rotated = (x.astype(mx.float32) @ hadamard.T).astype(x.dtype)
     return _block_round(rotated, 32, True)
+
+
+def _fp4_indexer_sim(x: mx.array) -> mx.array:
+    n = x.shape[-1]
+    if _block_round_kernel is None or n % 32 or x.dtype != mx.bfloat16:
+        return _fp4_rotate_round(x, _hadamard(n))
+    rotated = x.astype(mx.float32) @ _hadamard(n).T
+    return _block_round_fused(rotated, 32, True, n, x.dtype, via_bf16=True)
 
 
 # --------------------------------------------------------------------------- #
 # Indexer                                                                     #
 # --------------------------------------------------------------------------- #
+
+
+# exo perf: the indexer's decode scoring (q . k per head, bf16, ReLU, weighted sum over
+# heads) as one kernel instead of a matmul, a ReLU and a second matmul. One simdgroup
+# per (row, compressed row); each lane scores n_heads/32 heads in float32, rounds each
+# head's score to bf16 like the matmul did, and the weighted sum is accumulated in
+# float32 and rounded to bf16 once. Only the summation order differs from the matmuls.
+def _make_indexer_score_kernel():
+    if mx.default_device() != mx.gpu or not mx.metal.is_available():
+        return None
+    source = """
+        // the row count comes from the pool's shape, not a template parameter: it grows
+        // every few decode steps and each new value would compile a new kernel
+        uint B = k_shape[0];
+        uint T = k_shape[1];
+        uint gid = thread_position_in_grid.x;
+        uint lane = gid % 32;
+        uint key = gid / 32;
+        uint b = key / T;
+        if (b >= B) return;
+        uint t = key % T;
+        constexpr uint HPL = H / 32;
+        constexpr uint D4 = D / 4;
+        using bf4 = vec<bfloat16_t, 4>;
+        const device bf4* k4 = (const device bf4*)(k + (b * T + t) * D);
+        float acc = 0.0f;
+        for (uint j = 0; j < HPL; ++j) {
+            uint h = lane + 32 * j;
+            const device bf4* q4 = (const device bf4*)(q + (b * H + h) * D);
+            float dot = 0.0f;
+            for (uint d = 0; d < D4; ++d) {
+                dot += metal::dot(float4(q4[d]), float4(k4[d]));
+            }
+            float s = static_cast<float>(static_cast<bfloat16_t>(dot));
+            s = metal::max(s, 0.0f);
+            acc += static_cast<float>(w[b * H + h]) * s;
+        }
+        acc = simd_sum(acc);
+        if (lane == 0) {
+            out[b * T + t] = static_cast<bfloat16_t>(acc);
+        }
+    """
+    return mx.fast.metal_kernel(
+        name="dsv4_indexer_score",
+        input_names=["q", "k", "w"],
+        output_names=["out"],
+        source=source,
+    )
+
+
+_indexer_score_kernel = _make_indexer_score_kernel()
 
 
 class Indexer(nn.Module):
@@ -1899,9 +2300,7 @@ class Indexer(nn.Module):
         self.compress_ratio = compress_ratio
         self.softmax_scale = self.head_dim ** -0.5
         self.rope = rope
-        self.wq_b = nn.Linear(
-            args.q_lora_rank, self.n_heads * self.head_dim, bias=False
-        )
+        self.wq_b = _dense_linear(args, args.q_lora_rank, self.n_heads * self.head_dim)
         self.weights_proj = nn.Linear(args.hidden_size, self.n_heads, bias=False)
         self.compressor = Compressor(
             dim=args.hidden_size,
@@ -1938,43 +2337,93 @@ class Indexer(nn.Module):
         # from axis -2, so rotate q as [B, n_heads, S, head_dim].
         q = self.wq_b(qr).reshape(B, S, self.n_heads, self.head_dim)
         q = q.transpose(0, 2, 1, 3)
-        q = mx.concatenate(
-            [q[..., :-rd], self.rope(q[..., -rd:], offset=offset)], axis=-1
+        q = mx.fast.rope(
+            q, self.head_dim, traditional=True, base=None, scale=1.0,
+            offset=offset, freqs=self.rope.head_freqs(self.head_dim),
         )
         # exo fix: Hadamard rotation and FP4 rounding of the query, like the reference
         q = _fp4_indexer_sim(q.transpose(0, 2, 1, 3))
+        # exo perf: the weights carry a minus sign, so the head reduction yields -score
+        # (bit for bit: IEEE negation commutes with every rounding step) and the top-k
+        # needs no separate negation kernel before argpartition.
         per_head_weights = self.weights_proj(x) * (
-            self.softmax_scale * (self.n_heads ** -0.5)
+            -(self.softmax_scale * (self.n_heads ** -0.5))
         )
-        score = mx.einsum("bshd,btd->bsht", q.astype(idx_kv.dtype), idx_kv)
-        score = mx.maximum(score, 0)  # ReLU
-        # Reduce over n_heads as a matmul: [B,S,1,n_heads] @ [B,S,n_heads,T] → [B,S,T]
-        score = (per_head_weights[:, :, None, :] @ score).squeeze(2)
+        T = idx_kv.shape[1]
+        k = min(self.index_topk, T)
+        q = q.astype(idx_kv.dtype)
+        pool_lengths = cache.pooled_lengths(_K_IDX)
+        # exo perf: score long prefill steps a block of queries at a time, so the
+        # [queries, heads, rows] intermediate stays bounded (it is 2 GB per 4096-token
+        # chunk at 16k tokens of context and grows with the context).
+        q_block = max(1, _INDEXER_MAX_SCORES // max(1, B * self.n_heads * T))
+        if S <= q_block:
+            return self._top_rows(q, per_head_weights, idx_kv, pool_lengths, offset, k)
+        return mx.concatenate(
+            [
+                self._top_rows(
+                    q[:, s0 : s0 + q_block], per_head_weights[:, s0 : s0 + q_block],
+                    idx_kv, pool_lengths, offset + s0, k, several_queries=True,
+                )
+                for s0 in range(0, S, q_block)
+            ],
+            axis=1,
+        )
+
+    def _top_rows(
+        self, q, per_head_weights, idx_kv, pool_lengths, offset, k, several_queries=False
+    ):
+        B, S, H, Dh = q.shape
+        T = idx_kv.shape[1]
+        if (
+            S == 1
+            and _indexer_score_kernel is not None
+            and H % 32 == 0
+            and Dh % 4 == 0
+            and q.dtype == mx.bfloat16
+            and idx_kv.dtype == mx.bfloat16
+            and per_head_weights.dtype == mx.bfloat16
+        ):
+            neg_score = _indexer_score_kernel(
+                inputs=[q, idx_kv, per_head_weights],
+                template=[("H", H), ("D", Dh)],
+                grid=(B * T * 32, 1, 1),
+                threadgroup=(256, 1, 1),
+                output_shapes=[(B, 1, T)],
+                output_dtypes=[mx.bfloat16],
+            )[0]
+        else:
+            # exo perf: the einsum as one matmul with heads folded into the rows: the same
+            # GEMM (bit-identical scores) but a contiguous result, which halves the ReLU's time
+            score = (q.reshape(B, S * H, Dh) @ idx_kv.swapaxes(-1, -2)).reshape(B, S, H, T)
+            score = mx.maximum(score, 0)  # ReLU
+            # Reduce over n_heads as a matmul: [B,S,1,n_heads] @ [B,S,n_heads,T] → [B,S,T]
+            # (negated weights: this is -score, see Indexer.__call__)
+            neg_score = (per_head_weights[:, :, None, :] @ score).squeeze(2)
 
         # Per-row pool length masking — zero scores for invalid pool slots so
         # topk doesn't pick padding zeros from short rows.
-        pool_lengths = cache.pooled_lengths(_K_IDX)
         if pool_lengths is not None:
             lengths_a = mx.array(pool_lengths, dtype=mx.int32)
             valid = (
                 mx.arange(idx_kv.shape[1], dtype=mx.int32)[None, None, :]
                 < lengths_a[:, None, None]
             )
-            score = mx.where(valid, score, mx.array(-1e30, dtype=score.dtype))
+            neg_score = mx.where(valid, neg_score, mx.array(1e30, dtype=neg_score.dtype))
 
         # exo fix: in multi-token steps (prefill), rows that complete later in the step are
         # not visible to earlier queries. Exclude them before top-k, like the
         # reference, so each query keeps index_topk rows it can attend to.
-        if S > 1:
+        if S > 1 or several_queries:
             visible = _compressed_visibility(
                 B, S, offset, idx_kv.shape[1], self.compress_ratio
             )[:, 0]
-            score = mx.where(visible, score, mx.array(-math.inf, dtype=score.dtype))
+            neg_score = mx.where(
+                visible, neg_score, mx.array(math.inf, dtype=neg_score.dtype)
+            )
 
-        k = min(self.index_topk, idx_kv.shape[1])
-        return mx.argpartition(-score, kth=k - 1, axis=-1)[..., :k].astype(
-            mx.int32
-        )
+        # exo perf: argpartition's uint32 indices are used as they are
+        return mx.argpartition(neg_score, kth=k - 1, axis=-1)[..., :k]
 
 
 # --------------------------------------------------------------------------- #
@@ -2077,6 +2526,299 @@ def _compressed_visibility(
     return comp_visible[:, None, :, :]
 
 
+# --------------------------------------------------------------------------- #
+# exo perf: prefill attention over the keys each query can see                 #
+# --------------------------------------------------------------------------- #
+# MLX has no fused attention kernel for head_dim 512, so sinks attention runs as
+# its unfused fallback: one bf16 score matrix over every query x every key,
+# masked, softmaxed and multiplied back. In a prefill chunk that is all S window
+# keys and all compressed rows for every query, while each query can only see
+# its last `window` raw tokens and, in indexer layers, `index_topk` compressed
+# rows. The functions below do the fallback's math (scale q in bf16, bf16
+# scores, finfo.min masking, the sink as an extra logit, precise softmax, bf16
+# probabilities times the keys) on just those keys: masked keys get probability
+# exactly 0 in the fallback, so only the GEMMs' accumulation order changes.
+
+_PREFILL_Q_BLOCK = 128  # queries per block
+_INDEXER_MAX_SCORES = 2**30  # indexer scores (queries x heads x rows) per block
+_PREFILL_PER_QUERY_KEYS = True  # False: the masked full attention (tests compare the two)
+
+
+def _attend(q_rows, keys, valid, sinks_col, neg):
+    """q_rows [..., Q, D] (scaled), keys [..., K, D], valid bool broadcastable to
+    [..., Q, K], sinks_col broadcastable to [..., Q, 1] -> [..., Q, D]."""
+    scores = q_rows @ keys.swapaxes(-1, -2)
+    scores = mx.where(valid, scores, neg)
+    sink = mx.broadcast_to(sinks_col, (*scores.shape[:-1], 1))
+    scores = mx.concatenate([sink, scores], axis=-1)
+    probs = mx.softmax(scores, axis=-1, precise=True)[..., 1:]
+    return probs @ keys
+
+
+# exo perf: decode attention (one query per row) as two kernels instead of a gather, two
+# concatenates, a scale, two matmuls and a softmax. The first scores blocks of 64 keys
+# for 8 heads per threadgroup, reading the window rows and the selected (or all)
+# compressed rows where they are, and keeps a float32 running max, sum and weighted
+# value sum per block; the second merges the blocks with the sink logit. The query is
+# scaled in bf16 and each score rounded to bf16 as MLX's fallback does; the softmax
+# weights stay float32 (the fallback rounds them to bf16 before the second matmul).
+_DECODE_KEY_BLOCK = 32
+_DECODE_ATTENTION_KERNELS = True  # False: the gather + MLX attention (tests compare)
+
+
+def _make_decode_attention_kernels():
+    if mx.default_device() != mx.gpu or not mx.metal.is_available():
+        return None
+    partial_source = """
+        // grid: (B * NB * H/8) threadgroups of 256 threads; one simdgroup per head
+        uint tid = thread_position_in_threadgroup.x;
+        uint tg = threadgroup_position_in_grid.x;
+        uint lane = tid % 32;
+        uint sg = tid / 32;
+        uint B = q_shape[0];
+        uint H = q_shape[1];
+        uint W = window_shape[1];
+        uint T = pool_shape[1];
+        uint KC = !HAS_POOL ? 0 : (USE_IDX ? idx_shape[2] : T);
+        uint K = W + KC;
+        uint NB = (K + KB - 1) / KB;
+        uint HG = H / 8;
+        uint hg = tg % HG;
+        uint blk = (tg / HG) % NB;
+        uint b = tg / (HG * NB);
+        uint h = hg * 8 + sg;
+        constexpr uint EPL = D / 32;
+        float qs[EPL];
+        float sc = static_cast<float>(scale[0]);
+        for (uint i = 0; i < EPL; ++i) {
+            float v = static_cast<float>(q[(b * H + h) * D + lane * EPL + i]);
+            qs[i] = static_cast<float>(static_cast<bfloat16_t>(v * sc));
+        }
+        float m = -INFINITY;
+        float l = 0.0f;
+        float o[EPL];
+        for (uint i = 0; i < EPL; ++i) o[i] = 0.0f;
+        uint j0 = blk * KB;
+        uint j1 = metal::min(j0 + KB, K);
+        for (uint j = j0; j < j1; ++j) {
+            const device bfloat16_t* row;
+            if (j < W) {
+                if (MASKED && !window_valid[b * W + j]) continue;  // padding of a short row
+                row = window + (b * W + j) * D;
+            } else {
+                uint c = USE_IDX ? idx[b * KC + (j - W)] : (j - W);
+                if (MASKED && c >= static_cast<uint>(pool_len[b])) continue;
+                row = pool + (b * T + c) * D;
+            }
+            float kv[EPL];
+            float dot = 0.0f;
+            for (uint i = 0; i < EPL; ++i) {
+                kv[i] = static_cast<float>(row[lane * EPL + i]);
+                dot += qs[i] * kv[i];
+            }
+            dot = simd_sum(dot);
+            float s = static_cast<float>(static_cast<bfloat16_t>(dot));
+            float m_new = metal::max(m, s);
+            float corr = metal::exp(m - m_new);
+            float e = metal::exp(s - m_new);
+            l = l * corr + e;
+            for (uint i = 0; i < EPL; ++i) o[i] = o[i] * corr + e * kv[i];
+            m = m_new;
+        }
+        uint slot = (b * H + h) * NB + blk;
+        if (lane == 0) {
+            part_m[slot] = m;
+            part_l[slot] = l;
+        }
+        for (uint i = 0; i < EPL; ++i) part_o[slot * D + lane * EPL + i] = o[i];
+    """
+    merge_source = """
+        // grid: B * H threadgroups of 128 threads
+        uint tid = thread_position_in_threadgroup.x;
+        uint bh = threadgroup_position_in_grid.x;
+        uint H = sinks_shape[0];
+        uint NB = part_m_shape[1];
+        uint h = bh % H;
+        float sink = static_cast<float>(sinks[h]);
+        float m = sink;
+        for (uint k = 0; k < NB; ++k) m = metal::max(m, part_m[bh * NB + k]);
+        threadgroup float w[MAXB];
+        for (uint k = tid; k < NB; k += 128) w[k] = metal::exp(part_m[bh * NB + k] - m);
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        float l = metal::exp(sink - m);
+        for (uint k = 0; k < NB; ++k) l += part_l[bh * NB + k] * w[k];
+        float inv = 1.0f / l;
+        for (uint d = tid; d < D; d += 128) {
+            float acc = 0.0f;
+            for (uint k = 0; k < NB; ++k) acc += part_o[(bh * NB + k) * D + d] * w[k];
+            out[bh * D + d] = static_cast<bfloat16_t>(acc * inv);
+        }
+    """
+    partial = mx.fast.metal_kernel(
+        name="dsv4_decode_attention_partial",
+        input_names=["q", "window", "pool", "idx", "scale", "window_valid", "pool_len"],
+        output_names=["part_m", "part_l", "part_o"],
+        source=partial_source,
+    )
+    merge = mx.fast.metal_kernel(
+        name="dsv4_decode_attention_merge",
+        input_names=["part_m", "part_l", "part_o", "sinks"],
+        output_names=["out"],
+        source=merge_source,
+    )
+    return partial, merge
+
+
+_decode_attention_kernels = _make_decode_attention_kernels()
+_DECODE_MAX_BLOCKS = 512  # merge kernel's threadgroup buffer: up to 16384 keys
+_DECODE_NO_PADDING = (mx.array([True]), mx.array([0], dtype=mx.int32))
+
+
+def _decode_attention(q, window_kv, pool, idx, scale, sinks, window_valid=None, pool_lengths=None):
+    """q [B, H, 1, D] (RoPE applied); window_kv [B, W, D]; pool [B, T, D] or None; idx
+    [B, 1, k] (rows of pool to use) or None (all of them). In a batch of rows of different
+    lengths, window_valid ([B, 1, 1, W] bool, None: all) and pool_lengths (per row, None:
+    all T) give each row's own keys; the others are skipped. Returns [B, H, 1, D], or None
+    when the kernels don't apply."""
+    if (
+        _decode_attention_kernels is None
+        or not _DECODE_ATTENTION_KERNELS
+        or q.dtype != mx.bfloat16
+        or window_kv.dtype != mx.bfloat16
+        or q.shape[1] % 8
+        or q.shape[-1] % 32
+    ):
+        return None
+    B, H, _, D = q.shape
+    W = window_kv.shape[1]
+    has_pool = pool is not None and pool.shape[1] > 0
+    if not has_pool:
+        pool, idx = window_kv, None  # unused (HAS_POOL false)
+    kc = 0 if not has_pool else (idx.shape[-1] if idx is not None else pool.shape[1])
+    K = W + kc
+    nb = (K + _DECODE_KEY_BLOCK - 1) // _DECODE_KEY_BLOCK
+    if nb > _DECODE_MAX_BLOCKS:
+        return None
+    use_idx = idx is not None
+    partial, merge = _decode_attention_kernels
+    scale_arr = mx.array([scale], dtype=mx.bfloat16)
+    idx_in = idx if use_idx else mx.zeros((B, 1, 1), dtype=mx.uint32)
+    # exo fix (batched rows of different lengths): skip each row's padding slots
+    masked = window_valid is not None or (has_pool and pool_lengths is not None)
+    if not masked:
+        valid_in, len_in = _DECODE_NO_PADDING  # unused
+    else:
+        valid_in = (
+            mx.ones((B, W), dtype=mx.bool_)
+            if window_valid is None
+            else mx.broadcast_to(window_valid, (B, 1, 1, W)).reshape(B, W)
+        )
+        lengths = _as_lengths_list(pool_lengths, B, pool.shape[1] if has_pool else 0)
+        len_in = mx.array(lengths * B if len(lengths) == 1 else lengths, dtype=mx.int32)
+    part_m, part_l, part_o = partial(
+        inputs=[q.reshape(B, H, D), window_kv, pool, idx_in, scale_arr, valid_in, len_in],
+        template=[
+            ("D", D), ("KB", _DECODE_KEY_BLOCK), ("USE_IDX", use_idx), ("HAS_POOL", has_pool),
+            ("MASKED", masked),
+        ],
+        grid=(B * nb * (H // 8) * 256, 1, 1),
+        threadgroup=(256, 1, 1),
+        output_shapes=[(B * H, nb), (B * H, nb), (B * H, nb, D)],
+        output_dtypes=[mx.float32, mx.float32, mx.float32],
+    )
+    out = merge(
+        inputs=[part_m, part_l, part_o, sinks],
+        template=[("D", D), ("MAXB", _DECODE_MAX_BLOCKS)],
+        grid=(B * H * 128, 1, 1),
+        threadgroup=(128, 1, 1),
+        output_shapes=[(B * H, D)],
+        output_dtypes=[mx.bfloat16],
+    )[0]
+    return out.reshape(B, H, 1, D)
+
+
+def _prefill_attention(
+    q: mx.array,
+    window_kv: mx.array,
+    compressed: Optional[mx.array],
+    topk: Optional[mx.array],
+    offset: int,
+    window: int,
+    ratio: int,
+    scale: float,
+    sinks: mx.array,
+) -> mx.array:
+    """Sinks attention for a multi-token step with a uniform (int) offset.
+
+    q [B, H, S, D] with RoPE; window_kv [B, Wl, D], rows in position order ending at
+    raw position offset + S - 1; compressed [B, T, D] or None; topk [B, S, k] (indexer
+    layers) or None. Returns [B, H, S, D], what one masked attention over
+    concat(window_kv, compressed) gives (window rows within `window` of the query,
+    compressed rows complete at the query, and only the top-k ones when the indexer
+    selects)."""
+    B, H, S, D = q.shape
+    dtype = q.dtype
+    q = mx.array(scale, dtype) * q
+    neg = mx.array(mx.finfo(dtype).min, dtype)
+    Wl = window_kv.shape[1]
+    win_start = offset + S - Wl
+    T = 0 if compressed is None else compressed.shape[1]
+    sinks = sinks.astype(dtype)
+    gather = topk is not None and T > topk.shape[-1]
+    outs = []
+    if gather:
+        # Each query attends to its own `window` raw tokens and its own top-k rows:
+        # gather them per query (like the reference's sparse attention).
+        kvcat = mx.concatenate([window_kv, compressed], axis=1).reshape(B * (Wl + T), D)
+        base = (mx.arange(B, dtype=mx.int32) * (Wl + T))[:, None, None]
+        sinks_col = sinks[None, None, :, None]
+        for s0 in range(0, S, _PREFILL_Q_BLOCK):
+            s1 = min(S, s0 + _PREFILL_Q_BLOCK)
+            qpos = mx.arange(offset + s0, offset + s1, dtype=mx.int32)
+            widx = (qpos - win_start)[:, None] - (window - 1) + mx.arange(window, dtype=mx.int32)[None, :]
+            wvalid = widx >= 0
+            sel = topk[:, s0:s1].astype(mx.int32)
+            cvalid = (sel + 1) * ratio <= (qpos[None, :, None] + 1)
+            idx = mx.concatenate(
+                [mx.broadcast_to(mx.maximum(widx, 0)[None], (B, s1 - s0, window)), sel + Wl],
+                axis=-1,
+            )
+            valid = mx.concatenate(
+                [mx.broadcast_to(wvalid[None], (B, s1 - s0, window)), cvalid], axis=-1
+            )
+            keys = mx.take(kvcat, idx + base, axis=0)  # [B, Q, window + k, D]
+            q_rows = q[:, :, s0:s1].transpose(0, 2, 1, 3)  # [B, Q, H, D]
+            o = _attend(q_rows, keys, valid[:, :, None, :], sinks_col, neg)
+            outs.append(o.transpose(0, 2, 1, 3))
+    else:
+        # Every query of a block shares one key set: the window rows the block can see
+        # plus all compressed rows (masked per query).
+        sink_logit = sinks[None, :, None, None]
+        for s0 in range(0, S, _PREFILL_Q_BLOCK):
+            s1 = min(S, s0 + _PREFILL_Q_BLOCK)
+            nq = s1 - s0
+            ka = max(0, offset + s0 - (window - 1) - win_start)
+            kb = offset + s1 - win_start
+            qpos = mx.arange(offset + s0, offset + s1, dtype=mx.int32)[:, None]
+            kpos = mx.arange(win_start + ka, win_start + kb, dtype=mx.int32)[None, :]
+            valid = (kpos <= qpos) & (kpos > qpos - window)
+            keys = window_kv[:, ka:kb]
+            if T:
+                cvis = mx.arange(1, T + 1, dtype=mx.int32)[None, :] * ratio <= qpos + 1
+                valid = mx.concatenate([valid, cvis], axis=-1)
+                keys = mx.concatenate([keys, compressed], axis=1)
+            # MQA: all heads share the keys, so fold heads into the GEMM's rows.
+            q_rows = q[:, :, s0:s1].reshape(B, H * nq, D)
+            sc = (q_rows @ keys.swapaxes(-1, -2)).reshape(B, H, nq, keys.shape[1])
+            sc = mx.where(valid[None, None], sc, neg)
+            sink = mx.broadcast_to(sink_logit, (B, H, nq, 1))
+            sc = mx.concatenate([sink, sc], axis=-1)
+            probs = mx.softmax(sc, axis=-1, precise=True)[..., 1:]
+            o = (probs.reshape(B, H * nq, keys.shape[1]) @ keys).reshape(B, H, nq, D)
+            outs.append(o)
+    return outs[0] if len(outs) == 1 else mx.concatenate(outs, axis=2)
+
+
 # Attention-side compile fuses (per-layer cost reduction). These collapse the
 # sequence  matmul → reshape/transpose/slice → norm → (rope)  into single
 # compiled kernels so each prefill attention call shaves several dispatches.
@@ -2128,18 +2870,11 @@ def _attn_q_proj_norm(q_flat, n_heads, head_dim, eps):
 
 @mx.compile
 def _attn_qkv_partial_rope(q, kv, offset, rd, freqs):
-    """Fused partial-RoPE on the trailing rd dims of q [B,H,S,D] and kv [B,S,D].
-    Slice + rope + concat × 2 → 2 dispatches collapse to 2 compiled kernels."""
-    q_pe = mx.fast.rope(
-        q[..., -rd:], rd, traditional=True, base=None,
-        scale=1.0, offset=offset, freqs=freqs,
-    )
-    q = mx.concatenate([q[..., :-rd], q_pe], axis=-1)
-    kv_pe = mx.fast.rope(
-        kv[..., -rd:], rd, traditional=True, base=None,
-        scale=1.0, offset=offset, freqs=freqs,
-    )
-    kv = mx.concatenate([kv[..., :-rd], kv_pe], axis=-1)
+    """Partial-RoPE on the trailing rd dims of q [B,H,S,D] and kv [B,S,D]; ``freqs``
+    covers the whole head (see DeepseekV4RoPE.head_freqs), so each is one rope kernel."""
+    d = q.shape[-1]
+    q = mx.fast.rope(q, d, traditional=True, base=None, scale=1.0, offset=offset, freqs=freqs)
+    kv = mx.fast.rope(kv, d, traditional=True, base=None, scale=1.0, offset=offset, freqs=freqs)
     return q, kv
 
 
@@ -2147,11 +2882,10 @@ def _attn_qkv_partial_rope(q, kv, offset, rd, freqs):
 def _attn_inv_rope_flatten(o, offset, rd, freqs, flat_dim):
     """Inverse-RoPE on trailing rd dims + transpose-and-reshape to
     ``[B, S, n_heads*head_dim]`` for the wo_a input."""
-    pe = mx.fast.rope(
-        o[..., -rd:], rd, traditional=True, base=None,
+    o = mx.fast.rope(
+        o, o.shape[-1], traditional=True, base=None,
         scale=-1.0, offset=offset, freqs=freqs,
     )
-    o = mx.concatenate([o[..., :-rd], pe], axis=-1)
     o = o.transpose(0, 2, 1, 3)
     return o.reshape(o.shape[0], o.shape[1], flat_dim)
 
@@ -2204,19 +2938,17 @@ class V4Attention(nn.Module):
         # Fused wq_a + wkv: single matmul on the hidden state, split the output
         # into the q_a and kv halves. Saves one dispatch + one x read per layer.
         # Sanitize concats the two checkpoint tensors along axis=0 at load time.
-        self.wqkv_a = nn.Linear(
-            self.dim, self.q_lora_rank + self.head_dim, bias=False
-        )
+        self.wqkv_a = _dense_linear(args, self.dim, self.q_lora_rank + self.head_dim)
         self.q_norm = nn.RMSNorm(self.q_lora_rank, eps=self.eps)
-        self.wq_b = nn.Linear(self.q_lora_rank, self.n_heads * self.head_dim, bias=False)
+        self.wq_b = _dense_linear(args, self.q_lora_rank, self.n_heads * self.head_dim)
         self.kv_norm = nn.RMSNorm(self.head_dim, eps=self.eps)
 
         self.attn_sink = mx.zeros((self.n_heads,), dtype=mx.float32)
 
         group_feat = (self.n_heads * self.head_dim) // self.n_groups
-        self.wo_a = nn.Linear(group_feat, self.n_groups * self.o_lora_rank, bias=False)
-        self.wo_b = nn.Linear(
-            self.n_groups * self.o_lora_rank, self.dim, bias=args.attention_bias
+        self.wo_a = _dense_linear(args, group_feat, self.n_groups * self.o_lora_rank)
+        self.wo_b = _dense_linear(
+            args, self.n_groups * self.o_lora_rank, self.dim, bias=args.attention_bias
         )
 
         if self.compress_ratio:
@@ -2260,16 +2992,27 @@ class V4Attention(nn.Module):
         group_feat = (self.n_heads * self.head_dim) // self.n_groups
         out = out.reshape(B, S, self.n_groups, group_feat)
 
+        if isinstance(self.wo_a, Fp8BlockLinear) and _fp8_rows(out) >= _FP8_DEQUANT_MIN_ROWS * self.n_groups:
+            # exo perf: prefill runs the bf16 path on the dequantized (identical) weight
+            wa = self.wo_a.dense_weight(out.dtype).reshape(
+                self.n_groups, self.o_lora_rank, group_feat
+            )
+            y = mx.einsum("bsgd,grd->bsgr", out, wa)
+            return y.reshape(B, S, self.n_groups * self.o_lora_rank)
+
         if isinstance(self.wo_a, nn.QuantizedLinear):
             # Batched over groups: one quantized_matmul for all groups instead
             # of a per-group Python loop (O(n_groups) → 1 kernel dispatch).
-            out_g = out.transpose(2, 0, 1, 3)  # [G, B, S, group_feat]
-            weight = self.wo_a.weight.reshape(self.n_groups, self.o_lora_rank, -1)[:, None]
-            scales = self.wo_a.scales.reshape(self.n_groups, self.o_lora_rank, -1)[:, None]
+            # exo perf: the batch's rows are the matmul's rows ([G, B*S, group_feat]), so each
+            # group's weight is read once per step, not once per row (it was a broadcast batch
+            # dimension); one row gives the same result bit for bit
+            out_g = out.reshape(B * S, self.n_groups, group_feat).transpose(1, 0, 2)
+            weight = self.wo_a.weight.reshape(self.n_groups, self.o_lora_rank, -1)
+            scales = self.wo_a.scales.reshape(self.n_groups, self.o_lora_rank, -1)
             biases = (
                 None
                 if self.wo_a.biases is None
-                else self.wo_a.biases.reshape(self.n_groups, self.o_lora_rank, -1)[:, None]
+                else self.wo_a.biases.reshape(self.n_groups, self.o_lora_rank, -1)
             )
             y = mx.quantized_matmul(
                 out_g,
@@ -2281,7 +3024,7 @@ class V4Attention(nn.Module):
                 bits=self.wo_a.bits,
                 mode=self.wo_a.mode,
             )
-            return y.transpose(1, 2, 0, 3).reshape(B, S, self.n_groups * self.o_lora_rank)
+            return y.transpose(1, 0, 2).reshape(B, S, self.n_groups * self.o_lora_rank)
 
         wa = self.wo_a.weight.reshape(self.n_groups, self.o_lora_rank, group_feat)
         y = mx.einsum("bsgd,grd->bsgr", out, wa)
@@ -2348,7 +3091,7 @@ class V4Attention(nn.Module):
         )
 
         # Fused: partial-RoPE on q + kv in one compiled call.
-        q, kv = _attn_qkv_partial_rope(q, kv, offset, rd, self.rope.freqs)
+        q, kv = _attn_qkv_partial_rope(q, kv, offset, rd, self.rope.head_freqs(self.head_dim))
         # exo fix: FP8 rounding of the non-RoPE KV dims, like the reference
         kv = _fp8_kv_sim(kv, rd)
 
@@ -2378,99 +3121,122 @@ class V4Attention(nn.Module):
             compressed_len = 0
             indexer_topk = None
 
-        window_len = window_kv.shape[1]
-        # Decode (S=1) fast path: gather the Indexer's top-k compressed rows
-        # directly into SDPA's key tensor so the kernel only attends to those
-        # K rows + the window. For prefill (S>1) fall back to attending to the
-        # full compressed buffer with a scatter-based mask — the gather-flat
-        # approach would over-include across query positions, changing output.
-        use_gather = (
-            S == 1 and compressed_len > 0 and indexer_topk is not None
+        sinks = self._sink_for(q.dtype)
+        uniform = (
+            _PREFILL_PER_QUERY_KEYS
+            and S > 1
+            and not isinstance(offset, mx.array)
+            and (v4_cache is None or v4_cache.pooled_lengths(_K_COMP) is None)
+            and (indexer_topk is None or v4_cache.pooled_lengths(_K_IDX) is None)
         )
-        if use_gather:
-            d = compressed.shape[-1]
-            # take_along_axis on a broadcast of the pool is ~15% faster at b=1
-            # than reshape+flat-gather (specialized fused kernel vs fancy-index).
-            expanded = mx.broadcast_to(
-                compressed[:, None, None, :, :], (B, 1, S, compressed_len, d)
+        if uniform:
+            # exo perf: attend only to the keys each query can see (see _prefill_attention)
+            o = _prefill_attention(
+                q, window_kv, compressed if compressed_len else None, indexer_topk,
+                offset, self.window, self.compress_ratio, self.scale, sinks,
             )
-            idx = mx.broadcast_to(
-                indexer_topk[:, None, :, :, None],
-                (B, 1, S, indexer_topk.shape[-1], d),
-            )
-            gathered = mx.take_along_axis(expanded, idx, axis=3).reshape(B, -1, d)
-            kv_all = mx.concatenate([window_kv, gathered], axis=1)
-        elif compressed_len > 0:
-            kv_all = mx.concatenate([window_kv, compressed], axis=1)
         else:
-            kv_all = window_kv
-
-        # Decode (S=1): one query, so no causal mask; every pool row is in the past (rows
-        # are emitted only after a full window of raw tokens). Only when the batch's rows
-        # have different lengths are some slots padding, which the mask excludes.
-        if S == 1:
+            window_len = window_kv.shape[1]
+            # Decode (S=1) fast path: gather the Indexer's top-k compressed rows
+            # directly into SDPA's key tensor so the kernel only attends to those
+            # K rows + the window. For prefill (S>1) fall back to attending to the
+            # full compressed buffer with a scatter-based mask — the gather-flat
+            # approach would over-include across query positions, changing output.
+            use_gather = (
+                S == 1 and compressed_len > 0 and indexer_topk is not None
+            )
             pool_lengths = (
                 v4_cache.pooled_lengths(_K_COMP)
-                if v4_cache is not None and compressed_len > 0
+                if S == 1 and v4_cache is not None and compressed_len > 0
                 else None
             )
-            mask = _decode_padding_mask(
-                B,
-                window_valid,
-                window_len,
-                pool_lengths,
-                compressed_len,
-                indexer_topk if use_gather else None,
-            )
-        else:
-            win_mask = _build_window_mask(B, S, offset, self.window, window_len)
-            if compressed_len > 0:
-                comp_mask = _compressed_visibility(
-                    B, S, offset, compressed_len, self.compress_ratio
+            o = None
+            if S == 1:
+                o = _decode_attention(
+                    q, window_kv, compressed if compressed_len else None,
+                    indexer_topk if use_gather else None, self.scale, sinks,
+                    window_valid, pool_lengths,
                 )
-                if indexer_topk is not None:
-                    k_range = mx.arange(compressed_len, dtype=mx.int32)
-                    selected = (
-                        indexer_topk[..., None] == k_range[None, None, None, :]
-                    ).any(axis=-2)[:, None, :, :]
-                    comp_mask = comp_mask & selected
-                mask = mx.concatenate([win_mask, comp_mask], axis=-1)
-            else:
-                mask = win_mask
-
-        kv_all_4d = kv_all[:, None, :, :]
-        sinks = self._sink_for(q.dtype)
-        # exo fix: mx.fast.scaled_dot_product_attention with sinks returns wrong
-        # values for head_dim 256/512 once n_heads * L_q * L_kv passes 2**31 (seen
-        # in MLX 0.32.3 and 0.32.4): a 4096-token prefill chunk crosses it in the
-        # CSA layers after ~16k tokens of context. Split the queries (counting the
-        # batch too, to stay clear of the limit when prompts are batched).
-        max_q = max(
-            1, _SDPA_MAX_SCORES // (B * q.shape[1] * kv_all_4d.shape[2])
-        )
-        if S <= max_q:
-            o = scaled_dot_product_attention(
-                q, kv_all_4d, kv_all_4d,
-                cache=None, scale=self.scale, mask=mask, sinks=sinks,
-            )
-        else:
-            o = mx.concatenate(
-                [
-                    scaled_dot_product_attention(
-                        q[:, :, s0 : s0 + max_q], kv_all_4d, kv_all_4d,
-                        cache=None, scale=self.scale,
-                        mask=None if mask is None else mask[:, :, s0 : s0 + max_q],
-                        sinks=sinks,
+            if o is None:
+                if use_gather:
+                    d = compressed.shape[-1]
+                    # take_along_axis on a broadcast of the pool is ~15% faster at b=1
+                    # than reshape+flat-gather (specialized fused kernel vs fancy-index).
+                    expanded = mx.broadcast_to(
+                        compressed[:, None, None, :, :], (B, 1, S, compressed_len, d)
                     )
-                    for s0 in range(0, S, max_q)
-                ],
-                axis=2,
-            )
+                    idx = mx.broadcast_to(
+                        indexer_topk[:, None, :, :, None],
+                        (B, 1, S, indexer_topk.shape[-1], d),
+                    )
+                    gathered = mx.take_along_axis(expanded, idx, axis=3).reshape(B, -1, d)
+                    kv_all = mx.concatenate([window_kv, gathered], axis=1)
+                elif compressed_len > 0:
+                    kv_all = mx.concatenate([window_kv, compressed], axis=1)
+                else:
+                    kv_all = window_kv
+
+                # Decode (S=1): one query, so no causal mask; every pool row is in the
+                # past (rows are emitted only after a full window of raw tokens). Only
+                # when the batch's rows have different lengths are some slots padding,
+                # which the mask excludes.
+                if S == 1:
+                    mask = _decode_padding_mask(
+                        B,
+                        window_valid,
+                        window_len,
+                        pool_lengths,
+                        compressed_len,
+                        indexer_topk if use_gather else None,
+                    )
+                else:
+                    win_mask = _build_window_mask(B, S, offset, self.window, window_len)
+                    if compressed_len > 0:
+                        comp_mask = _compressed_visibility(
+                            B, S, offset, compressed_len, self.compress_ratio
+                        )
+                        if indexer_topk is not None:
+                            k_range = mx.arange(compressed_len, dtype=mx.int32)
+                            selected = (
+                                indexer_topk[..., None] == k_range[None, None, None, :]
+                            ).any(axis=-2)[:, None, :, :]
+                            comp_mask = comp_mask & selected
+                        mask = mx.concatenate([win_mask, comp_mask], axis=-1)
+                    else:
+                        mask = win_mask
+
+                kv_all_4d = kv_all[:, None, :, :]
+                # exo fix: mx.fast.scaled_dot_product_attention with sinks returns wrong
+                # values for head_dim 256/512 once n_heads * L_q * L_kv passes 2**31 (seen
+                # in MLX 0.32.3 and 0.32.4): a 4096-token prefill chunk crosses it in the
+                # CSA layers after ~16k tokens of context. Split the queries (counting the
+                # batch too, to stay clear of the limit when prompts are batched).
+                max_q = max(
+                    1, _SDPA_MAX_SCORES // (B * q.shape[1] * kv_all_4d.shape[2])
+                )
+                if S <= max_q:
+                    o = scaled_dot_product_attention(
+                        q, kv_all_4d, kv_all_4d,
+                        cache=None, scale=self.scale, mask=mask, sinks=sinks,
+                    )
+                else:
+                    o = mx.concatenate(
+                        [
+                            scaled_dot_product_attention(
+                                q[:, :, s0 : s0 + max_q], kv_all_4d, kv_all_4d,
+                                cache=None, scale=self.scale,
+                                mask=None if mask is None else mask[:, :, s0 : s0 + max_q],
+                                sinks=sinks,
+                            )
+                            for s0 in range(0, S, max_q)
+                        ],
+                        axis=2,
+                    )
 
         # Fused: inverse-RoPE on the trailing rd dims + transpose-and-reshape
         # to [B, S, n_heads*head_dim] for wo_a.
         o = _attn_inv_rope_flatten(
-            o, offset, rd, self.rope.freqs, self.n_heads * self.head_dim
+            o, offset, rd, self.rope.head_freqs(self.head_dim), self.n_heads * self.head_dim
         )
         # Both wo_a and wo_b mxfp4 → single compile graph for the chain.
         if (
@@ -2677,11 +3443,22 @@ class MoEGate(nn.Module):
 
 
 class DeepseekV4MLP(nn.Module):
-    def __init__(self, hidden_size: int, intermediate_size: int, swiglu_limit: float = 0.0):
+    def __init__(
+        self,
+        hidden_size: int,
+        intermediate_size: int,
+        swiglu_limit: float = 0.0,
+        args: Optional["ModelArgs"] = None,
+    ):
         super().__init__()
-        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
+        if args is None:
+            self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
+            self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
+            self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
+        else:
+            self.gate_proj = _dense_linear(args, hidden_size, intermediate_size)
+            self.up_proj = _dense_linear(args, hidden_size, intermediate_size)
+            self.down_proj = _dense_linear(args, intermediate_size, hidden_size)
         self.swiglu_limit = swiglu_limit
 
     def __call__(self, x: mx.array) -> mx.array:
@@ -2716,6 +3493,7 @@ class DeepseekV4MoE(nn.Module):
                 args.hidden_size,
                 args.moe_intermediate_size * args.n_shared_experts,
                 swiglu_limit=0.0,
+                args=args,
             )
 
     def __call__(self, x: mx.array, input_ids: mx.array) -> mx.array:
@@ -2874,6 +3652,7 @@ class Model(nn.Module):
                / ``gate.bias``); remap into mlx-lm ``model.*`` space.
         """
         n_layers = self.args.num_hidden_layers
+        fp8_native = self.args.fp8_block_weights
 
         # 1) Drop MTP blocks and layers past num_hidden_layers
         filtered = {}
@@ -2940,6 +3719,11 @@ class Model(nn.Module):
                     packed.shape[0], packed.shape[-1] // 4
                 )
                 dequanted[k] = v.astype(mx.uint8)
+            elif weight.dtype in (mx.uint8,) and fp8_native and weight.shape[-1] % 32 == 0:
+                # exo perf: keep the FP8 weight as mxfp8 (same values, see Fp8BlockLinear)
+                packed, scales = _fp8_block_to_mxfp8(weight, _ue8m0_bytes(k, v))
+                dequanted[wk] = packed
+                dequanted[k[: -len(".scale")] + ".scales"] = scales
             elif weight.dtype in (mx.uint8,):
                 dequanted[wk] = dequant_fp8_block(weight, v)
             else:

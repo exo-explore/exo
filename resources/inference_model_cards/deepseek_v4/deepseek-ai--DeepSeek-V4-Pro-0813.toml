@@ -14,7 +14,8 @@ reasoning_dialect = "tool_conditional"
 context_length = 1048576
 backends = ["MlxMetal", "MlxCuda", "MlxCpu"]
 # The release build, as published: FP4 experts load as MLX mxfp4 unchanged and the FP8
-# dense weights load as bf16. The multi-token prediction (DSpark) layers are not loaded.
+# dense weights (128x128 power-of-two block scales) as MLX mxfp8, the same values. The
+# multi-token prediction (DSpark) layers are not loaded.
 [storage_size]
 in_bytes = 892744322880
 

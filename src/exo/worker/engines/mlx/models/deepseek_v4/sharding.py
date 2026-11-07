@@ -1,3 +1,4 @@
+import os
 from collections.abc import Callable, Generator
 from typing import cast
 
@@ -149,6 +150,12 @@ def _shard_v4_attention_heads(
     attn.n_heads = o_groups * hpg_per_rank
 
 
+def _collectives_over_rdma() -> bool:
+    """Whether this runner's group is an RDMA (JACCL) group: exo sets the JACCL
+    coordinator only for those, and MLX's TCP ring otherwise."""
+    return "MLX_JACCL_COORDINATOR" in os.environ
+
+
 class DeepseekV4ShardingStrategy(TensorParallelShardingStrategy):
     def shard_model(
         self,
@@ -156,14 +163,22 @@ class DeepseekV4ShardingStrategy(TensorParallelShardingStrategy):
     ) -> Generator[ModelLoadingResponse, None, nn.Module]:
         model = cast(DeepseekV4Model, model)
         total = len(model.layers)
+        # Over the TCP ring each collective costs about a millisecond of latency, which
+        # dominates a decode step (two per layer, 86 per token). There every rank runs
+        # the attention in full and only the MoE is sharded: one collective per layer,
+        # the same results on every rank, at the cost of each rank reading all of the
+        # attention weights (~3% of the model). Over RDMA, collectives are cheap and the
+        # attention stays head-parallel.
+        shard_attention = _collectives_over_rdma()
 
         for i, layer in enumerate(model.layers):
             mx.eval(layer.parameters())
 
-            # Head-parallel attention with interleaved-per-group sharding.
-            _shard_v4_attention_heads(layer.attn, self.N, self.group.rank())
-            self.sharded_to_all_linear_in_place(layer.attn.wo_a)
-            layer.attn.wo_b = _AllSumLinear(layer.attn.wo_b, self.group)  # type: ignore
+            if shard_attention:
+                # Head-parallel attention with interleaved-per-group sharding.
+                _shard_v4_attention_heads(layer.attn, self.N, self.group.rank())
+                self.sharded_to_all_linear_in_place(layer.attn.wo_a)
+                layer.attn.wo_b = _AllSumLinear(layer.attn.wo_b, self.group)  # type: ignore
 
             ffn = layer.ffn
             if getattr(ffn, "shared_experts", None) is not None:

@@ -115,6 +115,8 @@ def test_split_attention_matches_unsplit(
     tiny_model: Model, one_shot: np.ndarray, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # 4 heads x up to 160 queries x ~60 keys: a limit of 2**10 scores forces small slices.
+    # (The split is in the masked attention, which uniform prefill no longer uses.)
+    monkeypatch.setattr(dsv4, "_PREFILL_PER_QUERY_KEYS", False)
     monkeypatch.setattr(dsv4, "_SDPA_MAX_SCORES", 2**10)
     split = _logits(tiny_model, _prompt(), PROMPT_TOKENS)
     np.testing.assert_allclose(split, one_shot, atol=1e-4)
