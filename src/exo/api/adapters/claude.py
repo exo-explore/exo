@@ -144,16 +144,22 @@ async def claude_request_to_text_generation(
         text_parts: list[str] = []
         thinking_parts: list[str] = []
         tool_calls: list[dict[str, Any]] = []
-        tool_results: list[ClaudeToolResultBlock] = []
-        has_images = False
+        has_tool_results = False
+        n_message_images = 0
+        # Placeholders have to match images one-to-one, so only successful
+        # fetches count: a failed URL would otherwise leave a dangling marker.
+        # Blocks are tracked by identity: equal-but-duplicate blocks must not
+        # both get a placeholder when only one image fetched.
+        fetched_image_blocks: list[ClaudeImageBlock] = []
 
         for block in msg.content:
             if isinstance(block, ClaudeTextBlock):
                 text_parts.append(block.text)
             elif isinstance(block, ClaudeImageBlock):
                 if (img := await handle_image_block(block)) is not None:
-                    has_images = True
+                    n_message_images += 1
                     images.append(img)
+                    fetched_image_blocks.append(block)
             elif isinstance(block, ClaudeThinkingBlock):
                 thinking_parts.append(block.thinking)
             elif isinstance(block, ClaudeToolUseBlock):
@@ -168,14 +174,14 @@ async def claude_request_to_text_generation(
                     }
                 )
             else:
-                tool_results.append(block)
+                has_tool_results = True
                 if isinstance(block.content, list):
-                    for sub in block.content:
+                    for sub_block in block.content:
                         if (
-                            isinstance(sub, ClaudeImageBlock)
-                            and (img := await handle_image_block(sub)) is not None
+                            isinstance(sub_block, ClaudeImageBlock)
+                            and (img := await handle_image_block(sub_block)) is not None
                         ):
-                            has_images = True
+                            n_message_images += 1
                             images.append(img)
 
         content = "".join(text_parts)
@@ -197,21 +203,56 @@ async def claude_request_to_text_generation(
             if reasoning_content:
                 chat_msg["reasoning_content"] = reasoning_content
             chat_template_messages.append(chat_msg)
-        elif tool_results:
-            for tr in tool_results:
-                chat_template_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tr.tool_use_id,
-                        "content": _extract_tool_result_text(tr),
-                    }
+        elif has_tool_results:
+            # Results emit before text so nothing sits between a tool
+            # message and the assistant that made the calls; downstream
+            # encoders pair results by walking back. Tool messages cannot
+            # carry images, so placeholders park on a user message: beside
+            # the turn's text, or a standalone one emitted before non-user
+            # text so a trailing assistant stays last for prefill.
+            image_placeholders: list[ChatTemplateValue] = [
+                {"type": "image"} for _ in range(n_message_images)
+            ]
+            for block in msg.content:
+                if not isinstance(block, ClaudeToolResultBlock):
+                    continue
+                tool_message: dict[str, ChatTemplateValue] = {
+                    "role": "tool",
+                    "tool_call_id": block.tool_use_id,
+                    "content": _extract_tool_result_text(block),
+                }
+                if block.is_error:
+                    tool_message["is_error"] = True
+                chat_template_messages.append(tool_message)
+            message_text = "\n".join(part for part in text_parts if part)
+            if image_placeholders and msg.role != "user":
+                placeholder_message: dict[str, ChatTemplateValue] = {
+                    "role": "user",
+                    "content": image_placeholders,
+                }
+                if reasoning_content and not message_text:
+                    placeholder_message["reasoning_content"] = reasoning_content
+                chat_template_messages.append(placeholder_message)
+                image_placeholders = []
+            message_content: ChatTemplateValue = message_text
+            if image_placeholders and msg.role == "user":
+                text_content: list[ChatTemplateValue] = (
+                    [{"type": "text", "text": message_text}] if message_text else []
                 )
-        elif has_images:
+                message_content = [*text_content, *image_placeholders]
+            if message_content:
+                chat_msg = {"role": msg.role, "content": message_content}
+                if reasoning_content:
+                    chat_msg["reasoning_content"] = reasoning_content
+                chat_template_messages.append(chat_msg)
+        elif n_message_images:
             multimodal_content: list[dict[str, Any]] = []
             for block in msg.content:
                 if isinstance(block, ClaudeTextBlock):
                     multimodal_content.append({"type": "text", "text": block.text})
-                elif isinstance(block, ClaudeImageBlock):
+                elif any(
+                    block is fetched_block for fetched_block in fetched_image_blocks
+                ):
                     multimodal_content.append({"type": "image"})
             chat_msg = {"role": msg.role, "content": multimodal_content}
             if reasoning_content:
