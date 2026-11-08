@@ -8,11 +8,16 @@ from exo.api.adapters.claude import (
     finish_reason_to_claude_stop_reason,
 )
 from exo.api.types.claude_api import (
+    ClaudeImageBlock,
+    ClaudeImageSource,
     ClaudeMessage,
     ClaudeMessagesRequest,
     ClaudeTextBlock,
+    ClaudeThinkingBlock,
+    ClaudeToolResultBlock,
 )
 from exo.shared.types.common import ModelId
+from exo.shared.types.text_generation import Base64Image
 
 
 class TestFinishReasonToClaudeStopReason:
@@ -149,6 +154,632 @@ class TestClaudeRequestToInternal:
         assert params.top_k == 40
         assert params.stop == ["STOP", "END"]
         assert params.stream is True
+
+
+class TestClaudeToolResultConversion:
+    """Tests for tool_result blocks mixed with other content."""
+
+    async def test_text_after_a_tool_result_reaches_the_template(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeToolResultBlock(
+                            tool_use_id="toolu_1", content="sunny, 72F"
+                        ),
+                        ClaudeTextBlock(text="what should I wear?"),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.chat_template_messages == [
+            {"role": "tool", "tool_call_id": "toolu_1", "content": "sunny, 72F"},
+            {"role": "user", "content": "what should I wear?"},
+        ]
+        assert len(params.input) == 1
+        assert params.input[0].content == "what should I wear?"
+
+    async def test_text_before_a_tool_result_emits_the_result_first(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeTextBlock(text="check this:"),
+                        ClaudeToolResultBlock(tool_use_id="toolu_1", content="42"),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.chat_template_messages == [
+            {"role": "tool", "tool_call_id": "toolu_1", "content": "42"},
+            {"role": "user", "content": "check this:"},
+        ]
+
+    async def test_lone_tool_result_emits_only_the_tool_message(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeToolResultBlock(tool_use_id="toolu_1", content="done"),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.chat_template_messages == [
+            {"role": "tool", "tool_call_id": "toolu_1", "content": "done"},
+        ]
+
+    async def test_image_inside_a_tool_result_gets_a_placeholder(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeToolResultBlock(
+                            tool_use_id="toolu_1",
+                            content=[
+                                ClaudeTextBlock(text="screenshot"),
+                                ClaudeImageBlock(
+                                    source=ClaudeImageSource(
+                                        type="base64",
+                                        data="aGVsbG8=",
+                                    )
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert len(params.images) == 1
+        assert params.chat_template_messages == [
+            {"role": "tool", "tool_call_id": "toolu_1", "content": "screenshot"},
+            {"role": "user", "content": [{"type": "image"}]},
+        ]
+
+    async def test_tool_result_with_no_content_produces_empty_text(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content=[ClaudeToolResultBlock(tool_use_id="toolu_1")],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.chat_template_messages == [
+            {"role": "tool", "tool_call_id": "toolu_1", "content": ""},
+        ]
+
+    async def test_interleaved_text_and_results_emit_results_first(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeToolResultBlock(
+                            tool_use_id="toolu_1", content="first result"
+                        ),
+                        ClaudeTextBlock(text="first note"),
+                        ClaudeToolResultBlock(
+                            tool_use_id="toolu_2", content="second result"
+                        ),
+                        ClaudeTextBlock(text="second note"),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.chat_template_messages == [
+            {
+                "role": "tool",
+                "tool_call_id": "toolu_1",
+                "content": "first result",
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "toolu_2",
+                "content": "second result",
+            },
+            {"role": "user", "content": "first note\nsecond note"},
+        ]
+
+    async def test_list_text_content_in_a_tool_result_is_concatenated(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeToolResultBlock(
+                            tool_use_id="toolu_1",
+                            content=[
+                                ClaudeTextBlock(text="part a"),
+                                ClaudeTextBlock(text="part b"),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.chat_template_messages == [
+            {
+                "role": "tool",
+                "tool_call_id": "toolu_1",
+                "content": "part apart b",
+            },
+        ]
+
+    async def test_image_in_a_tool_result_rides_the_text_message(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeTextBlock(text="read this:"),
+                        ClaudeToolResultBlock(
+                            tool_use_id="toolu_1",
+                            content=[
+                                ClaudeImageBlock(
+                                    source=ClaudeImageSource(
+                                        type="base64",
+                                        data="aGVsbG8=",
+                                    )
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert len(params.images) == 1
+        assert params.chat_template_messages == [
+            {"role": "tool", "tool_call_id": "toolu_1", "content": ""},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "read this:"},
+                    {"type": "image"},
+                ],
+            },
+        ]
+
+    async def test_image_in_a_tool_result_on_an_assistant_turn(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="assistant",
+                    content=[
+                        ClaudeTextBlock(text="here is the chart"),
+                        ClaudeToolResultBlock(
+                            tool_use_id="toolu_1",
+                            content=[
+                                ClaudeImageBlock(
+                                    source=ClaudeImageSource(
+                                        type="base64",
+                                        data="aGVsbG8=",
+                                    )
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert len(params.images) == 1
+        assert params.chat_template_messages == [
+            {"role": "tool", "tool_call_id": "toolu_1", "content": ""},
+            {"role": "user", "content": [{"type": "image"}]},
+            {"role": "assistant", "content": "here is the chart"},
+        ]
+
+    async def test_a_failed_image_fetch_emits_no_placeholder(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        async def fail_fetch(_url: str):
+            raise OSError("unreachable")
+
+        monkeypatch.setattr("exo.api.adapters.claude.fetch_image_url", fail_fetch)
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeImageBlock(
+                            source=ClaudeImageSource(
+                                type="url", url="https://example.com/a.png"
+                            )
+                        ),
+                        ClaudeTextBlock(text="describe it"),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.images == []
+        assert params.chat_template_messages == [
+            {"role": "user", "content": "describe it"},
+        ]
+
+    async def test_tool_result_is_error_is_preserved(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeToolResultBlock(
+                            tool_use_id="toolu_1",
+                            content="command not found",
+                            is_error=True,
+                        ),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.chat_template_messages == [
+            {
+                "role": "tool",
+                "tool_call_id": "toolu_1",
+                "content": "command not found",
+                "is_error": True,
+            },
+        ]
+
+    async def test_empty_text_beside_a_tool_result_emits_no_user_message(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeToolResultBlock(tool_use_id="toolu_1", content="done"),
+                        ClaudeTextBlock(text=""),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.chat_template_messages == [
+            {"role": "tool", "tool_call_id": "toolu_1", "content": "done"},
+        ]
+
+    async def test_empty_text_blocks_do_not_pad_the_joined_text(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeToolResultBlock(tool_use_id="toolu_1", content="done"),
+                        ClaudeTextBlock(text=""),
+                        ClaudeTextBlock(text="hi"),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.chat_template_messages == [
+            {"role": "tool", "tool_call_id": "toolu_1", "content": "done"},
+            {"role": "user", "content": "hi"},
+        ]
+
+    async def test_thinking_rides_the_placeholder_for_a_non_user_turn(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="assistant",
+                    content=[
+                        ClaudeThinkingBlock(thinking="hmm"),
+                        ClaudeToolResultBlock(
+                            tool_use_id="toolu_1",
+                            content=[
+                                ClaudeImageBlock(
+                                    source=ClaudeImageSource(
+                                        type="base64", data="aGVsbG8="
+                                    )
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.chat_template_messages == [
+            {"role": "tool", "tool_call_id": "toolu_1", "content": ""},
+            {
+                "role": "user",
+                "content": [{"type": "image"}],
+                "reasoning_content": "hmm",
+            },
+        ]
+
+    async def test_thinking_beside_a_tool_result_is_kept(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeThinkingBlock(thinking="hmm"),
+                        ClaudeToolResultBlock(tool_use_id="toolu_1", content="done"),
+                        ClaudeTextBlock(text="thanks"),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.chat_template_messages == [
+            {"role": "tool", "tool_call_id": "toolu_1", "content": "done"},
+            {
+                "role": "user",
+                "content": "thanks",
+                "reasoning_content": "hmm",
+            },
+        ]
+
+    async def test_plain_multimodal_message_keeps_block_order(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeImageBlock(
+                            source=ClaudeImageSource(type="base64", data="aGVsbG8=")
+                        ),
+                        ClaudeTextBlock(text="what is this"),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.chat_template_messages == [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": "what is this"},
+                ],
+            },
+        ]
+
+    async def test_url_image_inside_a_tool_result_uses_a_placeholder(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        async def fake_fetch(_url: str):
+            return Base64Image("aGVsbG8=")
+
+        monkeypatch.setattr("exo.api.adapters.claude.fetch_image_url", fake_fetch)
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeToolResultBlock(
+                            tool_use_id="toolu_1",
+                            content=[
+                                ClaudeImageBlock(
+                                    source=ClaudeImageSource(
+                                        type="url",
+                                        url="https://example.com/a.png",
+                                    )
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.images == [Base64Image("aGVsbG8=")]
+        assert params.chat_template_messages == [
+            {"role": "tool", "tool_call_id": "toolu_1", "content": ""},
+            {"role": "user", "content": [{"type": "image"}]},
+        ]
+
+    async def test_failed_url_image_inside_a_tool_result_leaves_no_marker(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        async def fail_fetch(_url: str):
+            raise OSError("unreachable")
+
+        monkeypatch.setattr("exo.api.adapters.claude.fetch_image_url", fail_fetch)
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeToolResultBlock(
+                            tool_use_id="toolu_1",
+                            content=[
+                                ClaudeImageBlock(
+                                    source=ClaudeImageSource(
+                                        type="url",
+                                        url="https://example.com/a.png",
+                                    )
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.images == []
+        assert params.chat_template_messages == [
+            {"role": "tool", "tool_call_id": "toolu_1", "content": ""},
+        ]
+
+    async def test_multiple_images_in_one_tool_result(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeToolResultBlock(
+                            tool_use_id="toolu_1",
+                            content=[
+                                ClaudeImageBlock(
+                                    source=ClaudeImageSource(
+                                        type="base64", data="aGVsbG8="
+                                    )
+                                ),
+                                ClaudeImageBlock(
+                                    source=ClaudeImageSource(
+                                        type="base64", data="d29ybGQ="
+                                    )
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.images == [Base64Image("aGVsbG8="), Base64Image("d29ybGQ=")]
+        assert params.chat_template_messages == [
+            {"role": "tool", "tool_call_id": "toolu_1", "content": ""},
+            {"role": "user", "content": [{"type": "image"}, {"type": "image"}]},
+        ]
+
+    async def test_thinking_rides_a_placeholder_only_message(self):
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeThinkingBlock(thinking="hmm"),
+                        ClaudeToolResultBlock(
+                            tool_use_id="toolu_1",
+                            content=[
+                                ClaudeImageBlock(
+                                    source=ClaudeImageSource(
+                                        type="base64", data="aGVsbG8="
+                                    )
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.chat_template_messages == [
+            {"role": "tool", "tool_call_id": "toolu_1", "content": ""},
+            {
+                "role": "user",
+                "content": [{"type": "image"}],
+                "reasoning_content": "hmm",
+            },
+        ]
+
+    async def test_identical_image_blocks_only_mark_successful_fetches(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        calls = 0
+
+        async def flaky_fetch(_url: str):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError("unreachable")
+            return Base64Image("aGVsbG8=")
+
+        monkeypatch.setattr("exo.api.adapters.claude.fetch_image_url", flaky_fetch)
+        source = ClaudeImageSource(type="url", url="https://example.com/a.png")
+        request = ClaudeMessagesRequest(
+            model=ModelId("claude-3-opus"),
+            max_tokens=100,
+            messages=[
+                ClaudeMessage(
+                    role="user",
+                    content=[
+                        ClaudeImageBlock(source=source),
+                        ClaudeImageBlock(source=source),
+                        ClaudeTextBlock(text="two shots"),
+                    ],
+                ),
+            ],
+        )
+        params = await claude_request_to_text_generation(request)
+
+        assert params.images == [Base64Image("aGVsbG8=")]
+        assert params.chat_template_messages == [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": "two shots"},
+                ],
+            },
+        ]
 
 
 class TestClaudeMessagesRequestValidation:
