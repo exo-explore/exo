@@ -605,8 +605,6 @@ Executes an image generation request using an OpenAI-compatible schema with addi
   - `1024x1024`
   - `1024x1536`
   - `1536x1024`
-  - `1024x1365`
-  - `1365x1024`
 * `stream`: boolean (default: false) - Enable streaming for partial images
 * `partial_images`: integer (default: 0) - Number of partial images to stream during generation
 * `response_format`: string (default: "b64_json") - Either `url` or `b64_json`
