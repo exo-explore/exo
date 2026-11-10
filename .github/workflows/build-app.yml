@@ -34,7 +34,6 @@ jobs:
       SPARKLE_S3_PREFIX: ${{ secrets.SPARKLE_S3_PREFIX }}
       AWS_REGION: ${{ secrets.AWS_REGION }}
       EXO_BUILD_NUMBER: ${{ github.run_number }}
-      EXO_LIBP2P_NAMESPACE: ${{ github.ref_name }}
 
     steps:
       # ============================================================
@@ -324,8 +323,26 @@ jobs:
           # Remove any Homebrew macmon so PyInstaller can't accidentally pick it up
           brew uninstall macmon 2>/dev/null || true
 
+      # The app passes its release version to exo as the cluster namespace,
+      # but exo's own version (`exo --version`, and the namespace it uses by
+      # default) comes from pyproject.toml, which can lag behind the tag.
+      # Stamp the release version into this checkout's pyproject.toml so the
+      # bundled exo reports the same version as the app. uv.lock records the
+      # committed version, so from here on uv must run with --frozen.
+      - name: Stamp the release version into the bundled exo
+        run: |
+          set -euo pipefail
+          PYPROJECT_VERSION=$(uv run --frozen --no-sync python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          if [[ "$IS_ALPHA" != "true" && "$PYPROJECT_VERSION" != "$RELEASE_VERSION" ]]; then
+            echo "::warning title=pyproject.toml version differs from the release::pyproject.toml says $PYPROJECT_VERSION but this release is $RELEASE_VERSION. The app's bundled exo is stamped with $RELEASE_VERSION, but a source checkout of this commit reports $PYPROJECT_VERSION and uses it as its default cluster namespace, so it won't join this release's app."
+          fi
+          uv version --frozen "$RELEASE_VERSION"
+          uv sync --frozen --extra mlx
+          BUNDLED_VERSION=$(uv run --frozen --no-sync python -c 'import exo; print(exo.__version__)')
+          echo "pyproject.toml: $PYPROJECT_VERSION; release: $RELEASE_VERSION; bundled exo: $BUNDLED_VERSION"
+
       - name: Build PyInstaller bundle
-        run: uv run pyinstaller packaging/pyinstaller/exo.spec
+        run: uv run --frozen pyinstaller packaging/pyinstaller/exo.spec
 
       - name: Build Swift app
         env:
