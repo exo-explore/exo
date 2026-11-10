@@ -413,11 +413,10 @@ jobs:
           echo "===== spctl assessment (predicts notarization outcome) ====="
           /usr/bin/spctl -a -vvv -t install EXO.app || echo "WARNING: spctl assessment failed — notarization is likely to fail too."
 
-          mkdir -p dmg-root
-          cp -R EXO.app dmg-root/
-          ln -s /Applications dmg-root/Applications
+          # A drag-to-Applications window with the EXO background. The window
+          # layout is written by dmgbuild, without Finder or AppleScript.
           DMG_NAME="EXO-${RELEASE_VERSION}.dmg"
-          hdiutil create -volname "EXO" -srcfolder dmg-root -ov -format UDZO "$DMG_NAME"
+          ../packaging/dmg/create-dmg.sh EXO.app "$DMG_NAME" "EXO"
           /usr/bin/codesign --force --timestamp --options runtime \
             --sign "$SIGNING_IDENTITY" "$DMG_NAME"
 
