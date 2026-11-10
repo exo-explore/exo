@@ -11,6 +11,7 @@ from mlx_lm.sample_utils import make_sampler
 from exo.shared.types.common import ModelId
 from exo.shared.types.text_generation import InputMessage, TextGenerationTaskParams
 from exo.worker.engines.mlx.cache import (
+    CacheSnapshot,
     KVPrefixCache,
     cache_length,
     encode_prompt,
@@ -75,6 +76,74 @@ class TestGetPrefixLength:
         a = mx.array([]).astype(mx.int32)
         b = mx.array([]).astype(mx.int32)
         assert get_prefix_length(a, b) == 0
+
+
+class TestSnapshotAccumulation:
+    """Locks in the fix for the actual per-grow Metal leak on hybrid (SSM)
+    models: `update_kv_cache` must not let `_snapshots` grow without bound when
+    the same entry is grown in place many times."""
+
+    def test_repeated_update_does_not_accumulate_snapshots(self):
+        with patch(
+            "exo.worker.engines.mlx.cache.get_memory_used_percentage",
+            return_value=0.0,
+        ):
+            kv_prefix_cache = KVPrefixCache(None)
+            initial = [
+                CacheSnapshot(states=[None], token_count=4096),
+                CacheSnapshot(states=[None], token_count=8192),
+            ]
+            kv_prefix_cache.add_kv_cache(
+                mx.arange(10000), [KVCache()], ssm_snapshots=initial
+            )
+
+            # Each in-place grow re-prefills from restore_pos and produces a
+            # fresh snapshot at a position the retained old snapshots already
+            # cover. Pre-fix this appended one snapshot per grow forever.
+            for _ in range(50):
+                fresh = [CacheSnapshot(states=[None], token_count=8192)]
+                kv_prefix_cache.update_kv_cache(
+                    0, mx.arange(10000), [KVCache()], fresh, restore_pos=8192
+                )
+
+            stored = kv_prefix_cache._snapshots[0]
+            assert stored is not None
+            # Bounded by the number of distinct snapshot positions (here 2),
+            # not by the 50 grows.
+            assert len(stored) == 2
+            assert sorted(s.token_count for s in stored) == [4096, 8192]
+            # The kept 8192 snapshot must be the most recently supplied one.
+            assert stored[1] is fresh[0]
+
+    def test_extension_caps_snapshots_to_sliding_window(self):
+        """Extending a single entry to a long context (one snapshot per ~4096
+        tokens) must cap retained snapshots to a sliding window of the most-recent
+        N, not keep all of them — that linear-in-context retention was the
+        residual OOM cause."""
+        from exo.worker.engines.mlx.cache import _MAX_RETAINED_SNAPSHOTS
+
+        with patch(
+            "exo.worker.engines.mlx.cache.get_memory_used_percentage",
+            return_value=0.0,
+        ):
+            kv_prefix_cache = KVPrefixCache(None)
+            # 64 distinct positions = a 262144-token context at 4096/chunk.
+            num_positions = 64
+            snaps = [
+                CacheSnapshot(states=[None], token_count=4096 * (i + 1))
+                for i in range(num_positions)
+            ]
+            kv_prefix_cache.add_kv_cache(
+                mx.arange(10), [KVCache()], ssm_snapshots=snaps
+            )
+
+            stored = kv_prefix_cache._snapshots[0]
+            assert stored is not None
+            # Capped at the window; the most-recent N positions are retained
+            # (in-place grows extend from the tip, so these are what get used).
+            assert len(stored) == _MAX_RETAINED_SNAPSHOTS
+            assert stored == snaps[-_MAX_RETAINED_SNAPSHOTS:]
+            assert stored[-1] is snaps[-1]  # tip always kept
 
 
 class TestKVPrefix:
