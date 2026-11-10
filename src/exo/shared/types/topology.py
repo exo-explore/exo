@@ -24,6 +24,17 @@ class RDMAConnection(FrozenModel):
 
 class SocketConnection(FrozenModel):
     sink_multiaddr: Multiaddr
+    # Most recent reachability-probe round-trip time. Excluded from identity so
+    # jitter does not make otherwise-identical edges unequal.
+    latency_ms: float | None = None
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, SocketConnection):
+            return NotImplemented
+        return (
+            self.sink_multiaddr.ip_address == other.sink_multiaddr.ip_address
+            and self.sink_multiaddr.port == other.sink_multiaddr.port
+        )
 
     def __hash__(self):
         return hash(self.sink_multiaddr.ip_address)
