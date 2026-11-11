@@ -22,7 +22,7 @@ async def test_sleep_on_multiple_items() -> None:
     for i in range(10):
         await asyncio.sleep(1)
 
-        await h.gossipsub_publish("topic", b"somehting or other")
+        await h.gossipsub_publish("topic", b"something or other")
 
 
 def test_pidfile(capsys: CaptureFixture[str]):

@@ -350,7 +350,7 @@ class MpState[T]:
 @dataclass(eq=False)
 class MpSender[T]:
     """
-    An interprocess channel, mimicing the Anyio structure.
+    An interprocess channel, mimicking the Anyio structure.
     It should be noted that none of the clone methods are implemented for simplicity, for now.
     """
 
@@ -417,7 +417,7 @@ class MpSender[T]:
 @dataclass(eq=False)
 class MpReceiver[T]:
     """
-    An interprocess channel, mimicing the Anyio structure.
+    An interprocess channel, mimicking the Anyio structure.
     It should be noted that none of the clone methods are implemented for simplicity, for now.
     """
 

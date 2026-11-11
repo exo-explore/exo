@@ -450,7 +450,7 @@ class Election:
                 # minor hack - rebroadcast status in case anyone has missed it.
                 await self._em_sender.send(status)
                 logger.debug("Woke up from sleep")
-                # add an anyio checkpoint - anyio.lowlevel.chekpoint() or checkpoint_if_cancelled() is preferred, but wasn't typechecking last I checked
+                # add an anyio checkpoint - anyio.lowlevel.checkpoint() or checkpoint_if_cancelled() is preferred, but wasn't typechecking last I checked
                 await anyio.sleep(0)
 
                 # Election finished!

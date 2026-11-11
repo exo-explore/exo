@@ -21,7 +21,7 @@ def _patched_yarn_init(
     mscale_all_dim: float = 0,
     truncate: bool = True,
 ) -> None:
-    """Patch mlx_lm's YarnRoPE to match vLLM's inverse-frequency blending formula for compatability."""
+    """Patch mlx_lm's YarnRoPE to match vLLM's inverse-frequency blending formula for compatibility."""
 
     super(rope_utils.YarnRoPE, self).__init__()
 
