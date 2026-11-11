@@ -82,7 +82,7 @@ def test_node_id_fetching(caplog: LogCaptureFixture):
     _delete_if_exists(EXO_NODE_ZID)
     kp = _get_keypair_concurrent(NUM_CONCURRENT_PROCS)
 
-    with caplog.at_level(101):  # supress logs
+    with caplog.at_level(101):  # suppress logs
         # make sure that continuous fetches return the same value
         for _ in range(reps):
             assert kp == _get_keypair_concurrent(NUM_CONCURRENT_PROCS)

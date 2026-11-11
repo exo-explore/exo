@@ -13,7 +13,7 @@ debug = true
 [profile.release]
 opt-level = 3
 
-# Common shared dependendencies configured once at the workspace
+# Common shared dependencies configured once at the workspace
 # level, to be re-used more easily across workspace member crates.
 #
 # Common configurations include versions, paths, features, etc.
