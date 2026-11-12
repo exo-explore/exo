@@ -24,6 +24,7 @@ from exo.shared.types.events import (
     ChunkGenerated,
     Event,
     RunnerEvent,
+    RunnerProgressed,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
@@ -79,8 +80,10 @@ PREFILL_TIMEOUT_SECONDS = 60
 DECODE_TIMEOUT_SECONDS = 5
 # How often the supervisor checks that its runner is alive and can still reach the others
 RUNNER_WATCH_INTERVAL = 5.0
-# A generating runner reports a token every step and progress every prefill chunk, so this
-# long without a word means it is stuck (its instance's runners can wait on each other forever)
+# A generating runner reports a token every step, progress every prefill chunk, and while a
+# tool call it is writing is held back, a sign of life every few seconds (RunnerProgressed). So
+# this long without a word means it is stuck (its instance's runners can wait on each other
+# forever)
 RUNNER_STALL_TIMEOUT = 90.0
 # How long a runner may take to be gone once it is on its way out, before it is reported as a
 # process that can't be stopped. Stopping gives the runner RUNNER_SHUTDOWN_GRACE (3 s) to take up
@@ -621,6 +624,8 @@ class RunnerSupervisor:
             with self._ev_recv as events:
                 async for event in events:
                     self._last_heard = anyio.current_time()
+                    if isinstance(event, RunnerProgressed):
+                        continue  # a sign of life only (see _stuck)
                     if isinstance(event, RunnerTerminationError):
                         # try to get exception if possible
                         await self._check_runner(event)

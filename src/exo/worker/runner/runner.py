@@ -13,6 +13,7 @@ from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
     RunnerEvent,
+    RunnerProgressed,
     RunnerStatusUpdated,
     TaskAcknowledged,
     TaskStatusUpdated,
@@ -34,6 +35,7 @@ from exo.shared.types.worker.instances import BoundInstance
 from exo.shared.types.worker.runner_response import (
     CancelledResponse,
     FinishedResponse,
+    HeldResponse,
 )
 from exo.shared.types.worker.runners import (
     RunnerConnected,
@@ -81,6 +83,10 @@ class ExitCode(str, Enum):
     Shutdown = "Shutdown"
 
 
+# How often a runner whose output is held back reports that it is still generating
+PROGRESS_REPORT_INTERVAL = 5.0
+
+
 class Runner:
     def __init__(
         self,
@@ -92,6 +98,7 @@ class Runner:
         self.event_sender = event_sender
         self.task_receiver = task_receiver
         self.bound_instance = bound_instance
+        self._last_progress_report = 0.0
 
         self.instance, self.runner_id, self.shard_metadata = (
             self.bound_instance.instance,
@@ -356,6 +363,8 @@ class Runner:
                     case FinishedResponse():
                         self.send_task_status(task_id, TaskStatus.Complete)
                         finished.append(task_id)
+                    case HeldResponse():
+                        self.report_progress(task_id)
                     case other:
                         self.send_chunk(other, self.active_tasks[task_id].command_id)
 
@@ -391,6 +400,16 @@ class Runner:
         logger.info("runner ready")
 
         return ExitCode.AllTasksComplete
+
+    def report_progress(self, task_id: TaskId) -> None:
+        """While a request's output is held back (a tool call streams only once complete),
+        tell the supervisor now and then that the runner is still generating: it stops a
+        runner it hasn't heard from in RUNNER_STALL_TIMEOUT, and a large tool call at long
+        context can take longer than that to write."""
+        now = time.monotonic()
+        if now - self._last_progress_report >= PROGRESS_REPORT_INTERVAL:
+            self._last_progress_report = now
+            self.event_sender.send(RunnerProgressed(task_id=task_id))
 
     def send_chunk(
         self,

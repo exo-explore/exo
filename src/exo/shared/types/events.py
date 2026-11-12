@@ -240,8 +240,17 @@ Event = Annotated[
 ]
 
 
-# What a runner sends its supervisor: events, and the chunks of the requests it serves
-RunnerEvent = Event | ChunkGenerated
+class RunnerProgressed(BaseEvent):
+    """A runner is still generating a request whose output it holds back (a tool call being
+    written, which streams only once complete). From a runner to its supervisor, which takes
+    it as a sign of life: never in the cluster's log, not an Event."""
+
+    task_id: TaskId
+
+
+# What a runner sends its supervisor: events, the chunks of the requests it serves, and signs
+# of life while their output is held back
+RunnerEvent = Event | ChunkGenerated | RunnerProgressed
 
 
 class IndexedEvent(FrozenModel):

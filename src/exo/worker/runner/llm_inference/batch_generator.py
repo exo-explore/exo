@@ -25,6 +25,7 @@ from exo.shared.types.worker.runner_response import (
     CancelledResponse,
     FinishedResponse,
     GenerationResponse,
+    HeldResponse,
 )
 from exo.utils.channels import MpReceiver, MpSender
 from exo.worker.disaggregated.server import PrefillRequest
@@ -186,10 +187,16 @@ class SequentialGenerator(Engine):
     def step(
         self,
     ) -> Iterator[
-        tuple[TaskId, GenerationChunk | FinishedResponse | CancelledResponse]
+        tuple[
+            TaskId,
+            GenerationChunk | FinishedResponse | CancelledResponse | HeldResponse,
+        ]
     ]:
         output: list[
-            tuple[TaskId, GenerationChunk | CancelledResponse | FinishedResponse]
+            tuple[
+                TaskId,
+                GenerationChunk | CancelledResponse | FinishedResponse | HeldResponse,
+            ]
         ] = []
         if self._active is None:
             self.agree_on_tasks()
@@ -209,8 +216,12 @@ class SequentialGenerator(Engine):
             response = next(gen)
             queue.push(response)
             # drain potentially many responses every time
+            streamed = len(output)
             while (parsed := next(output_generator, None)) is not None:
                 output.append((task.task_id, parsed))
+            if len(output) == streamed and response.finish_reason is None:
+                # The parsers hold the token (a tool call being written)
+                output.append((task.task_id, HeldResponse()))
 
         except (StopIteration, PrefillCancelled):
             output.append((task.task_id, FinishedResponse()))
@@ -463,7 +474,10 @@ class BatchGenerator(Engine):
     def step(
         self,
     ) -> Iterator[
-        tuple[TaskId, GenerationChunk | CancelledResponse | FinishedResponse]
+        tuple[
+            TaskId,
+            GenerationChunk | CancelledResponse | FinishedResponse | HeldResponse,
+        ]
     ]:
         if not self._queue:
             self.agree_on_tasks()
@@ -508,7 +522,10 @@ class BatchGenerator(Engine):
         results = self._gen.step()
 
         output: list[
-            tuple[TaskId, GenerationChunk | CancelledResponse | FinishedResponse]
+            tuple[
+                TaskId,
+                GenerationChunk | CancelledResponse | FinishedResponse | HeldResponse,
+            ]
         ] = [*refused]
         for uid, response in results:
             if uid not in self._active_tasks:
@@ -519,8 +536,12 @@ class BatchGenerator(Engine):
             task, queue, output_generator = self._active_tasks[uid]
             queue.push(response)
             # If a generator fails to parse for some reason and returns early, we should not crash
+            streamed = len(output)
             while (parsed := next(output_generator, None)) is not None:
                 output.append((task.task_id, parsed))
+            if len(output) == streamed and response.finish_reason is None:
+                # The parsers hold the token (a tool call being written)
+                output.append((task.task_id, HeldResponse()))
 
             # check if original response was terminal and append a Finished()
             if response.finish_reason is not None:

@@ -75,6 +75,11 @@ class CancelledResponse(BaseRunnerResponse):
     pass
 
 
+class HeldResponse(BaseRunnerResponse):
+    """A token was generated, but the output parsers hold it back (a tool call being
+    written): nothing to stream yet, though the request is making progress."""
+
+
 class PrefillProgressResponse(BaseRunnerResponse):
     processed_tokens: int
     total_tokens: int
