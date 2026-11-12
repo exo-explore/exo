@@ -23,6 +23,10 @@ SPEC = FamilySpec(
             "Qwen4ExpForConditionalGeneration",
         }
     ),
+    # Qwen3.8-Flash-Next's vision tower is Qwen3.5's (same config fields and weight names).
+    # mlx-vlm has no qwen4_exp module, so without the alias the vision encoder doesn't load
+    # and images are dropped from the prompt.
+    mlx_vlm_model_type_aliases=(("qwen4_exp", "qwen3_5"),),
     eos_rules=(
         # For Qwen3.5 / Qwen3.6 / Qwen3.8: 248046 (<|im_end|>), 248044 (<|endoftext|>)
         EosRule(
