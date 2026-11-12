@@ -8,7 +8,12 @@ from exo.shared.models.model_cards import ModelId
 from exo.shared.request_errors import generation_error_code
 from exo.shared.types.chunks import Chunk, ErrorChunk
 from exo.shared.types.common import CommandId, NodeId
-from exo.shared.types.events import Event, RunnerEvent, RunnerStatusUpdated
+from exo.shared.types.events import (
+    Event,
+    RunnerEvent,
+    RunnerProgressed,
+    RunnerStatusUpdated,
+)
 from exo.shared.types.tasks import Task, TaskId, TextGeneration
 from exo.shared.types.text_generation import (
     InputMessage,
@@ -364,6 +369,38 @@ async def test_a_runner_that_keeps_reporting_is_left_alone(
         tg.cancel_scope.cancel()
 
     assert process.is_alive()
+
+
+@pytest.mark.anyio
+async def test_a_runner_writing_a_tool_call_is_left_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tool call streams only once complete; meanwhile the runner says it is still
+    generating (RunnerProgressed), which keeps its supervisor from stopping it and never
+    reaches the cluster."""
+    monkeypatch.setattr(supervisor_module, "RUNNER_WATCH_INTERVAL", 0.01)
+    monkeypatch.setattr(supervisor_module, "RUNNER_STALL_TIMEOUT", 0.5)
+    supervisor, process, events, output = await generating_supervisor(rank=0)
+    progress, ev_recv = mp_channel[RunnerEvent | RunnerTerminationError]()
+    supervisor._ev_recv = ev_recv  # pyright: ignore[reportPrivateUsage]
+
+    async def keep_writing() -> None:
+        while True:
+            progress.send(RunnerProgressed(task_id=TaskId("task-s")))
+            await anyio.sleep(0.05)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(keep_writing)
+        tg.start_soon(supervisor._forward_events)  # pyright: ignore[reportPrivateUsage]
+        with anyio.move_on_after(1.5):
+            await supervisor._watch_runner()  # pyright: ignore[reportPrivateUsage]
+        tg.cancel_scope.cancel()
+
+    assert process.is_alive()
+    with pytest.raises(anyio.WouldBlock):
+        events.receive_nowait()  # nothing went to the cluster
+    with pytest.raises(anyio.WouldBlock):
+        output.receive_nowait()  # nor to the request's stream
 
 
 @pytest.mark.anyio
