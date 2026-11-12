@@ -917,9 +917,40 @@ class Attention(nn.Module):
             attention_mask = cast(mx.array, cast(object, mask))
         else:
             attention_mask = mask
-        out = scaled_dot_product_attention(
-            queries, keys, values, cache=cache, scale=self.scale, mask=attention_mask
-        )
+        if 2 < length <= SPEC_MAX_ROWS:
+            # A verify step with two drafts, or the MTP head on three pairs. MLX's fused
+            # attention takes at most two queries at this head_dim; three fall back to an
+            # unfused path that was 5x slower at 25K keys and 12x at 110K (M5 Pro), so
+            # the rows attend two and one at a time: the same terms per row.
+            if selected is None and isinstance(mask, str):
+                total = int(keys.shape[2])
+                rows = total - length + mx.arange(length)
+                attention_mask = (mx.arange(total)[None] <= rows[:, None])[None, None]
+            out = mx.concatenate(
+                [
+                    scaled_dot_product_attention(
+                        queries[:, :, i : i + 2],
+                        keys,
+                        values,
+                        cache=cache,
+                        scale=self.scale,
+                        mask=None
+                        if attention_mask is None
+                        else attention_mask[..., i : i + 2, :],
+                    )
+                    for i in range(0, length, 2)
+                ],
+                axis=2,
+            )
+        else:
+            out = scaled_dot_product_attention(
+                queries,
+                keys,
+                values,
+                cache=cache,
+                scale=self.scale,
+                mask=attention_mask,
+            )
         out = out.transpose(0, 2, 1, 3).reshape(batch, length, -1)
         return self.o_proj(out * mx.sigmoid(gate))
 

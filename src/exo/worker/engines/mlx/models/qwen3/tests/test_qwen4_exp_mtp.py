@@ -324,6 +324,7 @@ def test_speculative_greedy_decoding_gives_the_plain_tokens(
     count = 40
     plain = _plain_greedy(model, prompt, count + 4)
     # Drafts every step (two with depth2): the oracle decides what they are
+    monkeypatch.setattr(mtp_speculative, "_ADAPTIVE", False)
     monkeypatch.setattr(mtp_speculative, "_MIN_P1", 0.0)
     monkeypatch.setattr(mtp_speculative, "_CHAIN_P1", 0.0)
     monkeypatch.setattr(mtp_speculative, "_DEPTH2", depth2)
@@ -403,3 +404,99 @@ def test_the_draft_vocabulary_reads_its_rows_of_the_lm_head(
     x = mx.random.normal((1, 3, text.args.hidden_size))
     # a matmul over fewer rows: the same up to rounding
     assert _close(out(x), mx.take(text.lm_head(x), ids, axis=-1), 1e-5)
+
+
+@pytest.mark.parametrize("prefilled", [10, 40], ids=["causal", "sparse selection"])
+def test_three_row_steps_match_one_token_steps(tmp_path: Path, prefilled: int) -> None:
+    """Three rows attend two and one at a time (MLX's fused attention takes two queries):
+    each row is still the one-token step's, with plain causal attention (short context)
+    and with the indexer's selection."""
+    model = _attached_tiny_model(tmp_path)
+    tokens = [int(t) for t in np.random.default_rng(8).integers(0, 240, size=60)]
+    plain, verify = _prefilled(model, tokens[:prefilled], 2)
+    t, u, w = tokens[prefilled : prefilled + 3]
+    want = [model(mx.array([[x]]), plain) for x in (t, u, w)]
+    rows = _verify(model, verify, [t, u, w])
+    for i in range(3):
+        assert _close(rows[:, i : i + 1], want[i]), i
+    # and a plain 3-token forward (a prefill chunk) through the same path
+    cache = model.make_cache()
+    model(mx.array([tokens[:prefilled]]), cache)
+    chunk = model(mx.array([[t, u, w]]), cache)
+    assert _close(chunk, mx.concatenate(want, axis=1))
+
+
+def test_the_gate_sends_what_pays_for_its_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mtp_speculative, "_ADAPTIVE", True)
+    gate = mtp_speculative.DraftGate()
+    band = mtp_speculative.context_band(25_000)
+    # nothing measured: the optimistic guesses let a confident head try two drafts
+    assert gate.first(band, 0.95) == (True, True)
+    # measured: a 3-row step costs as much as three plain ones, a 2-row one 1.2x
+    for _ in range(30):
+        gate.record(band, 1, 40.0, (0.0, 0.0), 0)
+        gate.record(band, 2, 48.0, (0.95, 0.0), 1)
+        gate.record(band, 3, 120.0, (0.95, 0.95), 2)
+    assert gate.first(band, 0.95) == (True, False)  # one draft
+    assert gate.first(band, 0.05) == (False, False)  # an unlikely draft doesn't pay
+    # in another band nothing is measured yet: it tries again there
+    assert gate.first(mtp_speculative.context_band(3_000), 0.95) == (True, True)
+    # cheap 3-row steps and kept chained drafts: two drafts
+    for _ in range(60):
+        gate.record(band, 3, 52.0, (0.95, 0.95), 2)
+    assert gate.first(band, 0.95) == (True, True)
+    assert gate.second(band, 0.95, 0.95)
+    assert not gate.second(band, 0.95, 0.01)
+
+
+def test_the_gate_learns_acceptance_per_probability() -> None:
+    gate = mtp_speculative.DraftGate()
+    assert gate.acceptance(0, 0.85) == pytest.approx(0.85)  # the prior: p itself
+    for _ in range(40):
+        gate.record(0, 2, 10.0, (0.85, 0.0), 0)  # drafts at p 0.8-0.9 never kept
+    assert gate.acceptance(0, 0.85) < 0.2
+    assert gate.acceptance(0, 0.15) == pytest.approx(0.15)  # other bins untouched
+    # a chained draft is counted only when the first was kept
+    gate.record(0, 3, 10.0, (0.95, 0.95), 0)
+    assert gate.accepted[1][9] == [0, 0]
+    gate.record(0, 3, 10.0, (0.95, 0.95), 2)
+    assert gate.accepted[1][9] == [1, 1]
+
+
+def test_static_gates_are_the_fixed_thresholds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mtp_speculative, "_ADAPTIVE", False)
+    gate = mtp_speculative.DraftGate()
+    assert gate.first(0, 0.5) == (False, False)  # below EXO_MTP_MIN_P1 (0.6)
+    assert gate.first(0, 0.7) == (True, False)  # below EXO_MTP_CHAIN_P1 (0.9)
+    assert gate.first(0, 0.95) == (True, True)
+    assert gate.second(0, 0.95, 0.9)  # 0.855 >= 0.4 * 1.95
+    assert not gate.second(0, 0.95, 0.7)  # 0.665 < 0.78
+
+
+def test_adaptive_gates_still_give_the_plain_tokens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Whatever the gate sends (here a random head, gates learning from this machine's
+    step times), the tokens are the plain greedy ones."""
+    model = _with_head(tmp_path)
+    monkeypatch.setattr(mtp_speculative, "_ADAPTIVE", True)
+    monkeypatch.setattr(mtp_speculative, "_DRAFT_GATE", mtp_speculative.DraftGate())
+    prompt = [int(t) for t in np.random.default_rng(9).integers(0, 240, size=30)]
+    plain = _plain_greedy(model, prompt, 30)
+    cache = model.make_cache()
+    model(mx.array([prompt[:-2]]), cache)
+    tokens = [
+        out.token
+        for out in mtp_speculative.mtp_stream_generate(
+            cast(ExoModel, cast(object, model)),
+            cast(TokenizerWrapper, cast(object, _Tokenizer())),
+            prompt[-2:],
+            30,
+            cast(Callable[[mx.array], mx.array], _greedy),
+            [],
+            cast(KVCacheType, cache),
+            None,
+        )
+    ]
+    assert tokens[:30] == plain
+    assert mtp_speculative._DRAFT_GATE.cost  # it timed its steps
