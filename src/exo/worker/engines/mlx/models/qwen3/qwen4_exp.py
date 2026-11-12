@@ -693,6 +693,9 @@ class PLELayer(nn.Module):
 class QSAKVCache(KVCache):
     """A KVCache that also keeps the indexer's raw keys (B, L, index_head_dim)."""
 
+    # The per-token arrays the disk prefix cache stores next to the keys and values
+    disk_cache_arrays = ("index_keys",)
+
     def __init__(self) -> None:
         super().__init__()
         self.index_keys: mx.array | None = None

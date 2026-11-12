@@ -357,6 +357,10 @@ class SequentialGenerator(Engine):
             context_length=self.context_length,
         )
 
+    def on_idle(self) -> None:
+        if self.kv_prefix_cache is not None:
+            self.kv_prefix_cache.write_pending_to_disk()
+
     def close(self) -> None:
         del self.model, self.tokenizer, self.group
 
@@ -643,6 +647,10 @@ class BatchGenerator(Engine):
             distributed_prompt_progress_callback=distributed_prompt_progress_callback,
             on_generation_token=on_generation_token,
         )
+
+    def on_idle(self) -> None:
+        if self.kv_prefix_cache is not None:
+            self.kv_prefix_cache.write_pending_to_disk()
 
     def close(self) -> None:
         self._gen.close()

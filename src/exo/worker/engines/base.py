@@ -42,6 +42,10 @@ class Engine(ABC):
     @abstractmethod
     def serve_prefill(self, request: PrefillRequest, wfile: BinaryIO) -> None: ...
 
+    def on_idle(self) -> None:  # noqa: B027 (optional hook, nothing to do by default)
+        """Called when the runner is about to wait for work, with no request in flight:
+        work deferred so that it doesn't delay a reply goes here."""
+
 
 class Builder(ABC):
     @abstractmethod

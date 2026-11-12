@@ -208,6 +208,10 @@ class Runner:
         self._start_task_reader()
         try:
             while True:
+                if self._work_queue.empty() and isinstance(self.generator, Engine):
+                    # Nothing in flight: deferred work (the prefix cache's disk writes) runs
+                    # now, so it doesn't delay a reply
+                    self.generator.on_idle()
                 item = self._work_queue.get()
                 if isinstance(item, _TaskStreamClosed):
                     break

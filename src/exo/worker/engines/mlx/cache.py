@@ -1,6 +1,9 @@
 import gc
 import os
+import time
 from copy import deepcopy
+from dataclasses import dataclass, field
+from itertools import zip_longest
 from typing import TYPE_CHECKING, cast
 
 import mlx.core as mx
@@ -17,8 +20,10 @@ from mlx_lm.models.cache import (
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from exo.shared.types.memory import Memory
+from exo.worker.engines.mlx import disk_cache
 from exo.worker.engines.mlx.cache_copy import copy_rotating_kv_cache, detached_copy
 from exo.worker.engines.mlx.constants import CACHE_GROUP_SIZE, KV_CACHE_BITS
+from exo.worker.engines.mlx.disk_cache import DiskEntry
 from exo.worker.engines.mlx.models.deepseek_v4.cache import copy_deepseek_v4_cache
 from exo.worker.engines.mlx.models.deepseek_v4.model import (
     DeepseekV4Cache,
@@ -184,6 +189,18 @@ def has_non_kv_caches(cache: KVCacheType) -> bool:
     return any(is_non_trimmable_cache_entry(c) for c in cache)
 
 
+@dataclass
+class _PendingWrite:
+    """An entry held in memory until the runner is idle, then written to disk (disk_cache).
+
+    `previous` is the entry on disk that it extends, if any: its blocks before `keep_tokens`
+    and its snapshots at `disk_snapshot_counts` are kept, and only the rest is written."""
+
+    previous: DiskEntry | None = None
+    keep_tokens: int = 0
+    disk_snapshot_counts: list[int] = field(default_factory=list[int])
+
+
 class KVPrefixCache:
     def __init__(self, group: mx.distributed.Group | None):
         self.prompts: list[mx.array] = []  # mx array of tokens (ints)
@@ -192,12 +209,21 @@ class KVPrefixCache:
         self._media_regions: list[list["MediaRegion"]] = []
         self._last_used: list[int] = []  # monotonic counter of last access per entry
         self._entry_bytes: list[int] = []
+        # Entries kept on disk (disk_cache): their size there, and those still waiting in
+        # memory to be written
+        self._disk_bytes: list[int] = []
+        self._pending: list[_PendingWrite | None] = []
         self.prefill_tps: list[float] = []
         self._access_counter: int = 0
         self._group = group
+        self._disk_root = disk_cache.new_root() if disk_cache.ENABLED else None
 
     def clear(self):
         """Clear all cached prompts and caches."""
+        for stored, pending in zip_longest(self.caches, self._pending):
+            _delete_from_disk(stored, pending)
+        self._disk_bytes.clear()
+        self._pending.clear()
         self.prompts.clear()
         self.caches.clear()
         self._snapshots.clear()
@@ -214,12 +240,18 @@ class KVPrefixCache:
         media_regions: list["MediaRegion"] | None = None,
         prefill_tps: float = 0.0,
     ):
-        """Add a new cache entry. Evicts LRU entries if memory is high or the cache is full."""
+        """Add a new cache entry. Evicts LRU entries if memory is high or the cache is full.
+
+        An entry kept on disk is held in memory until write_pending_to_disk, so it counts
+        against both budgets here (its size on disk is about its size in memory)."""
         entry_bytes = _entry_nbytes(cache, ssm_snapshots)
-        self._evict_if_needed(entry_bytes)
+        to_disk = self._to_disk(prompt_tokens, cache)
+        self._evict_if_needed(entry_bytes, entry_bytes if to_disk else 0)
         self.prompts.append(prompt_tokens)
         self.caches.append(deepcopy(cache))
         self._snapshots.append(ssm_snapshots)
+        self._pending.append(_PendingWrite() if to_disk else None)
+        self._disk_bytes.append(entry_bytes if to_disk else 0)
         self._media_regions.append(media_regions or [])
         self.prefill_tps.append(prefill_tps)
         self._access_counter += 1
@@ -237,35 +269,123 @@ class KVPrefixCache:
         media_regions: list["MediaRegion"] | None = None,
         prefill_tps: float = 0.0,
     ):
-        """Update an existing cache entry in-place."""
-        old_snapshots = self._snapshots[index]
-        merged: list[CacheSnapshot] = []
-        if old_snapshots:
-            merged = [s for s in old_snapshots if s.token_count <= restore_pos]
-        if snapshots:
-            merged.extend(snapshots)
+        """Update an existing cache entry in-place.
 
+        An entry kept on disk is held in memory until write_pending_to_disk, which then
+        rewrites only what follows the prefix reused from the entry on disk."""
+        old = self.caches[index]
+        old_pending = self._pending[index]
+        pending = _PendingWrite()
+        if isinstance(old, DiskEntry):
+            pending = _PendingWrite(old, restore_pos, old.snapshot_counts)
+        elif old_pending is not None:
+            pending = _PendingWrite(
+                old_pending.previous,
+                min(old_pending.keep_tokens, restore_pos),
+                old_pending.disk_snapshot_counts,
+            )
+        pending.disk_snapshot_counts = [
+            c for c in pending.disk_snapshot_counts if c <= restore_pos
+        ]
+        merged = [
+            s for s in (self._snapshots[index] or []) if s.token_count <= restore_pos
+        ]
+        merged.extend(snapshots or [])
+
+        to_disk = self._to_disk(prompt_tokens, cache)
+        if not to_disk and pending.previous is not None:
+            # Kept in memory from now on: its files, and the snapshots in them, go
+            disk_cache.delete(pending.previous)
         self.prompts[index] = prompt_tokens
         self.caches[index] = deepcopy(cache)
         self._snapshots[index] = merged or None
+        self._pending[index] = pending if to_disk else None
+        self._entry_bytes[index] = _entry_nbytes(cache, self._snapshots[index])
+        self._disk_bytes[index] = self._entry_bytes[index] if to_disk else 0
         self._media_regions[index] = media_regions or []
         self.prefill_tps[index] = prefill_tps
         self._access_counter += 1
         self._last_used[index] = self._access_counter
-        self._entry_bytes[index] = _entry_nbytes(cache, self._snapshots[index])
         logger.info(f"KV cache updated (index {index}): {len(prompt_tokens)} tokens")
+
+    def _to_disk(self, prompt_tokens: mx.array, cache: KVCacheType) -> bool:
+        """Whether this entry is kept on disk rather than in memory."""
+        return (
+            self._disk_root is not None
+            and len(prompt_tokens) >= disk_cache.MIN_TOKENS
+            and disk_cache.supports(list(cache))
+        )
+
+    def write_pending_to_disk(self) -> None:
+        """Write the entries waiting in memory to disk, and free their memory.
+
+        The runner calls this when it has no request in flight, so the write (seconds, for a
+        long entry) doesn't delay a reply. It uses no collectives: ranks needn't agree on when
+        they are idle, and a rank that hasn't written yet just holds the entry in memory."""
+        wrote = False
+        for i, pending in enumerate(self._pending):
+            if pending is None:
+                continue
+            assert self._disk_root is not None
+            self._pending[i] = None
+            cache = self.caches[i]
+            start = time.perf_counter()
+            try:
+                entry = disk_cache.save(
+                    self._disk_root,
+                    pending.previous,
+                    list(cache),
+                    pending.keep_tokens,
+                    self._snapshots[i] or [],
+                    pending.disk_snapshot_counts,
+                    cache_length(cache),
+                )
+            except OSError as e:  # disk full or unwritable: keep this entry in memory
+                logger.warning(
+                    f"KV cache entry kept in memory, writing it to disk failed: {e}"
+                )
+                if pending.previous is not None:
+                    disk_cache.delete(pending.previous)
+                self._disk_bytes[i] = 0
+                continue
+            disk_cache.log_saved(
+                entry, pending.keep_tokens, time.perf_counter() - start
+            )
+            self.caches[i] = entry  # type: ignore[call-overload]
+            self._snapshots[i] = None
+            self._entry_bytes[i] = 0
+            self._disk_bytes[i] = entry.nbytes
+            wrote = True
+        if wrote:
+            mx.clear_cache()
 
     def _get_snapshot(
         self, entry_index: int, target_token_count: int
     ) -> tuple[int, CacheSnapshot | None]:
+        stored = self.caches[entry_index]
+        if isinstance(stored, DiskEntry):
+            if not stored.has_ssm:
+                return target_token_count, None
+            return _disk_snapshot(stored, stored.snapshot_counts, target_token_count)
+
         if not has_non_kv_caches(self.caches[entry_index]):
             return target_token_count, None
 
-        snapshots = self._snapshots[entry_index]
-        if not snapshots:
-            return 0, None
-
-        snap = _find_nearest_snapshot(snapshots, target_token_count)
+        snap = _find_nearest_snapshot(
+            self._snapshots[entry_index] or [], target_token_count
+        )
+        # An entry waiting to be written may still have snapshots only in the files of the
+        # entry it extends
+        pending = self._pending[entry_index]
+        if pending is not None and pending.previous is not None:
+            later = [
+                c
+                for c in pending.disk_snapshot_counts
+                if snap is None or c > snap.token_count
+            ]
+            count, on_disk = _disk_snapshot(pending.previous, later, target_token_count)
+            if on_disk is not None:
+                return count, on_disk
         if snap is not None:
             return snap.token_count, snap
 
@@ -323,8 +443,12 @@ class KVPrefixCache:
         # For exact match: trim to max_length-1 so remaining has the last token
         # For partial match: trim to best_length, remaining has suffix to prefill
         # This ensures stream_generate always has at least one token to start with
-        has_ssm = has_non_kv_caches(self.caches[best_index])
-        cached_length = cache_length(self.caches[best_index])
+        stored = self.caches[best_index]
+        if isinstance(stored, DiskEntry):
+            has_ssm, cached_length = stored.has_ssm, stored.length
+        else:
+            has_ssm = has_non_kv_caches(stored)
+            cached_length = cache_length(stored)
         if has_ssm:
             target = best_length
         else:
@@ -336,7 +460,11 @@ class KVPrefixCache:
         if restore_snap is None and has_ssm:
             return make_kv_cache(model), prompt_tokens, None, False
 
-        prompt_cache = deepcopy(self.caches[best_index])
+        prompt_cache = (
+            disk_cache.load(stored)
+            if isinstance(stored, DiskEntry)
+            else deepcopy(stored)
+        )
         tokens_to_trim = cached_length - restore_pos
         if tokens_to_trim > 0:
             trim_cache(prompt_cache, tokens_to_trim, restore_snap)
@@ -386,19 +514,35 @@ class KVPrefixCache:
 
         return match_length
 
-    def _evict_if_needed(self, incoming_bytes: int = 0):
+    def _evict_if_needed(self, incoming_bytes: int = 0, incoming_disk_bytes: int = 0):
         """Evict least recently used entries while memory usage is high, or while adding
-        an entry of incoming_bytes would take the cache over its size limits."""
+        an entry of incoming_bytes (in memory) or incoming_disk_bytes (on disk) would take the
+        cache over its size limits."""
         if len(self.caches) == 0:
             return
 
         evicted_any = False
         # Evict LRU entries until below the limits
-        while len(self.caches) > 0 and self._over_limit(incoming_bytes):
-            lru_index = self._last_used.index(min(self._last_used))
+        while len(self.caches) > 0:
+            over_budget, under_pressure = self._over_limit(
+                incoming_bytes, incoming_disk_bytes
+            )
+            if over_budget:
+                candidates = list(range(len(self.caches)))
+            elif under_pressure:
+                # Entries on disk hold no memory, so memory pressure evicts only the others
+                # (with a large model loaded, pressure can stay above the threshold, which
+                # would otherwise evict every entry, the ones on disk included)
+                candidates = self._in_memory_indices()
+            else:
+                break
+            if not candidates:
+                break
+            lru_index = min(candidates, key=lambda i: self._last_used[i])
             evicted_tokens = len(self.prompts[lru_index])
             self.prompts.pop(lru_index)
-            self.caches.pop(lru_index)
+            _delete_from_disk(self.caches.pop(lru_index), self._pending.pop(lru_index))
+            self._disk_bytes.pop(lru_index)
             self._snapshots.pop(lru_index)
             self._media_regions.pop(lru_index)
             self._last_used.pop(lru_index)
@@ -412,15 +556,21 @@ class KVPrefixCache:
             gc.collect()
             mx.clear_cache()
 
-    def _over_limit(self, incoming_bytes: int) -> bool:
+    def _over_limit(
+        self, incoming_bytes: int, incoming_disk_bytes: int = 0
+    ) -> tuple[bool, bool]:
+        """(over the entry count or a size budget, under memory pressure), on any rank."""
         # The same on every rank: they all hold the same entries
         if len(self.caches) >= _MAX_ENTRIES:
-            return True
+            return True, False
 
-        over_budget = sum(self._entry_bytes) + incoming_bytes > _MAX_BYTES
+        over_budget = (
+            sum(self._entry_bytes) + incoming_bytes > _MAX_BYTES
+            or sum(self._disk_bytes) + incoming_disk_bytes > disk_cache.MAX_BYTES
+        )
         local_pressure: float = get_memory_used_percentage()
         if self._group is None:
-            return over_budget or local_pressure > _MEMORY_THRESHOLD
+            return over_budget, local_pressure > _MEMORY_THRESHOLD
 
         # A cache hit changes how much of a prompt each rank prefills, so every rank must
         # evict the same entries: evict if any rank is under memory pressure or over its
@@ -435,7 +585,39 @@ class KVPrefixCache:
         worst_pressure, any_over_budget = cast(
             list[float], mx.max(gathered.reshape(-1, 2), axis=0).tolist()
         )
-        return worst_pressure > _MEMORY_THRESHOLD or any_over_budget > 0
+        return any_over_budget > 0, worst_pressure > _MEMORY_THRESHOLD
+
+    def _in_memory_indices(self) -> list[int]:
+        """Entries held in memory, on any rank: a rank whose disk write failed keeps an entry in
+        memory that the others hold on disk, and every rank must evict the same entries."""
+        flags = [0.0 if isinstance(c, DiskEntry) else 1.0 for c in self.caches]
+        if self._group is not None:
+            gathered = mx.distributed.all_gather(
+                mx.array(flags, dtype=mx.float32), group=self._group
+            ).reshape(-1, len(flags))
+            flags = cast(list[float], mx.max(gathered, axis=0).tolist())
+        return [i for i, f in enumerate(flags) if f > 0]
+
+
+def _disk_snapshot(
+    entry: DiskEntry, counts: list[int], target_token_count: int
+) -> tuple[int, CacheSnapshot | None]:
+    """The latest of `entry`'s snapshots on disk at `counts` that is at or before the
+    target, read back."""
+    usable = [c for c in counts if c <= target_token_count]
+    if not usable:
+        return 0, None
+    count = max(usable)
+    states = disk_cache.load_snapshot_states(entry, count)
+    return count, CacheSnapshot(states=states, token_count=count)  # type: ignore[arg-type]
+
+
+def _delete_from_disk(stored: object, pending: _PendingWrite | None) -> None:
+    """Remove an entry's files: its own, or those of the entry on disk it was to extend."""
+    if isinstance(stored, DiskEntry):
+        disk_cache.delete(stored)
+    elif pending is not None and pending.previous is not None:
+        disk_cache.delete(pending.previous)
 
 
 def _entry_nbytes(cache: KVCacheType, snapshots: list[CacheSnapshot] | None) -> int:
