@@ -50,6 +50,7 @@ Local changes against the fork's file:
 
 import json
 import math
+import os
 import re
 import struct
 import threading
@@ -90,6 +91,12 @@ AttentionMask = mx.array | Literal["causal"] | None
 # drop rejected drafts. The KV caches only need a trim.
 SPEC_MAX_ROWS = 3
 _spec_verify = False
+# Sparse decode attention (EXO_QSA_SPARSE, on unless "0"): decode and verify steps attend
+# only to the keys the indexer selects, gathered, instead of a mask over every key, and the
+# indexer keeps the pooled keys of complete blocks instead of pooling every block again on
+# every call. The selection is bitwise the same; attention sums the same terms in another
+# order. "0" restores the dense path.
+_QSA_SPARSE = os.environ.get("EXO_QSA_SPARSE", "1").strip() != "0"
 
 
 def _spec_undo(cache: object, length: int) -> dict[int, list[mx.array]] | None:
@@ -734,6 +741,12 @@ class QSAKVCache(KVCache):
     def __init__(self) -> None:
         super().__init__()
         self.index_keys: mx.array | None = None
+        # QSAIndexer.pooled_keys: the pooled, normed and rotated keys of complete blocks,
+        # derived from index_keys. ``pooled_from`` is the index_keys array they came from:
+        # if index_keys is replaced from outside (a prefix-cache restore), they are rebuilt.
+        self.pooled: mx.array | None = None
+        self.pooled_blocks = 0
+        self.pooled_from: mx.array | None = None
 
     def update_index(self, keys: mx.array) -> mx.array:
         """Store ``keys`` (B, S, D) at the current offset (the attention keys of the same
@@ -747,13 +760,17 @@ class QSAKVCache(KVCache):
             if self.index_keys is not None:
                 kept = self.index_keys[:, :previous]
                 new = mx.concatenate([kept, new], axis=1)
+            grown = self.pooled_from is not None and self.pooled_from is self.index_keys
             self.index_keys = new
+            if grown:  # the same keys up to ``previous``: the pooled blocks still hold
+                self.pooled_from = new
         self.index_keys[:, previous : previous + length] = keys
         return self.index_keys[:, : previous + length]
 
     @property
     def nbytes(self) -> int:
         extra = 0 if self.index_keys is None else self.index_keys.nbytes
+        extra += 0 if self.pooled is None else self.pooled.nbytes
         return super().nbytes + extra
 
     def to_quantized(self, group_size: int = 64, bits: int = 4) -> QuantizedKVCache:
@@ -793,7 +810,49 @@ class QSAIndexer(nn.Module):
             offset=offset,
         )
 
-    def select(self, x: mx.array, cache: QSAKVCache | None) -> mx.array | None:
+    def _pool(self, raw_keys: mx.array, first: int, last: int) -> mx.array:
+        """Blocks ``first .. last - 1`` of ``raw_keys``: mean-pooled in float32, normed,
+        and rotated to the position of their first token (block i starts at i * ratio).
+        (B, last - first, D)."""
+        batch = raw_keys.shape[0]
+        blocks = raw_keys[:, first * self.ratio : last * self.ratio].reshape(
+            batch, last - first, self.ratio, self.head_dim
+        )
+        pooled = blocks.astype(mx.float32).mean(axis=2).astype(raw_keys.dtype)
+        return self._rope(
+            self.k_layernorm(pooled)[:, None], offset=first, scale=float(self.ratio)
+        )[:, 0]
+
+    def pooled_keys(
+        self, raw_keys: mx.array, cache: QSAKVCache | None, offset: int
+    ) -> mx.array:
+        """The pooled keys of every complete block of ``raw_keys`` (B, n_blocks, D). With
+        a cache, blocks pooled by earlier calls are kept and only new ones pooled: a block
+        depends only on its own keys and index, so this equals pooling them all. Blocks
+        that reach position ``offset`` or later (written by this call) are pooled again."""
+        n_blocks = raw_keys.shape[1] // self.ratio
+        if cache is None:
+            return self._pool(raw_keys, 0, n_blocks)
+        if cache.pooled_from is None or cache.pooled_from is not cache.index_keys:
+            cache.pooled, cache.pooled_blocks = None, 0
+        keep = min(cache.pooled_blocks, offset // self.ratio, n_blocks)
+        if cache.pooled is None or keep == 0:
+            pooled = self._pool(raw_keys, 0, n_blocks)
+        elif keep == n_blocks:
+            pooled = cache.pooled[:, :n_blocks]
+        else:
+            pooled = mx.concatenate(
+                [cache.pooled[:, :keep], self._pool(raw_keys, keep, n_blocks)], axis=1
+            )
+        cache.pooled, cache.pooled_blocks = pooled, n_blocks
+        cache.pooled_from = cache.index_keys
+        return pooled
+
+    def _queries_and_keys(
+        self, x: mx.array, cache: QSAKVCache | None
+    ) -> tuple[mx.array, mx.array, int]:
+        """(indexer queries (B, L, heads, D), every raw key so far (B, offset + L, D),
+        offset), storing the new keys in the cache."""
         batch, length, _ = x.shape
         qk = self.index_qk_proj(x)
         split = self.n_heads * self.head_dim
@@ -803,21 +862,20 @@ class QSAIndexer(nn.Module):
         if cache is not None:
             offset = cache.offset
             raw_keys = cache.update_index(raw_keys)
-        kv_len = raw_keys.shape[1]
-        n_blocks = kv_len // self.ratio
-        if n_blocks <= self.block_topk:
-            return None
+        return queries, raw_keys, offset
 
-        # Blocks of `ratio` keys, mean-pooled in float32, normed, and rotated to the
-        # position of their first token (block i starts at i * ratio).
-        pooled = raw_keys[:, : n_blocks * self.ratio].reshape(
-            batch, n_blocks, self.ratio, self.head_dim
-        )
-        pooled = pooled.astype(mx.float32).mean(axis=2).astype(raw_keys.dtype)
-        pooled = self._rope(self.k_layernorm(pooled)[:, None], scale=float(self.ratio))
+    def _top_blocks(
+        self, queries: mx.array, pooled: mx.array, offset: int
+    ) -> tuple[mx.array, mx.array, mx.array, mx.array]:
+        """(each query's top block indices, which of them it can see, its complete blocks,
+        its position) for queries at positions offset, offset + 1, ..."""
+        length = queries.shape[1]
+        n_blocks = pooled.shape[1]
         queries = self.q_layernorm(queries).transpose(0, 2, 1, 3)
         queries = self._rope(queries, offset=offset)
-        scores = queries.astype(mx.float32) @ pooled.astype(mx.float32).swapaxes(-1, -2)
+        scores = queries.astype(mx.float32) @ pooled[:, None].astype(
+            mx.float32
+        ).swapaxes(-1, -2)
         scores = mx.maximum(scores, 0).sum(axis=1) / math.sqrt(self.head_dim)
 
         # A query can pick the complete blocks that end at or before it
@@ -830,6 +888,18 @@ class QSAIndexer(nn.Module):
             ..., : self.block_topk
         ]
         picked = mx.take_along_axis(visible, top, axis=-1)
+        return top, picked, complete, positions
+
+    def select(self, x: mx.array, cache: QSAKVCache | None) -> mx.array | None:
+        batch, length, _ = x.shape
+        queries, raw_keys, offset = self._queries_and_keys(x, cache)
+        kv_len = raw_keys.shape[1]
+        n_blocks = kv_len // self.ratio
+        if n_blocks <= self.block_topk:
+            return None
+
+        pooled = self.pooled_keys(raw_keys, cache, offset)
+        top, picked, complete, positions = self._top_blocks(queries, pooled, offset)
         # Unpicked slots scatter to an extra column that is dropped
         keep = mx.put_along_axis(
             mx.zeros((batch, length, n_blocks + 1), dtype=mx.bool_),
@@ -849,6 +919,37 @@ class QSAIndexer(nn.Module):
             tokens[None] <= positions[:, None]
         )
         return (keep | own[None])[:, None]
+
+    def select_keys(self, x: mx.array, cache: QSAKVCache) -> list[mx.array | None]:
+        """For each of a few new tokens of one sequence (decode, a verify step): the
+        positions of the keys it attends to, sorted (1-D), exactly the ones ``select``
+        marks for it; None for a token whose attention is still dense (every key up to
+        itself). Stores the new keys in the cache."""
+        queries, raw_keys, offset = self._queries_and_keys(x, cache)
+        length = int(queries.shape[1])
+        kv_len = int(raw_keys.shape[1])
+        if kv_len // self.ratio <= self.block_topk:
+            return [None] * length
+        pooled = self.pooled_keys(raw_keys, cache, offset)
+        ratio = mx.arange(self.ratio)
+        rows: list[mx.array | None] = []
+        for i in range(length):
+            row_len = offset + i + 1
+            n_blocks = row_len // self.ratio
+            if n_blocks <= self.block_topk:
+                rows.append(None)
+                continue
+            # The row sees all of its complete blocks, so every block in `top` is visible;
+            # its own incomplete block is the keys from n_blocks * ratio up to itself
+            top, _, _, _ = self._top_blocks(
+                queries[:, i : i + 1], pooled[:, :n_blocks], offset + i
+            )
+            picked = (top.reshape(-1)[:, None] * self.ratio + ratio[None]).reshape(-1)
+            own = mx.arange(n_blocks * self.ratio, row_len)
+            rows.append(
+                mx.sort(mx.concatenate([picked.astype(mx.int32), own.astype(mx.int32)]))
+            )
+        return rows
 
 
 class Attention(nn.Module):
@@ -886,7 +987,23 @@ class Attention(nn.Module):
         self, x: mx.array, mask: AttentionMask, cache: QSAKVCache | None
     ) -> mx.array:
         batch, length, _ = x.shape
-        selected = self.indexer.select(x, cache)
+        # Decode and verify steps (up to SPEC_MAX_ROWS new tokens of one sequence) attend
+        # each row to the keys the indexer selects for it, gathered; prefill takes the
+        # selection as a mask over every key
+        sparse = (
+            _QSA_SPARSE
+            and batch == 1
+            and length <= SPEC_MAX_ROWS
+            and isinstance(cache, QSAKVCache)
+            and isinstance(mask, (str, type(None)))
+        )
+        selected: mx.array | None = None
+        row_keys: list[mx.array | None] = []
+        if sparse:
+            assert isinstance(cache, QSAKVCache)
+            row_keys = self.indexer.select_keys(x, cache)
+        else:
+            selected = self.indexer.select(x, cache)
         offset = cache.offset if cache is not None else 0
 
         queries, gate = mx.split(
@@ -906,6 +1023,19 @@ class Attention(nn.Module):
         keys = self._rope(keys, offset)
         if cache is not None:
             keys, values = cache.update_and_fetch(keys, values)
+
+        if sparse and any(positions is not None for positions in row_keys):
+            out = mx.concatenate(
+                [
+                    self._attend_row(
+                        queries[:, :, i : i + 1], keys, values, positions, offset + i
+                    )
+                    for i, positions in enumerate(row_keys)
+                ],
+                axis=2,
+            )
+            out = out.transpose(0, 2, 1, 3).reshape(batch, length, -1)
+            return self.o_proj(out * mx.sigmoid(gate))
 
         attention_mask: mx.array | None
         if selected is not None:
@@ -953,6 +1083,27 @@ class Attention(nn.Module):
             )
         out = out.transpose(0, 2, 1, 3).reshape(batch, length, -1)
         return self.o_proj(out * mx.sigmoid(gate))
+
+    def _attend_row(
+        self,
+        query: mx.array,
+        keys: mx.array,
+        values: mx.array,
+        positions: mx.array | None,
+        position: int,
+    ) -> mx.array:
+        """One query at ``position``, attending to the keys at ``positions`` (gathered:
+        the same softmax terms as a mask over every key, at the cost of the selection's
+        size, not the context's), or to every key up to itself."""
+        if positions is None:
+            row_keys = keys[..., : position + 1, :]
+            row_values = values[..., : position + 1, :]
+        else:
+            row_keys = mx.take(keys, positions, axis=2)
+            row_values = mx.take(values, positions, axis=2)
+        return mx.fast.scaled_dot_product_attention(
+            query, row_keys, row_values, scale=self.scale
+        )
 
 
 # ------------------------------------------------------------------- Gated DeltaNet
