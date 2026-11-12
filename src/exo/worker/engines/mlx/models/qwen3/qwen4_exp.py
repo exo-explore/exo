@@ -38,7 +38,10 @@ Local changes against the fork's file:
   (``Model.attach_ngram_table``) instead of through a model_path config field.
 - The hash multipliers, prime table sizes and offsets are checked against the buffers the
   checkpoint stores.
-- No speculative (MTP) rows, no row cache: the page cache keeps the table warm.
+- No row cache: the page cache keeps the table warm.
+- The checkpoint's MTP head is not part of this model: qwen4_exp_mtp.py loads it, when
+  converted, for speculative decoding. Model.spec_* are the hooks it uses: verify steps of
+  a few rows that also keep the recurrent states after each row, and their rollback.
 - Caches are mlx-lm's ArraysCache (the PLE layer's has four entries: the Gated DeltaNet's
   two, the PLE conv state and the n-gram context) and a KVCache that also keeps the
   indexer's keys.
@@ -53,7 +56,7 @@ import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Self, cast
+from typing import TYPE_CHECKING, Literal, Self, cast
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -66,14 +69,34 @@ from mlx_lm.models.base import (
     scaled_dot_product_attention,
 )
 from mlx_lm.models.cache import ArraysCache, KVCache, QuantizedKVCache
+from mlx_lm.models.gated_delta import gated_delta_update, normalize_qk
 from mlx_lm.models.qwen3_5 import GatedDeltaNet as Qwen3_5GatedDeltaNet
 from mlx_lm.models.qwen3_5 import TextModelArgs as Qwen3_5TextModelArgs
 from mlx_lm.models.qwen3_next import Qwen3NextMLP, Qwen3NextRMSNormGated
 from mlx_lm.models.switch_layers import SwitchGLU
 
+if TYPE_CHECKING:
+    from exo.worker.engines.mlx.models.qwen3.qwen4_exp_mtp import MTPTracker
+
 IntArray = npt.NDArray[np.int64]
 FloatArray = npt.NDArray[np.float32]
 AttentionMask = mx.array | Literal["causal"] | None
+
+# Speculative decoding (qwen4_exp_mtp.py) verifies the last token and up to two drafts in one
+# forward. While such a verify step runs (Model.spec_begin_verify .. spec_end_verify), the
+# layers with recurrent state (Gated DeltaNet, the PLE conv and n-gram context) also keep
+# their state after each of the step's rows but the last in ``cache.spec_undo``
+# ({cache slot: [state after row 0, after row 1, ...]}), so that Model.spec_rollback can
+# drop rejected drafts. The KV caches only need a trim.
+SPEC_MAX_ROWS = 3
+_spec_verify = False
+
+
+def _spec_undo(cache: object, length: int) -> dict[int, list[mx.array]] | None:
+    """The cache's undo slots during a verify step of ``length`` rows, else None."""
+    if not _spec_verify or cache is None or not 2 <= length <= SPEC_MAX_ROWS:
+        return None
+    return cast(dict[int, list[mx.array]] | None, getattr(cache, "spec_undo", None))
 
 
 @dataclass
@@ -661,6 +684,14 @@ class PLELayer(nn.Module):
         history = np.concatenate([previous, ids], axis=1)
         if cache is not None:
             cache[_PLE_CONTEXT] = mx.array(history[:, -hasher.context_len :])
+            rows = int(np.size(ids, 1))
+            undo = _spec_undo(cache, rows)
+            if undo is not None:  # the context after each row but the last
+                end = int(np.size(history, 1)) - rows
+                undo[_PLE_CONTEXT] = [
+                    mx.array(history[:, : end + i + 1][:, -hasher.context_len :])
+                    for i in range(rows - 1)
+                ]
         return hasher(history)[:, -ids.shape[1] :]
 
     def _short_conv(self, x: mx.array, cache: ArraysCache | None) -> mx.array:
@@ -670,6 +701,13 @@ class PLELayer(nn.Module):
         conv_input = mx.concatenate([state, x], axis=1)
         if cache is not None:
             cache[_PLE_CONV] = mx.contiguous(conv_input[:, -self.state_len :])
+            rows = int(x.shape[1])
+            undo = _spec_undo(cache, rows)
+            if undo is not None:  # the conv state after each row but the last
+                undo[_PLE_CONV] = [
+                    mx.contiguous(conv_input[:, i + 1 : i + 1 + self.state_len])
+                    for i in range(rows - 1)
+                ]
         return nn.silu(self.conv1d(conv_input))
 
     def __call__(
@@ -900,6 +938,78 @@ class GatedDeltaNet(Qwen3_5GatedDeltaNet):
             )
         self.norm = SigmoidGatedRMSNorm(self.head_v_dim, args.rms_norm_eps)
 
+    def __call__(
+        self,
+        inputs: mx.array,
+        mask: mx.array | None = None,
+        cache: ArraysCache | None = None,
+    ) -> mx.array:
+        undo = _spec_undo(cache, int(inputs.shape[1])) if mask is None else None
+        if undo is None or cache is None:
+            return super().__call__(inputs, mask, cache)
+        return self._verify(inputs, cache, undo)
+
+    def _verify(
+        self, inputs: mx.array, cache: ArraysCache, undo: dict[int, list[mx.array]]
+    ) -> mx.array:
+        """mlx-lm's forward for a verify step (a few rows of one sequence), with the
+        recurrence run a token at a time so that the state after each row can be kept.
+        The projections, the conv and the output norm still take all rows at once: the
+        step reads the weights once."""
+        if self.sharding_group is not None:
+            raise ValueError("qwen4_exp: verify steps are not tensor parallel")
+        batch, length, _ = inputs.shape
+        qkv = self.in_proj_qkv(inputs)
+        z = self.in_proj_z(inputs).reshape(batch, length, self.num_v_heads, -1)
+        b = self.in_proj_b(inputs)
+        a = self.in_proj_a(inputs)
+        n_keep = self.conv_kernel_size - 1
+        conv_state = cast(mx.array | None, cache[0])
+        if conv_state is None:
+            conv_state = mx.zeros((batch, n_keep, self.conv_dim), dtype=inputs.dtype)
+        conv_input = mx.concatenate([conv_state, qkv], axis=1)
+        cache[0] = mx.contiguous(conv_input[:, -n_keep:, :])
+        undo[0] = [
+            mx.contiguous(conv_input[:, i + 1 : i + 1 + n_keep, :])
+            for i in range(length - 1)
+        ]
+        conv_out = nn.silu(self.conv1d(conv_input))
+        q, k, v = [
+            t.reshape(batch, length, heads, dims)
+            for t, heads, dims in zip(
+                mx.split(conv_out, [self.key_dim, 2 * self.key_dim], -1),
+                [self.num_k_heads, self.num_k_heads, self.num_v_heads],
+                [self.head_k_dim, self.head_k_dim, self.head_v_dim],
+                strict=True,
+            )
+        ]
+        q, k = normalize_qk(q, k, inv_scale=math.pow(self.head_k_dim, -0.5), eps=1e-6)
+        state = cast(mx.array | None, cache[1])
+        parts: list[mx.array] = []
+        states: list[mx.array] = []
+        for i in range(length):
+            row = slice(i, i + 1)
+            part, state = gated_delta_update(
+                q[:, row],
+                k[:, row],
+                v[:, row],
+                a[:, row],
+                b[:, row],
+                self.A_log,
+                self.dt_bias,
+                state,
+                None,
+                use_kernel=not cast(bool, self.training),
+            )
+            parts.append(part)
+            if i < length - 1:
+                states.append(state)
+        undo[1] = states
+        cache[1] = state
+        cache.advance(length)
+        out = self.norm(mx.concatenate(parts, axis=1), z)
+        return self.out_proj(out.reshape(batch, length, -1))
+
 
 # --------------------------------------------------------------------------------- MoE
 
@@ -984,6 +1094,9 @@ class DecoderLayer(nn.Module):
 
 
 class Qwen4ExpModel(nn.Module):
+    keep_streams: bool
+    last_streams: mx.array | None
+
     def __init__(self, args: TextArgs):
         super().__init__()
         self.args = args
@@ -999,6 +1112,11 @@ class Qwen4ExpModel(nn.Module):
         )
         # Set by tensor parallelism: the ranks meet after their host n-gram reads
         self.tensor_group: mx.distributed.Group | None = None
+        # With the MTP head attached (on the stage that runs it), the streams before the
+        # final mixer of the last forward: the head's input. Plain attributes, not
+        # parameters.
+        object.__setattr__(self, "keep_streams", False)
+        object.__setattr__(self, "last_streams", None)
 
     def __call__(
         self,
@@ -1007,8 +1125,11 @@ class Qwen4ExpModel(nn.Module):
         input_embeddings: mx.array | None = None,
     ) -> mx.array:
         h = self.embed_tokens(inputs) if input_embeddings is None else input_embeddings
+        # The stage that runs the MTP head keeps the head's cache after its layers'
         layer_caches: Sequence[ArraysCache | QSAKVCache | None] = (
-            cache if cache is not None else [None] * len(self.layers)
+            cache[: len(self.layers)]
+            if cache is not None
+            else [None] * len(self.layers)
         )
         fa_mask: AttentionMask = None
         ssm_mask: AttentionMask = None
@@ -1037,11 +1158,15 @@ class Qwen4ExpModel(nn.Module):
                     stream=mx.default_stream(mx.Device(mx.cpu)),
                 )
             )
+        if self.keep_streams:
+            object.__setattr__(self, "last_streams", h)
         mixed, _ = self.hyper_connection_mixer.mix(h)
         return mixed
 
 
 class TextModel(nn.Module):
+    mtp: "MTPTracker | None"
+
     def __init__(self, args: TextArgs):
         super().__init__()
         self.args = args
@@ -1049,6 +1174,8 @@ class TextModel(nn.Module):
         self.model = Qwen4ExpModel(args)
         if not args.tie_word_embeddings:
             self.lm_head = nn.Linear(args.hidden_size, args.vocab_size, bias=False)
+        # The MTP head (qwen4_exp_mtp.attach_mtp); a plain attribute, not a parameter
+        object.__setattr__(self, "mtp", None)
 
     def __call__(
         self,
@@ -1058,8 +1185,14 @@ class TextModel(nn.Module):
     ) -> mx.array:
         out = self.model(inputs, cache, input_embeddings)
         if self.args.tie_word_embeddings:
-            return self.model.embed_tokens.as_linear(out)
-        return self.lm_head(out)
+            logits = self.model.embed_tokens.as_linear(out)
+        else:
+            logits = self.lm_head(out)
+        streams = self.model.last_streams
+        if self.mtp is not None and streams is not None and input_embeddings is None:
+            # Prefill and plain decode steps: the head's cache follows the trunk's
+            self.mtp.observe(self, inputs, streams, cache)
+        return logits
 
 
 def _rename(key: str) -> str:
@@ -1111,7 +1244,148 @@ class Model(nn.Module):
                 caches.append(ArraysCache(size=2))
             else:
                 caches.append(QSAKVCache())
+        # The MTP head's KV cache last, so that the prefix cache keeps it with the trunk's
+        if self.language_model.mtp is not None:
+            caches.append(QSAKVCache())
         return caches
+
+    # Speculative decoding with the MTP head (qwen4_exp_mtp.py; driven by
+    # generator/mtp_speculative.py). Each step verifies [last token, drafts...] in one
+    # forward on every pipeline stage; the stage with the head samples every row, keeps the
+    # drafts its samples confirm, drafts the next ones, and shares the decision; every stage
+    # then drops the rejected rows from its caches (spec_rollback).
+
+    def spec_ready(self, caches: Sequence[object]) -> bool:
+        """This rank can take part: not tensor parallel, and the stage that samples (the
+        last) has the head, with its cache after the layers'. Every rank answers, and
+        they agree before decoding (generator/mtp_speculative.py)."""
+        if self.model.tensor_group is not None:
+            return False
+        if not self.spec_is_last_stage():
+            return True
+        layers = len(self.layers)
+        return (
+            self.language_model.mtp is not None
+            and len(caches) > layers
+            and isinstance(caches[layers], QSAKVCache)
+        )
+
+    def spec_is_last_stage(self) -> bool:
+        last = self.layers[-1]
+        rank, size = getattr(last, "r", None), getattr(last, "s", None)  # noqa: B009
+        return rank is None or size is None or rank == size - 1
+
+    def spec_begin_verify(self, caches: Sequence[object], rows: int) -> None:
+        """Before a verify step of ``rows`` tokens (the last token and rows - 1 drafts)."""
+        global _spec_verify
+        if not 2 <= rows <= SPEC_MAX_ROWS:
+            raise ValueError(
+                f"qwen4_exp: a verify step has 2 to {SPEC_MAX_ROWS} rows, not {rows}"
+            )
+        for cache in caches[: len(self.layers)]:
+            if isinstance(cache, ArraysCache):
+                setattr(cache, "spec_undo", {})  # noqa: B010
+        _spec_verify = True
+
+    def spec_end_verify(self) -> None:
+        global _spec_verify
+        _spec_verify = False
+
+    def spec_rollback(self, caches: Sequence[object], n: int) -> None:
+        """Forget the last ``n`` rows of the last verify step (rejected drafts) in this
+        stage's layer caches."""
+        for i, cache in enumerate(caches[: len(self.layers)]):
+            if isinstance(cache, QSAKVCache):
+                cache.trim(n)
+            elif isinstance(cache, ArraysCache):
+                undo = cast(
+                    dict[int, list[mx.array]] | None, getattr(cache, "spec_undo", None)
+                )
+                if not undo:
+                    raise RuntimeError(
+                        f"qwen4_exp: layer {i} kept no state to roll back to"
+                    )
+                for slot, states in undo.items():
+                    if not 1 <= n <= len(states):
+                        raise RuntimeError(
+                            f"qwen4_exp: layer {i} can roll back 1 to {len(states)} "
+                            f"tokens, not {n}"
+                        )
+                    cache[slot] = states[len(states) - n]
+                setattr(cache, "spec_undo", {})  # noqa: B010
+
+    def spec_release(self, caches: Sequence[object]) -> None:
+        """After the speculative loop: drop the kept states."""
+        for cache in caches[: len(self.layers)]:
+            if isinstance(cache, ArraysCache) and hasattr(cache, "spec_undo"):
+                delattr(cache, "spec_undo")
+
+    def _head(self, caches: Sequence[object]) -> "tuple[MTPTracker, QSAKVCache]":
+        mtp = self.language_model.mtp
+        head_cache = (
+            caches[len(self.layers)] if len(caches) > len(self.layers) else None
+        )
+        if mtp is None or not isinstance(head_cache, QSAKVCache):
+            raise RuntimeError("qwen4_exp: this stage has no MTP head for the request")
+        return mtp, head_cache
+
+    def spec_track_head(self, on: bool) -> None:
+        """Whether forwards keep the head's cache in step themselves (off while the
+        speculative loop drives the head)."""
+        if self.language_model.mtp is not None:
+            self.language_model.mtp.paused = not on
+
+    def spec_draft(
+        self, next_tokens: mx.array, caches: Sequence[object], first: int = 0
+    ) -> tuple[mx.array, mx.array]:
+        """On the last stage after a forward: the head's pairs for that forward's rows
+        first .. first + n - 1 and the n tokens ``next_tokens`` that follow them (a lazy
+        array joins the sampling's graph), and per row the head's greedy draft of the token
+        after next_tokens[i] with its probability (lazy, (n,))."""
+        mtp, head_cache = self._head(caches)
+        streams = self.model.last_streams
+        assert streams is not None
+        rows = int(next_tokens.shape[0])
+        return mtp.draft(
+            self.language_model,
+            streams[:, first : first + rows],
+            next_tokens,
+            head_cache,
+        )
+
+    def spec_chain(
+        self, draft: int, row: int, caches: Sequence[object]
+    ) -> tuple[mx.array, mx.array]:
+        """A second draft after row ``row``'s draft of the last spec_draft (shapes (1,))."""
+        mtp, head_cache = self._head(caches)
+        return mtp.chain(self.language_model, draft, row, head_cache)
+
+    def spec_head_trim(self, caches: Sequence[object], n: int) -> None:
+        """Drop the head's last ``n`` pairs."""
+        if n:
+            self._head(caches)[1].trim(n)
+
+    def spec_offsets(self, caches: Sequence[object]) -> tuple[int, int]:
+        """(trunk, head) cache offsets on this stage, -1 where there is none."""
+        layers = len(self.layers)
+        trunk = next((c for c in caches[:layers] if isinstance(c, QSAKVCache)), None)
+        head = caches[layers] if len(caches) > layers else None
+        return (
+            int(trunk.offset) if trunk is not None else -1,
+            int(head.offset) if isinstance(head, QSAKVCache) else -1,
+        )
+
+    def spec_forward(
+        self, inputs: mx.array, caches: Sequence[object]
+    ) -> mx.array | None:
+        """A forward of speculative decoding: the logits on the last stage, which samples;
+        on the other stages only their layers (with the pipeline's sends and gathers), since
+        their output layer would compute logits nobody reads."""
+        typed = cast(Sequence[ArraysCache | QSAKVCache | None], caches)
+        if self.spec_is_last_stage():
+            return self(inputs, typed)
+        self.language_model.model(inputs, typed)
+        return None
 
     def attach_ngram_table(self, model_path: Path, prewarm: bool = True) -> None:
         """Memory-map the n-gram tables in the checkpoint at ``model_path`` (both the

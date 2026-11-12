@@ -3,6 +3,9 @@ from typing import Optional
 import mlx.core as mx
 
 def compute_g(A_log: mx.array, a: mx.array, dt_bias: mx.array) -> mx.array: ...
+def normalize_qk(
+    q: mx.array, k: mx.array, *, inv_scale: float, eps: float
+) -> tuple[mx.array, mx.array]: ...
 def gated_delta_update(
     q: mx.array,
     k: mx.array,

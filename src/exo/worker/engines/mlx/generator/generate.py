@@ -48,6 +48,10 @@ from exo.worker.engines.mlx.constants import (
     KV_GROUP_SIZE,
     MAX_TOKENS,
 )
+from exo.worker.engines.mlx.generator.mtp_speculative import (
+    mtp_speculative_agreed,
+    mtp_stream_generate,
+)
 from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
 from exo.worker.engines.mlx.models.registry import keeps_think_tags, model_type_of
 from exo.worker.engines.mlx.sharding.pipeline import (
@@ -724,8 +728,20 @@ def mlx_generate(
     logger.info("Starting decode")
     mx_barrier(group)
 
-    for completion_tokens, out in enumerate(
-        stream_generate(
+    # Speculative decoding with the model's MTP head, where it has one (qwen4_exp)
+    token_stream = (
+        mtp_stream_generate(
+            model,
+            tokenizer,
+            cast(list[int], last_token.tolist()),
+            max_tokens,
+            sampler,
+            logits_processors,
+            caches,
+            group,
+        )
+        if mtp_speculative_agreed(model, task, vision is not None, caches, group)
+        else stream_generate(
             model=model,
             tokenizer=tokenizer,
             prompt=last_token,
@@ -736,9 +752,9 @@ def mlx_generate(
             prefill_step_size=1,
             kv_group_size=KV_GROUP_SIZE,
             kv_bits=KV_BITS,
-        ),
-        start=1,
-    ):
+        )
+    )
+    for completion_tokens, out in enumerate(token_stream, start=1):
         generated_text_parts.append(out.text)
         accumulated_text += out.text
 
