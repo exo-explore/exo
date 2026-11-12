@@ -38,7 +38,10 @@ Local changes against the fork's file:
   (``Model.attach_ngram_table``) instead of through a model_path config field.
 - The hash multipliers, prime table sizes and offsets are checked against the buffers the
   checkpoint stores.
-- No speculative (MTP) rows, no row cache: the page cache keeps the table warm.
+- No row cache: the page cache keeps the table warm.
+- The checkpoint's MTP head is not part of this model: qwen4_exp_mtp.py loads it, when
+  converted, for speculative decoding. Model.spec_* are the hooks it uses: verify steps of
+  a few rows that also keep the recurrent states after each row, and their rollback.
 - Caches are mlx-lm's ArraysCache (the PLE layer's has four entries: the Gated DeltaNet's
   two, the PLE conv state and the n-gram context) and a KVCache that also keeps the
   indexer's keys.
@@ -47,13 +50,14 @@ Local changes against the fork's file:
 
 import json
 import math
+import os
 import re
 import struct
 import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Self, cast
+from typing import TYPE_CHECKING, Literal, Self, cast
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -66,14 +70,40 @@ from mlx_lm.models.base import (
     scaled_dot_product_attention,
 )
 from mlx_lm.models.cache import ArraysCache, KVCache, QuantizedKVCache
+from mlx_lm.models.gated_delta import gated_delta_update, normalize_qk
 from mlx_lm.models.qwen3_5 import GatedDeltaNet as Qwen3_5GatedDeltaNet
 from mlx_lm.models.qwen3_5 import TextModelArgs as Qwen3_5TextModelArgs
 from mlx_lm.models.qwen3_next import Qwen3NextMLP, Qwen3NextRMSNormGated
 from mlx_lm.models.switch_layers import SwitchGLU
 
+if TYPE_CHECKING:
+    from exo.worker.engines.mlx.models.qwen3.qwen4_exp_mtp import MTPTracker
+
 IntArray = npt.NDArray[np.int64]
 FloatArray = npt.NDArray[np.float32]
 AttentionMask = mx.array | Literal["causal"] | None
+
+# Speculative decoding (qwen4_exp_mtp.py) verifies the last token and up to two drafts in one
+# forward. While such a verify step runs (Model.spec_begin_verify .. spec_end_verify), the
+# layers with recurrent state (Gated DeltaNet, the PLE conv and n-gram context) also keep
+# their state after each of the step's rows but the last in ``cache.spec_undo``
+# ({cache slot: [state after row 0, after row 1, ...]}), so that Model.spec_rollback can
+# drop rejected drafts. The KV caches only need a trim.
+SPEC_MAX_ROWS = 3
+_spec_verify = False
+# Sparse decode attention (EXO_QSA_SPARSE, on unless "0"): decode and verify steps attend
+# only to the keys the indexer selects, gathered, instead of a mask over every key, and the
+# indexer keeps the pooled keys of complete blocks instead of pooling every block again on
+# every call. The selection is bitwise the same; attention sums the same terms in another
+# order. "0" restores the dense path.
+_QSA_SPARSE = os.environ.get("EXO_QSA_SPARSE", "1").strip() != "0"
+
+
+def _spec_undo(cache: object, length: int) -> dict[int, list[mx.array]] | None:
+    """The cache's undo slots during a verify step of ``length`` rows, else None."""
+    if not _spec_verify or cache is None or not 2 <= length <= SPEC_MAX_ROWS:
+        return None
+    return cast(dict[int, list[mx.array]] | None, getattr(cache, "spec_undo", None))
 
 
 @dataclass
@@ -661,6 +691,14 @@ class PLELayer(nn.Module):
         history = np.concatenate([previous, ids], axis=1)
         if cache is not None:
             cache[_PLE_CONTEXT] = mx.array(history[:, -hasher.context_len :])
+            rows = int(np.size(ids, 1))
+            undo = _spec_undo(cache, rows)
+            if undo is not None:  # the context after each row but the last
+                end = int(np.size(history, 1)) - rows
+                undo[_PLE_CONTEXT] = [
+                    mx.array(history[:, : end + i + 1][:, -hasher.context_len :])
+                    for i in range(rows - 1)
+                ]
         return hasher(history)[:, -ids.shape[1] :]
 
     def _short_conv(self, x: mx.array, cache: ArraysCache | None) -> mx.array:
@@ -670,6 +708,13 @@ class PLELayer(nn.Module):
         conv_input = mx.concatenate([state, x], axis=1)
         if cache is not None:
             cache[_PLE_CONV] = mx.contiguous(conv_input[:, -self.state_len :])
+            rows = int(x.shape[1])
+            undo = _spec_undo(cache, rows)
+            if undo is not None:  # the conv state after each row but the last
+                undo[_PLE_CONV] = [
+                    mx.contiguous(conv_input[:, i + 1 : i + 1 + self.state_len])
+                    for i in range(rows - 1)
+                ]
         return nn.silu(self.conv1d(conv_input))
 
     def __call__(
@@ -696,6 +741,12 @@ class QSAKVCache(KVCache):
     def __init__(self) -> None:
         super().__init__()
         self.index_keys: mx.array | None = None
+        # QSAIndexer.pooled_keys: the pooled, normed and rotated keys of complete blocks,
+        # derived from index_keys. ``pooled_from`` is the index_keys array they came from:
+        # if index_keys is replaced from outside (a prefix-cache restore), they are rebuilt.
+        self.pooled: mx.array | None = None
+        self.pooled_blocks = 0
+        self.pooled_from: mx.array | None = None
 
     def update_index(self, keys: mx.array) -> mx.array:
         """Store ``keys`` (B, S, D) at the current offset (the attention keys of the same
@@ -709,13 +760,17 @@ class QSAKVCache(KVCache):
             if self.index_keys is not None:
                 kept = self.index_keys[:, :previous]
                 new = mx.concatenate([kept, new], axis=1)
+            grown = self.pooled_from is not None and self.pooled_from is self.index_keys
             self.index_keys = new
+            if grown:  # the same keys up to ``previous``: the pooled blocks still hold
+                self.pooled_from = new
         self.index_keys[:, previous : previous + length] = keys
         return self.index_keys[:, : previous + length]
 
     @property
     def nbytes(self) -> int:
         extra = 0 if self.index_keys is None else self.index_keys.nbytes
+        extra += 0 if self.pooled is None else self.pooled.nbytes
         return super().nbytes + extra
 
     def to_quantized(self, group_size: int = 64, bits: int = 4) -> QuantizedKVCache:
@@ -755,7 +810,49 @@ class QSAIndexer(nn.Module):
             offset=offset,
         )
 
-    def select(self, x: mx.array, cache: QSAKVCache | None) -> mx.array | None:
+    def _pool(self, raw_keys: mx.array, first: int, last: int) -> mx.array:
+        """Blocks ``first .. last - 1`` of ``raw_keys``: mean-pooled in float32, normed,
+        and rotated to the position of their first token (block i starts at i * ratio).
+        (B, last - first, D)."""
+        batch = raw_keys.shape[0]
+        blocks = raw_keys[:, first * self.ratio : last * self.ratio].reshape(
+            batch, last - first, self.ratio, self.head_dim
+        )
+        pooled = blocks.astype(mx.float32).mean(axis=2).astype(raw_keys.dtype)
+        return self._rope(
+            self.k_layernorm(pooled)[:, None], offset=first, scale=float(self.ratio)
+        )[:, 0]
+
+    def pooled_keys(
+        self, raw_keys: mx.array, cache: QSAKVCache | None, offset: int
+    ) -> mx.array:
+        """The pooled keys of every complete block of ``raw_keys`` (B, n_blocks, D). With
+        a cache, blocks pooled by earlier calls are kept and only new ones pooled: a block
+        depends only on its own keys and index, so this equals pooling them all. Blocks
+        that reach position ``offset`` or later (written by this call) are pooled again."""
+        n_blocks = raw_keys.shape[1] // self.ratio
+        if cache is None:
+            return self._pool(raw_keys, 0, n_blocks)
+        if cache.pooled_from is None or cache.pooled_from is not cache.index_keys:
+            cache.pooled, cache.pooled_blocks = None, 0
+        keep = min(cache.pooled_blocks, offset // self.ratio, n_blocks)
+        if cache.pooled is None or keep == 0:
+            pooled = self._pool(raw_keys, 0, n_blocks)
+        elif keep == n_blocks:
+            pooled = cache.pooled[:, :n_blocks]
+        else:
+            pooled = mx.concatenate(
+                [cache.pooled[:, :keep], self._pool(raw_keys, keep, n_blocks)], axis=1
+            )
+        cache.pooled, cache.pooled_blocks = pooled, n_blocks
+        cache.pooled_from = cache.index_keys
+        return pooled
+
+    def _queries_and_keys(
+        self, x: mx.array, cache: QSAKVCache | None
+    ) -> tuple[mx.array, mx.array, int]:
+        """(indexer queries (B, L, heads, D), every raw key so far (B, offset + L, D),
+        offset), storing the new keys in the cache."""
         batch, length, _ = x.shape
         qk = self.index_qk_proj(x)
         split = self.n_heads * self.head_dim
@@ -765,21 +862,20 @@ class QSAIndexer(nn.Module):
         if cache is not None:
             offset = cache.offset
             raw_keys = cache.update_index(raw_keys)
-        kv_len = raw_keys.shape[1]
-        n_blocks = kv_len // self.ratio
-        if n_blocks <= self.block_topk:
-            return None
+        return queries, raw_keys, offset
 
-        # Blocks of `ratio` keys, mean-pooled in float32, normed, and rotated to the
-        # position of their first token (block i starts at i * ratio).
-        pooled = raw_keys[:, : n_blocks * self.ratio].reshape(
-            batch, n_blocks, self.ratio, self.head_dim
-        )
-        pooled = pooled.astype(mx.float32).mean(axis=2).astype(raw_keys.dtype)
-        pooled = self._rope(self.k_layernorm(pooled)[:, None], scale=float(self.ratio))
+    def _top_blocks(
+        self, queries: mx.array, pooled: mx.array, offset: int
+    ) -> tuple[mx.array, mx.array, mx.array, mx.array]:
+        """(each query's top block indices, which of them it can see, its complete blocks,
+        its position) for queries at positions offset, offset + 1, ..."""
+        length = queries.shape[1]
+        n_blocks = pooled.shape[1]
         queries = self.q_layernorm(queries).transpose(0, 2, 1, 3)
         queries = self._rope(queries, offset=offset)
-        scores = queries.astype(mx.float32) @ pooled.astype(mx.float32).swapaxes(-1, -2)
+        scores = queries.astype(mx.float32) @ pooled[:, None].astype(
+            mx.float32
+        ).swapaxes(-1, -2)
         scores = mx.maximum(scores, 0).sum(axis=1) / math.sqrt(self.head_dim)
 
         # A query can pick the complete blocks that end at or before it
@@ -792,6 +888,18 @@ class QSAIndexer(nn.Module):
             ..., : self.block_topk
         ]
         picked = mx.take_along_axis(visible, top, axis=-1)
+        return top, picked, complete, positions
+
+    def select(self, x: mx.array, cache: QSAKVCache | None) -> mx.array | None:
+        batch, length, _ = x.shape
+        queries, raw_keys, offset = self._queries_and_keys(x, cache)
+        kv_len = raw_keys.shape[1]
+        n_blocks = kv_len // self.ratio
+        if n_blocks <= self.block_topk:
+            return None
+
+        pooled = self.pooled_keys(raw_keys, cache, offset)
+        top, picked, complete, positions = self._top_blocks(queries, pooled, offset)
         # Unpicked slots scatter to an extra column that is dropped
         keep = mx.put_along_axis(
             mx.zeros((batch, length, n_blocks + 1), dtype=mx.bool_),
@@ -811,6 +919,37 @@ class QSAIndexer(nn.Module):
             tokens[None] <= positions[:, None]
         )
         return (keep | own[None])[:, None]
+
+    def select_keys(self, x: mx.array, cache: QSAKVCache) -> list[mx.array | None]:
+        """For each of a few new tokens of one sequence (decode, a verify step): the
+        positions of the keys it attends to, sorted (1-D), exactly the ones ``select``
+        marks for it; None for a token whose attention is still dense (every key up to
+        itself). Stores the new keys in the cache."""
+        queries, raw_keys, offset = self._queries_and_keys(x, cache)
+        length = int(queries.shape[1])
+        kv_len = int(raw_keys.shape[1])
+        if kv_len // self.ratio <= self.block_topk:
+            return [None] * length
+        pooled = self.pooled_keys(raw_keys, cache, offset)
+        ratio = mx.arange(self.ratio)
+        rows: list[mx.array | None] = []
+        for i in range(length):
+            row_len = offset + i + 1
+            n_blocks = row_len // self.ratio
+            if n_blocks <= self.block_topk:
+                rows.append(None)
+                continue
+            # The row sees all of its complete blocks, so every block in `top` is visible;
+            # its own incomplete block is the keys from n_blocks * ratio up to itself
+            top, _, _, _ = self._top_blocks(
+                queries[:, i : i + 1], pooled[:, :n_blocks], offset + i
+            )
+            picked = (top.reshape(-1)[:, None] * self.ratio + ratio[None]).reshape(-1)
+            own = mx.arange(n_blocks * self.ratio, row_len)
+            rows.append(
+                mx.sort(mx.concatenate([picked.astype(mx.int32), own.astype(mx.int32)]))
+            )
+        return rows
 
 
 class Attention(nn.Module):
@@ -848,7 +987,23 @@ class Attention(nn.Module):
         self, x: mx.array, mask: AttentionMask, cache: QSAKVCache | None
     ) -> mx.array:
         batch, length, _ = x.shape
-        selected = self.indexer.select(x, cache)
+        # Decode and verify steps (up to SPEC_MAX_ROWS new tokens of one sequence) attend
+        # each row to the keys the indexer selects for it, gathered; prefill takes the
+        # selection as a mask over every key
+        sparse = (
+            _QSA_SPARSE
+            and batch == 1
+            and length <= SPEC_MAX_ROWS
+            and isinstance(cache, QSAKVCache)
+            and isinstance(mask, (str, type(None)))
+        )
+        selected: mx.array | None = None
+        row_keys: list[mx.array | None] = []
+        if sparse:
+            assert isinstance(cache, QSAKVCache)
+            row_keys = self.indexer.select_keys(x, cache)
+        else:
+            selected = self.indexer.select(x, cache)
         offset = cache.offset if cache is not None else 0
 
         queries, gate = mx.split(
@@ -869,6 +1024,19 @@ class Attention(nn.Module):
         if cache is not None:
             keys, values = cache.update_and_fetch(keys, values)
 
+        if sparse and any(positions is not None for positions in row_keys):
+            out = mx.concatenate(
+                [
+                    self._attend_row(
+                        queries[:, :, i : i + 1], keys, values, positions, offset + i
+                    )
+                    for i, positions in enumerate(row_keys)
+                ],
+                axis=2,
+            )
+            out = out.transpose(0, 2, 1, 3).reshape(batch, length, -1)
+            return self.o_proj(out * mx.sigmoid(gate))
+
         attention_mask: mx.array | None
         if selected is not None:
             # The selection is causal by construction
@@ -879,11 +1047,63 @@ class Attention(nn.Module):
             attention_mask = cast(mx.array, cast(object, mask))
         else:
             attention_mask = mask
-        out = scaled_dot_product_attention(
-            queries, keys, values, cache=cache, scale=self.scale, mask=attention_mask
-        )
+        if 2 < length <= SPEC_MAX_ROWS:
+            # A verify step with two drafts, or the MTP head on three pairs. MLX's fused
+            # attention takes at most two queries at this head_dim; three fall back to an
+            # unfused path that was 5x slower at 25K keys and 12x at 110K (M5 Pro), so
+            # the rows attend two and one at a time: the same terms per row.
+            if selected is None and isinstance(mask, str):
+                total = int(keys.shape[2])
+                rows = total - length + mx.arange(length)
+                attention_mask = (mx.arange(total)[None] <= rows[:, None])[None, None]
+            out = mx.concatenate(
+                [
+                    scaled_dot_product_attention(
+                        queries[:, :, i : i + 2],
+                        keys,
+                        values,
+                        cache=cache,
+                        scale=self.scale,
+                        mask=None
+                        if attention_mask is None
+                        else attention_mask[..., i : i + 2, :],
+                    )
+                    for i in range(0, length, 2)
+                ],
+                axis=2,
+            )
+        else:
+            out = scaled_dot_product_attention(
+                queries,
+                keys,
+                values,
+                cache=cache,
+                scale=self.scale,
+                mask=attention_mask,
+            )
         out = out.transpose(0, 2, 1, 3).reshape(batch, length, -1)
         return self.o_proj(out * mx.sigmoid(gate))
+
+    def _attend_row(
+        self,
+        query: mx.array,
+        keys: mx.array,
+        values: mx.array,
+        positions: mx.array | None,
+        position: int,
+    ) -> mx.array:
+        """One query at ``position``, attending to the keys at ``positions`` (gathered:
+        the same softmax terms as a mask over every key, at the cost of the selection's
+        size, not the context's), or to every key up to itself."""
+        if positions is None:
+            row_keys = keys[..., : position + 1, :]
+            row_values = values[..., : position + 1, :]
+        else:
+            row_keys = mx.take(keys, positions, axis=2)
+            row_values = mx.take(values, positions, axis=2)
+        return mx.fast.scaled_dot_product_attention(
+            query, row_keys, row_values, scale=self.scale
+        )
 
 
 # ------------------------------------------------------------------- Gated DeltaNet
@@ -899,6 +1119,78 @@ class GatedDeltaNet(Qwen3_5GatedDeltaNet):
                 f"qwen4_exp: unsupported output_gate_type {args.output_gate_type!r}"
             )
         self.norm = SigmoidGatedRMSNorm(self.head_v_dim, args.rms_norm_eps)
+
+    def __call__(
+        self,
+        inputs: mx.array,
+        mask: mx.array | None = None,
+        cache: ArraysCache | None = None,
+    ) -> mx.array:
+        undo = _spec_undo(cache, int(inputs.shape[1])) if mask is None else None
+        if undo is None or cache is None:
+            return super().__call__(inputs, mask, cache)
+        return self._verify(inputs, cache, undo)
+
+    def _verify(
+        self, inputs: mx.array, cache: ArraysCache, undo: dict[int, list[mx.array]]
+    ) -> mx.array:
+        """mlx-lm's forward for a verify step (a few rows of one sequence), with the
+        recurrence run a token at a time so that the state after each row can be kept.
+        The projections, the conv and the output norm still take all rows at once: the
+        step reads the weights once."""
+        if self.sharding_group is not None:
+            raise ValueError("qwen4_exp: verify steps are not tensor parallel")
+        batch, length, _ = inputs.shape
+        qkv = self.in_proj_qkv(inputs)
+        z = self.in_proj_z(inputs).reshape(batch, length, self.num_v_heads, -1)
+        b = self.in_proj_b(inputs)
+        a = self.in_proj_a(inputs)
+        n_keep = self.conv_kernel_size - 1
+        conv_state = cast(mx.array | None, cache[0])
+        if conv_state is None:
+            conv_state = mx.zeros((batch, n_keep, self.conv_dim), dtype=inputs.dtype)
+        conv_input = mx.concatenate([conv_state, qkv], axis=1)
+        cache[0] = mx.contiguous(conv_input[:, -n_keep:, :])
+        undo[0] = [
+            mx.contiguous(conv_input[:, i + 1 : i + 1 + n_keep, :])
+            for i in range(length - 1)
+        ]
+        conv_out = nn.silu(self.conv1d(conv_input))
+        q, k, v = [
+            t.reshape(batch, length, heads, dims)
+            for t, heads, dims in zip(
+                mx.split(conv_out, [self.key_dim, 2 * self.key_dim], -1),
+                [self.num_k_heads, self.num_k_heads, self.num_v_heads],
+                [self.head_k_dim, self.head_k_dim, self.head_v_dim],
+                strict=True,
+            )
+        ]
+        q, k = normalize_qk(q, k, inv_scale=math.pow(self.head_k_dim, -0.5), eps=1e-6)
+        state = cast(mx.array | None, cache[1])
+        parts: list[mx.array] = []
+        states: list[mx.array] = []
+        for i in range(length):
+            row = slice(i, i + 1)
+            part, state = gated_delta_update(
+                q[:, row],
+                k[:, row],
+                v[:, row],
+                a[:, row],
+                b[:, row],
+                self.A_log,
+                self.dt_bias,
+                state,
+                None,
+                use_kernel=not cast(bool, self.training),
+            )
+            parts.append(part)
+            if i < length - 1:
+                states.append(state)
+        undo[1] = states
+        cache[1] = state
+        cache.advance(length)
+        out = self.norm(mx.concatenate(parts, axis=1), z)
+        return self.out_proj(out.reshape(batch, length, -1))
 
 
 # --------------------------------------------------------------------------------- MoE
@@ -984,6 +1276,9 @@ class DecoderLayer(nn.Module):
 
 
 class Qwen4ExpModel(nn.Module):
+    keep_streams: bool
+    last_streams: mx.array | None
+
     def __init__(self, args: TextArgs):
         super().__init__()
         self.args = args
@@ -999,6 +1294,11 @@ class Qwen4ExpModel(nn.Module):
         )
         # Set by tensor parallelism: the ranks meet after their host n-gram reads
         self.tensor_group: mx.distributed.Group | None = None
+        # With the MTP head attached (on the stage that runs it), the streams before the
+        # final mixer of the last forward: the head's input. Plain attributes, not
+        # parameters.
+        object.__setattr__(self, "keep_streams", False)
+        object.__setattr__(self, "last_streams", None)
 
     def __call__(
         self,
@@ -1007,8 +1307,11 @@ class Qwen4ExpModel(nn.Module):
         input_embeddings: mx.array | None = None,
     ) -> mx.array:
         h = self.embed_tokens(inputs) if input_embeddings is None else input_embeddings
+        # The stage that runs the MTP head keeps the head's cache after its layers'
         layer_caches: Sequence[ArraysCache | QSAKVCache | None] = (
-            cache if cache is not None else [None] * len(self.layers)
+            cache[: len(self.layers)]
+            if cache is not None
+            else [None] * len(self.layers)
         )
         fa_mask: AttentionMask = None
         ssm_mask: AttentionMask = None
@@ -1037,11 +1340,15 @@ class Qwen4ExpModel(nn.Module):
                     stream=mx.default_stream(mx.Device(mx.cpu)),
                 )
             )
+        if self.keep_streams:
+            object.__setattr__(self, "last_streams", h)
         mixed, _ = self.hyper_connection_mixer.mix(h)
         return mixed
 
 
 class TextModel(nn.Module):
+    mtp: "MTPTracker | None"
+
     def __init__(self, args: TextArgs):
         super().__init__()
         self.args = args
@@ -1049,6 +1356,8 @@ class TextModel(nn.Module):
         self.model = Qwen4ExpModel(args)
         if not args.tie_word_embeddings:
             self.lm_head = nn.Linear(args.hidden_size, args.vocab_size, bias=False)
+        # The MTP head (qwen4_exp_mtp.attach_mtp); a plain attribute, not a parameter
+        object.__setattr__(self, "mtp", None)
 
     def __call__(
         self,
@@ -1058,8 +1367,14 @@ class TextModel(nn.Module):
     ) -> mx.array:
         out = self.model(inputs, cache, input_embeddings)
         if self.args.tie_word_embeddings:
-            return self.model.embed_tokens.as_linear(out)
-        return self.lm_head(out)
+            logits = self.model.embed_tokens.as_linear(out)
+        else:
+            logits = self.lm_head(out)
+        streams = self.model.last_streams
+        if self.mtp is not None and streams is not None and input_embeddings is None:
+            # Prefill and plain decode steps: the head's cache follows the trunk's
+            self.mtp.observe(self, inputs, streams, cache)
+        return logits
 
 
 def _rename(key: str) -> str:
@@ -1111,7 +1426,148 @@ class Model(nn.Module):
                 caches.append(ArraysCache(size=2))
             else:
                 caches.append(QSAKVCache())
+        # The MTP head's KV cache last, so that the prefix cache keeps it with the trunk's
+        if self.language_model.mtp is not None:
+            caches.append(QSAKVCache())
         return caches
+
+    # Speculative decoding with the MTP head (qwen4_exp_mtp.py; driven by
+    # generator/mtp_speculative.py). Each step verifies [last token, drafts...] in one
+    # forward on every pipeline stage; the stage with the head samples every row, keeps the
+    # drafts its samples confirm, drafts the next ones, and shares the decision; every stage
+    # then drops the rejected rows from its caches (spec_rollback).
+
+    def spec_ready(self, caches: Sequence[object]) -> bool:
+        """This rank can take part: not tensor parallel, and the stage that samples (the
+        last) has the head, with its cache after the layers'. Every rank answers, and
+        they agree before decoding (generator/mtp_speculative.py)."""
+        if self.model.tensor_group is not None:
+            return False
+        if not self.spec_is_last_stage():
+            return True
+        layers = len(self.layers)
+        return (
+            self.language_model.mtp is not None
+            and len(caches) > layers
+            and isinstance(caches[layers], QSAKVCache)
+        )
+
+    def spec_is_last_stage(self) -> bool:
+        last = self.layers[-1]
+        rank, size = getattr(last, "r", None), getattr(last, "s", None)  # noqa: B009
+        return rank is None or size is None or rank == size - 1
+
+    def spec_begin_verify(self, caches: Sequence[object], rows: int) -> None:
+        """Before a verify step of ``rows`` tokens (the last token and rows - 1 drafts)."""
+        global _spec_verify
+        if not 2 <= rows <= SPEC_MAX_ROWS:
+            raise ValueError(
+                f"qwen4_exp: a verify step has 2 to {SPEC_MAX_ROWS} rows, not {rows}"
+            )
+        for cache in caches[: len(self.layers)]:
+            if isinstance(cache, ArraysCache):
+                setattr(cache, "spec_undo", {})  # noqa: B010
+        _spec_verify = True
+
+    def spec_end_verify(self) -> None:
+        global _spec_verify
+        _spec_verify = False
+
+    def spec_rollback(self, caches: Sequence[object], n: int) -> None:
+        """Forget the last ``n`` rows of the last verify step (rejected drafts) in this
+        stage's layer caches."""
+        for i, cache in enumerate(caches[: len(self.layers)]):
+            if isinstance(cache, QSAKVCache):
+                cache.trim(n)
+            elif isinstance(cache, ArraysCache):
+                undo = cast(
+                    dict[int, list[mx.array]] | None, getattr(cache, "spec_undo", None)
+                )
+                if not undo:
+                    raise RuntimeError(
+                        f"qwen4_exp: layer {i} kept no state to roll back to"
+                    )
+                for slot, states in undo.items():
+                    if not 1 <= n <= len(states):
+                        raise RuntimeError(
+                            f"qwen4_exp: layer {i} can roll back 1 to {len(states)} "
+                            f"tokens, not {n}"
+                        )
+                    cache[slot] = states[len(states) - n]
+                setattr(cache, "spec_undo", {})  # noqa: B010
+
+    def spec_release(self, caches: Sequence[object]) -> None:
+        """After the speculative loop: drop the kept states."""
+        for cache in caches[: len(self.layers)]:
+            if isinstance(cache, ArraysCache) and hasattr(cache, "spec_undo"):
+                delattr(cache, "spec_undo")
+
+    def _head(self, caches: Sequence[object]) -> "tuple[MTPTracker, QSAKVCache]":
+        mtp = self.language_model.mtp
+        head_cache = (
+            caches[len(self.layers)] if len(caches) > len(self.layers) else None
+        )
+        if mtp is None or not isinstance(head_cache, QSAKVCache):
+            raise RuntimeError("qwen4_exp: this stage has no MTP head for the request")
+        return mtp, head_cache
+
+    def spec_track_head(self, on: bool) -> None:
+        """Whether forwards keep the head's cache in step themselves (off while the
+        speculative loop drives the head)."""
+        if self.language_model.mtp is not None:
+            self.language_model.mtp.paused = not on
+
+    def spec_draft(
+        self, next_tokens: mx.array, caches: Sequence[object], first: int = 0
+    ) -> tuple[mx.array, mx.array]:
+        """On the last stage after a forward: the head's pairs for that forward's rows
+        first .. first + n - 1 and the n tokens ``next_tokens`` that follow them (a lazy
+        array joins the sampling's graph), and per row the head's greedy draft of the token
+        after next_tokens[i] with its probability (lazy, (n,))."""
+        mtp, head_cache = self._head(caches)
+        streams = self.model.last_streams
+        assert streams is not None
+        rows = int(next_tokens.shape[0])
+        return mtp.draft(
+            self.language_model,
+            streams[:, first : first + rows],
+            next_tokens,
+            head_cache,
+        )
+
+    def spec_chain(
+        self, draft: int, row: int, caches: Sequence[object]
+    ) -> tuple[mx.array, mx.array]:
+        """A second draft after row ``row``'s draft of the last spec_draft (shapes (1,))."""
+        mtp, head_cache = self._head(caches)
+        return mtp.chain(self.language_model, draft, row, head_cache)
+
+    def spec_head_trim(self, caches: Sequence[object], n: int) -> None:
+        """Drop the head's last ``n`` pairs."""
+        if n:
+            self._head(caches)[1].trim(n)
+
+    def spec_offsets(self, caches: Sequence[object]) -> tuple[int, int]:
+        """(trunk, head) cache offsets on this stage, -1 where there is none."""
+        layers = len(self.layers)
+        trunk = next((c for c in caches[:layers] if isinstance(c, QSAKVCache)), None)
+        head = caches[layers] if len(caches) > layers else None
+        return (
+            int(trunk.offset) if trunk is not None else -1,
+            int(head.offset) if isinstance(head, QSAKVCache) else -1,
+        )
+
+    def spec_forward(
+        self, inputs: mx.array, caches: Sequence[object]
+    ) -> mx.array | None:
+        """A forward of speculative decoding: the logits on the last stage, which samples;
+        on the other stages only their layers (with the pipeline's sends and gathers), since
+        their output layer would compute logits nobody reads."""
+        typed = cast(Sequence[ArraysCache | QSAKVCache | None], caches)
+        if self.spec_is_last_stage():
+            return self(inputs, typed)
+        self.language_model.model(inputs, typed)
+        return None
 
     def attach_ngram_table(self, model_path: Path, prewarm: bool = True) -> None:
         """Memory-map the n-gram tables in the checkpoint at ``model_path`` (both the

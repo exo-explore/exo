@@ -17,6 +17,7 @@ from exo.worker.engines.mlx.models.qwen3.qwen4_exp import Model as Qwen4ExpModel
 from exo.worker.engines.mlx.models.qwen3.qwen4_exp import (
     ModelArgs as Qwen4ExpModelArgs,
 )
+from exo.worker.engines.mlx.models.qwen3.qwen4_exp_mtp import attach_mtp
 from exo.worker.engines.mlx.models.qwen3.reasoning import HOOK as REASONING_EFFORT_HOOK
 from exo.worker.engines.mlx.models.qwen3.sharding import (
     Qwen4ExpShardingStrategy,
@@ -30,6 +31,8 @@ from exo.worker.engines.mlx.models.qwen3.spec import SPEC
 def _attach_ngram_table(model: nn.Module, model_path: Path) -> None:
     assert isinstance(model, Qwen4ExpModel)
     model.attach_ngram_table(model_path)
+    # The MTP head for speculative decoding, when it has been converted (qwen4_exp_mtp.py)
+    attach_mtp(model, model_path)
 
 
 FAMILY = ModelFamily(

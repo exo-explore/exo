@@ -69,6 +69,7 @@ class GatedDeltaNet(nn.Module):
     A_log: mx.array
     norm: RMSNormGated
     out_proj: nn.Linear
+    sharding_group: mx.distributed.Group | None
 
     def __init__(self, config: TextModelArgs) -> None: ...
     def __call__(
