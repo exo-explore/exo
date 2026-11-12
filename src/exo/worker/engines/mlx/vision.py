@@ -153,6 +153,15 @@ def decode_base64_image(b64_data: str) -> Image.Image:
     return img.convert("RGB")
 
 
+def _alias_vision_model_type(vision_config: object, model_type: str) -> None:
+    """Give an aliased model's vision config its alias's type name: mlx-vlm's vision
+    models accept only the type names they were written for (Qwen3.5's rejects
+    ``qwen4_exp``, the type Qwen3.8-Flash-Next's checkpoint gives its vision config)."""
+    aliased = _MLX_VLM_MODEL_TYPE_ALIASES.get(model_type)
+    if aliased is not None and getattr(vision_config, "model_type", None) == model_type:
+        setattr(vision_config, "model_type", aliased)  # noqa: B010
+
+
 def _format_vlm_messages(
     messages: list[dict[str, Any]],
     model_type: str,
@@ -312,6 +321,7 @@ class VisionEncoder:
         vision_config = vision_config_cls(  # type: ignore
             **_filter_config(vision_config_cls, vision_cfg)  # type: ignore
         )
+        _alias_vision_model_type(cast(object, vision_config), self._config.model_type)
         self._spatial_merge_size = getattr(vision_config, "spatial_merge_size", 2)  # type: ignore
         self._vision_tower = vision_model_cls(vision_config)
         model_mod: Any = None
@@ -790,8 +800,11 @@ class VisionProcessor:
         if image_token is None:
             image_token = tokenizer.decode([self.vision_config.image_token_id])
 
+        # mlx-vlm formats the prompt of an aliased model as its alias's
+        model_type = self.vision_config.model_type
         formatted_messages = _format_vlm_messages(
-            chat_template_messages, self.vision_config.model_type
+            chat_template_messages,
+            _MLX_VLM_MODEL_TYPE_ALIASES.get(model_type, model_type),
         )
 
         prompt = build_vision_prompt(

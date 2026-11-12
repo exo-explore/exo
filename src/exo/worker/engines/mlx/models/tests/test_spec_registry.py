@@ -59,6 +59,7 @@ _MAIN_TENSOR_ARCHITECTURES = [
 _MAIN_MLX_VLM_MODEL_TYPE_ALIASES: dict[str, str] = {
     "kimi_k25": "kimi_vl",
     "kimi_k26": "kimi_vl",
+    "qwen4_exp": "qwen3_5",
 }
 
 
