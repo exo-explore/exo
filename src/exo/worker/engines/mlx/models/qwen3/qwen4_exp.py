@@ -42,11 +42,14 @@ Local changes against the fork's file:
 - Caches are mlx-lm's ArraysCache (the PLE layer's has four entries: the Gated DeltaNet's
   two, the PLE conv state and the n-gram context) and a KVCache that also keeps the
   indexer's keys.
+- Prefill attends in slices of query rows (EXO_ATTN_SLICE_BYTES), so that the dense
+  scores and masks of a long prompt fit in GPU memory.
 - Strict typing.
 """
 
 import json
 import math
+import os
 import re
 import struct
 import threading
@@ -689,6 +692,23 @@ class PLELayer(nn.Module):
 
 # -------------------------------------------------------------------------- attention
 
+# MLX has no fused attention kernel for head_dim 256 with a mask and more than two queries,
+# so prefill materializes (heads x new tokens x keys) scores, plus the indexer's scores and
+# masks of the same shape. At long context that is many GB per layer: a 2048-token chunk
+# over 67K keys exhausted the GPU of a 48 GB Mac holding 21 layers. Prefill therefore attends
+# in slices of query rows sized to about EXO_ATTN_SLICE_BYTES; the result is the same, only
+# the peak memory changes (and a little time: at 90K keys, 2.65 s per layer with 256 MiB
+# slices, 1.32 s with 1 GiB, 0.87 s with 2 GiB, against peaks of 0.94 / 1.04 / 1.42 GiB).
+_ATTN_SLICE_BYTES = int(os.environ.get("EXO_ATTN_SLICE_BYTES", str(1 << 30)))
+# Bytes per (query, key) pair: bf16 scores and the float32 softmax over 24 heads, the
+# indexer's float32 block scores, and the boolean masks.
+_BYTES_PER_QUERY_KEY = 160
+
+
+def attention_rows(length: int, kv_len: int) -> int:
+    """Query rows per attention slice for ``length`` new tokens against ``kv_len`` keys."""
+    return max(16, min(length, _ATTN_SLICE_BYTES // (_BYTES_PER_QUERY_KEY * kv_len)))
+
 
 class QSAKVCache(KVCache):
     """A KVCache that also keeps the indexer's raw keys (B, L, index_head_dim)."""
@@ -765,6 +785,17 @@ class QSAIndexer(nn.Module):
         if cache is not None:
             offset = cache.offset
             raw_keys = cache.update_index(raw_keys)
+        return self.select_rows(queries, raw_keys, offset)
+
+    def select_rows(
+        self, queries: mx.array, raw_keys: mx.array, offset: int, start: int = 0
+    ) -> mx.array | None:
+        """The mask for the indexer queries ``queries`` (B, rows, heads, dim, not yet normed),
+        which sit at positions ``offset + start ...``, over the first ``offset + start + rows``
+        of ``raw_keys``; keys after the last row are invisible to these rows anyway."""
+        batch, length = queries.shape[:2]
+        offset = offset + start
+        raw_keys = raw_keys[:, : offset + length]
         kv_len = raw_keys.shape[1]
         n_blocks = kv_len // self.ratio
         if n_blocks <= self.block_topk:
@@ -848,8 +879,10 @@ class Attention(nn.Module):
         self, x: mx.array, mask: AttentionMask, cache: QSAKVCache | None
     ) -> mx.array:
         batch, length, _ = x.shape
-        selected = self.indexer.select(x, cache)
         offset = cache.offset if cache is not None else 0
+        if length > 1 and batch == 1:
+            return self._prefill(x, mask, cache, offset)
+        selected = self.indexer.select(x, cache)
 
         queries, gate = mx.split(
             self.q_proj(x).reshape(batch, length, self.n_heads, -1), 2, axis=-1
@@ -882,6 +915,74 @@ class Attention(nn.Module):
         out = scaled_dot_product_attention(
             queries, keys, values, cache=cache, scale=self.scale, mask=attention_mask
         )
+        out = out.transpose(0, 2, 1, 3).reshape(batch, length, -1)
+        return self.o_proj(out * mx.sigmoid(gate))
+
+    def _prefill(
+        self, x: mx.array, mask: AttentionMask, cache: QSAKVCache | None, offset: int
+    ) -> mx.array:
+        """__call__ for several new tokens of one sequence, attending in slices of query rows
+        (see attention_rows) so the dense scores and masks stay bounded at long context."""
+        batch, length, _ = x.shape
+        idx = self.indexer
+        qk = idx.index_qk_proj(x)
+        split = idx.n_heads * idx.head_dim
+        idx_queries = qk[..., :split].reshape(batch, length, idx.n_heads, idx.head_dim)
+        idx_keys = qk[..., split:].reshape(batch, length, idx.head_dim)
+        if cache is not None:
+            idx_keys = cache.update_index(idx_keys)
+
+        queries, gate = mx.split(
+            self.q_proj(x).reshape(batch, length, self.n_heads, -1), 2, axis=-1
+        )
+        gate = gate.reshape(batch, length, -1)
+        queries = self.q_norm(queries).transpose(0, 2, 1, 3)
+        keys = self.k_norm(
+            self.k_proj(x).reshape(batch, length, self.n_kv_heads, -1)
+        ).transpose(0, 2, 1, 3)
+        values = (
+            self.v_proj(x)
+            .reshape(batch, length, self.n_kv_heads, -1)
+            .transpose(0, 2, 1, 3)
+        )
+        queries = self._rope(queries, offset)
+        keys = self._rope(keys, offset)
+        if cache is not None:
+            keys, values = cache.update_and_fetch(keys, values)
+
+        rows = attention_rows(length, keys.shape[2])
+        outs: list[mx.array] = []
+        for start in range(0, length, rows):
+            stop = min(length, start + rows)
+            visible = (
+                offset + stop
+            )  # keys these rows can see; later ones are masked anyway
+            selected = idx.select_rows(
+                idx_queries[:, start:stop], idx_keys, offset, start
+            )
+            row_mask: mx.array | None = (
+                mask[..., start:stop, :visible] if isinstance(mask, mx.array) else None
+            )
+            attention_mask: mx.array | None
+            if selected is not None:
+                attention_mask = selected if row_mask is None else row_mask & selected
+            elif isinstance(mask, str):
+                # "causal" aligns the rows to the last keys given, which is where they sit
+                attention_mask = cast(mx.array, cast(object, mask))
+            else:
+                attention_mask = row_mask
+            out = scaled_dot_product_attention(
+                queries[:, :, start:stop],
+                keys[:, :, :visible],
+                values[:, :, :visible],
+                cache=cache,
+                scale=self.scale,
+                mask=attention_mask,
+            )
+            if rows < length:
+                mx.eval(out)  # one slice's scores at a time
+            outs.append(out)
+        out = outs[0] if len(outs) == 1 else mx.concatenate(outs, axis=2)
         out = out.transpose(0, 2, 1, 3).reshape(batch, length, -1)
         return self.o_proj(out * mx.sigmoid(gate))
 
