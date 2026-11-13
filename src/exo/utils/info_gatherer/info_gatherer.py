@@ -43,6 +43,10 @@ from .system_info import (
 
 IS_DARWIN = sys.platform == "darwin"
 
+# macmon is restarted when it writes nothing for this many seconds, or 10 of its intervals if
+# that is longer
+MACMON_MIN_READ_TIMEOUT = 30.0
+
 
 async def _get_thunderbolt_devices() -> set[str] | None:
     """Get Thunderbolt interface device names (e.g., en2, en3) from hardware ports.
@@ -598,7 +602,7 @@ class InfoGatherer:
         # macmon pipe --interval [interval in ms]
         # Timeout: if macmon produces no output for this many seconds, restart it.
         # macmon writes every macmon_interval seconds, so 10x that is generous.
-        read_timeout = max(macmon_interval * 10, 30)
+        read_timeout = max(macmon_interval * 10, MACMON_MIN_READ_TIMEOUT)
         while True:
             try:
                 # Covers closing the process too, so a stall kills macmon instead of waiting on it
