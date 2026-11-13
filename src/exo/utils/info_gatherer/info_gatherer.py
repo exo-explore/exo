@@ -601,20 +601,22 @@ class InfoGatherer:
         read_timeout = max(macmon_interval * 10, 30)
         while True:
             try:
-                async with await open_process(
-                    [
-                        macmon_path,
-                        "pipe",
-                        "--interval",
-                        str(macmon_interval * 1000),
-                    ]
-                ) as p:
-                    if not p.stdout:
-                        logger.critical("MacMon closed stdout")
-                        return
-                    stream = BufferedByteReceiveStream(p.stdout)
-                    while True:
-                        with fail_after(read_timeout):
+                # Covers closing the process too, so a stall kills macmon instead of waiting on it
+                with anyio.CancelScope() as stall:
+                    async with await open_process(
+                        [
+                            macmon_path,
+                            "pipe",
+                            "--interval",
+                            str(macmon_interval * 1000),
+                        ]
+                    ) as p:
+                        if not p.stdout:
+                            logger.critical("MacMon closed stdout")
+                            return
+                        stream = BufferedByteReceiveStream(p.stdout)
+                        while True:
+                            stall.deadline = anyio.current_time() + read_timeout
                             data = await stream.receive_until(
                                 delimiter=b"\n", max_bytes=8 * 1024
                             )
@@ -622,12 +624,12 @@ class InfoGatherer:
                             metrics = MacmonMetrics.from_raw_json(
                                 text, self._gpu_working_set
                             )
-                        await self.info_sender.send(metrics)
-            except TimeoutError:
-                logger.warning(
-                    f"MacMon produced no output for {read_timeout}s, restarting"
-                )
-                self._tg.start_soon(self._monitor_memory_usage, 1)
+                            await self.info_sender.send(metrics)
+                if stall.cancelled_caught:
+                    logger.warning(
+                        f"MacMon produced no output for {read_timeout}s, restarting"
+                    )
+                    self._tg.start_soon(self._monitor_memory_usage, 1)
             except CalledProcessError as e:
                 stderr_msg = "no stderr"
                 stderr_output = cast(bytes | str | None, e.stderr)
