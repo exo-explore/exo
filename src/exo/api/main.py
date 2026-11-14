@@ -206,9 +206,11 @@ from exo.shared.serving import (
     candidate_instances,
     prefill_endpoint_for,
 )
+from exo.shared.tensorfold_support import prefill_link_refusal, runtime_reserve
 from exo.shared.topology import Topology
 from exo.shared.tracing import TraceEvent, compute_stats, export_trace, load_trace_file
 from exo.shared.types.chunks import (
+    EngineHeartbeatChunk,
     ErrorChunk,
     ImageChunk,
     PrefillProgressChunk,
@@ -262,7 +264,12 @@ from exo.shared.types.text_generation import (
     TextGenerationTaskParams,
 )
 from exo.shared.types.worker.downloads import DownloadCompleted
-from exo.shared.types.worker.instances import Instance, InstanceId, InstanceMeta
+from exo.shared.types.worker.instances import (
+    Instance,
+    InstanceId,
+    InstanceMeta,
+    TensorFoldInstance,
+)
 from exo.shared.types.worker.shards import Sharding, whole_model_shard
 from exo.utils.banner import print_startup_banner
 from exo.utils.channels import Receiver, Sender
@@ -652,6 +659,8 @@ class API:
             payload.sharding,
             payload.instance_meta,
             payload.min_nodes,
+            payload.tensorfold_context_length,
+            payload.tensorfold_parallel,
         )
         model_card = await ModelCard.load(payload.model_id)
         deployment_id = DeploymentId()
@@ -665,6 +674,8 @@ class API:
                 sharding=payload.sharding,
                 instance_meta=payload.instance_meta,
                 min_nodes=payload.min_nodes,
+                tensorfold_context_length=payload.tensorfold_context_length,
+                tensorfold_parallel=payload.tensorfold_parallel,
             ),
             model_card=model_card,
             instance=placement.model_copy(update={"deployment_id": deployment_id}),
@@ -731,6 +742,8 @@ class API:
         sharding: Sharding = Sharding.Pipeline,
         instance_meta: InstanceMeta = InstanceMeta.MlxRing,
         min_nodes: int = 1,
+        tensorfold_context_length: Annotated[int, Query(gt=0)] = 8192,
+        tensorfold_parallel: Annotated[int | None, Query(gt=0)] = None,
     ) -> Instance:
         model_card = await ModelCard.load(model_id)
         request = PlacementRequest(
@@ -738,6 +751,8 @@ class API:
             sharding=sharding,
             instance_meta=instance_meta,
             min_nodes=min_nodes,
+            tensorfold_context_length=tensorfold_context_length,
+            tensorfold_parallel=tensorfold_parallel,
         )
 
         def place(topology: Topology) -> Mapping[InstanceId, Instance]:
@@ -752,6 +767,7 @@ class API:
                 node_rdma_ctl=self.state.node_rdma_ctl,
                 runners=self.state.runners,
                 node_identities=self.state.node_identities,
+                node_tensorfold=self.state.node_tensorfold,
             )
 
         # Not on a node this node can't reach now: the model couldn't load there
@@ -799,6 +815,10 @@ class API:
                 status_code=400, detail=f"Failed to load model card: {exc}"
             ) from exc
         instance_combinations: list[tuple[Sharding, InstanceMeta, int]] = []
+        if model_card.tensorfold_format is not None:
+            instance_combinations.append(
+                (Sharding.Pipeline, InstanceMeta.TensorFold, 1)
+            )
         for sharding in (Sharding.Pipeline, Sharding.Tensor):
             for instance_meta in (InstanceMeta.MlxRing, InstanceMeta.MlxJaccl):
                 instance_combinations.extend(
@@ -829,6 +849,7 @@ class API:
                     node_rdma_ctl=self.state.node_rdma_ctl,
                     runners=self.state.runners,
                     node_identities=self.state.node_identities,
+                    node_tensorfold=self.state.node_tensorfold,
                 )
             except ValueError as exc:
                 if (model_card.model_id, sharding, instance_meta, 0) not in seen:
@@ -872,6 +893,11 @@ class API:
             # Each node's share: pipeline gives a node layers in proportion to its memory
             memory_delta_by_node = {
                 str(node_id): shard_bytes(shard_assignments.runner_to_shard[runner_id])
+                + (
+                    runtime_reserve(model_card)
+                    if isinstance(instance, TensorFoldInstance)
+                    else 0
+                )
                 for node_id, runner_id in shard_assignments.node_to_runner.items()
             }
 
@@ -1016,6 +1042,11 @@ class API:
     async def _set_instance_link(
         self, link_id: InstanceLinkId, body: InstanceLinkBody
     ) -> InstanceLinkResponse:
+        refusal = prefill_link_refusal(
+            [*body.prefill_instances, *body.decode_instances], self.state.instances
+        )
+        if refusal is not None:
+            raise HTTPException(status_code=400, detail=refusal)
         command = SetInstanceLink(
             link_id=link_id,
             prefill_instances=list(body.prefill_instances),
@@ -1181,7 +1212,7 @@ class API:
         """
         async with contextlib.aclosing(stream.chunks()) as chunks:
             async for chunk in chunks:
-                if isinstance(chunk, ImageChunk):
+                if isinstance(chunk, (ImageChunk, EngineHeartbeatChunk)):
                     continue
                 yield chunk
                 if isinstance(chunk, PrefillProgressChunk):

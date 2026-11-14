@@ -22,6 +22,7 @@ from exo.shared.types.profiling import (
     ThunderboltBridgeStatus,
 )
 from exo.shared.types.tasks import Task, TaskId
+from exo.shared.types.tensorfold import NativeCapabilities
 from exo.shared.types.worker.downloads import DownloadProgress
 from exo.shared.types.worker.instances import Instance, InstanceId
 from exo.shared.types.worker.runners import RunnerId, RunnerStatus
@@ -62,6 +63,7 @@ class State(FrozenModel):
     node_thunderbolt_bridge: Mapping[NodeId, ThunderboltBridgeStatus] = {}
     node_rdma_ctl: Mapping[NodeId, NodeRdmaCtlStatus] = {}
     node_backends: Mapping[NodeId, list[Backend]] = {}
+    node_tensorfold: Mapping[NodeId, NativeCapabilities] = {}
 
     # Detected cycles where all nodes have Thunderbolt bridge enabled (>2 nodes)
     thunderbolt_bridge_cycles: Sequence[Sequence[NodeId]] = []

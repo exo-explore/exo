@@ -1,6 +1,8 @@
 from collections.abc import Generator
 from typing import Annotated, Any, Literal
 
+from pydantic import model_validator
+
 from exo.api.types import (
     FinishReason,
     GenerationStats,
@@ -9,6 +11,7 @@ from exo.api.types import (
     TopLogprobItem,
     Usage,
 )
+from exo.api.types.api import LogprobsContentItem
 from exo.shared.models.model_cards import ModelId
 from exo.utils.pydantic_ext import ByTag, TaggedModel
 from exo.worker.runner.diagnostics import KnownRunnerDiagnostic
@@ -20,13 +23,30 @@ class BaseChunk(TaggedModel):
 
 class TokenChunk(BaseChunk):
     text: str
-    token_id: int
+    token_id: int | None
     usage: Usage | None
     finish_reason: Literal["stop", "length", "content_filter"] | None = None
     stats: GenerationStats | None = None
     logprob: float | None = None
     top_logprobs: list[TopLogprobItem] | None = None
+    logprobs_content: list[LogprobsContentItem] | None = None
     is_thinking: bool = False
+
+    @model_validator(mode="after")
+    def validate_token_identity(self) -> "TokenChunk":
+        if self.token_id is None and (
+            self.text
+            or self.finish_reason is None
+            or self.usage is None
+            or self.usage.completion_tokens != 0
+            or self.logprob is not None
+            or self.top_logprobs
+            or self.logprobs_content
+        ):
+            raise ValueError(
+                "Only an empty zero-token completion may omit its token ID"
+            )
+        return self
 
 
 class ErrorChunk(BaseChunk):
@@ -74,7 +94,11 @@ class PrefillProgressChunk(BaseChunk):
     total_tokens: int
 
 
-StatusChunk = PrefillProgressChunk
+class EngineHeartbeatChunk(BaseChunk):
+    pass
+
+
+StatusChunk = PrefillProgressChunk | EngineHeartbeatChunk
 GenerationChunk = TokenChunk | ImageChunk | ToolCallChunk | ErrorChunk
 # Validated by tag (see ByTag): every token of a reply is one
 Chunk = Annotated[StatusChunk | GenerationChunk, ByTag()]

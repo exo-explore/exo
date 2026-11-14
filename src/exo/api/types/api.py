@@ -274,6 +274,8 @@ class PlaceInstanceParams(BaseModel):
     sharding: Sharding = Sharding.Pipeline
     instance_meta: InstanceMeta = InstanceMeta.MlxRing
     min_nodes: int = 1
+    tensorfold_context_length: int = Field(default=8192, gt=0)
+    tensorfold_parallel: int | None = Field(default=None, gt=0)
 
 
 class DeploymentConstraints(BaseModel):

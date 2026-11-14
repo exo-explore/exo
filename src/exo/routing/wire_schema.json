@@ -144,7 +144,9 @@
         "MlxMetal",
         "MlxCpu",
         "MlxCuda",
-        "Vllm"
+        "Vllm",
+        "TensorFoldMetal",
+        "TensorFoldCuda"
       ],
       "type": "string"
     },
@@ -164,6 +166,9 @@
             },
             {
               "$ref": "#/$defs/MlxJacclInstance"
+            },
+            {
+              "$ref": "#/$defs/TensorFoldInstance"
             }
           ]
         }
@@ -443,6 +448,9 @@
                 },
                 {
                   "$ref": "#/$defs/MlxJacclInstance"
+                },
+                {
+                  "$ref": "#/$defs/TensorFoldInstance"
                 }
               ]
             },
@@ -923,6 +931,21 @@
         },
         "sharding": {
           "$ref": "#/$defs/Sharding"
+        },
+        "tensorfold_context_length": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        "tensorfold_parallel": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -2010,6 +2033,9 @@
                 },
                 {
                   "$ref": "#/$defs/MlxJacclInstance"
+                },
+                {
+                  "$ref": "#/$defs/TensorFoldInstance"
                 }
               ]
             }
@@ -2168,10 +2194,12 @@
     "InstanceMeta": {
       "enum": [
         "MlxRing",
-        "MlxJaccl"
+        "MlxJaccl",
+        "TensorFold"
       ],
       "type": "string"
     },
+    "JsonValue": {},
     "LoadModel": {
       "additionalProperties": false,
       "properties": {
@@ -2397,6 +2425,16 @@
     "MemoryUsage": {
       "additionalProperties": false,
       "properties": {
+        "gpu_available": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Memory"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "gpu_working_set": {
           "anyOf": [
             {
@@ -2661,6 +2699,16 @@
           },
           "type": "array"
         },
+        "tensorfold_format": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "trust_remote_code": {
           "type": "boolean"
         },
@@ -2727,6 +2775,68 @@
       "x-extra": "ignore",
       "x-strict": false
     },
+    "NativeCapabilities": {
+      "properties": {
+        "backends": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "chip": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "engine": {
+          "const": "zig",
+          "type": "string"
+        },
+        "families": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "object"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "serve": {
+          "$ref": "#/$defs/ServeCapabilities"
+        },
+        "token_stream_versions": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "version": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "backends",
+        "engine",
+        "families",
+        "schema_version",
+        "serve",
+        "token_stream_versions",
+        "version"
+      ],
+      "type": "object",
+      "x-extra": "ignore",
+      "x-strict": true
+    },
     "NetworkInterfaceInfo": {
       "additionalProperties": false,
       "properties": {
@@ -2766,6 +2876,16 @@
                 "$ref": "#/$defs/Backend"
               },
               "type": "array"
+            },
+            "tensorfold": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/NativeCapabilities"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -3827,6 +3947,25 @@
       "x-extra": "forbid",
       "x-strict": true
     },
+    "ServeCapabilities": {
+      "properties": {
+        "flags": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "type": "object"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "flags"
+      ],
+      "type": "object",
+      "x-extra": "ignore",
+      "x-strict": true
+    },
     "SessionId": {
       "additionalProperties": false,
       "properties": {
@@ -4097,6 +4236,9 @@
               },
               {
                 "$ref": "#/$defs/MlxJacclInstance"
+              },
+              {
+                "$ref": "#/$defs/TensorFoldInstance"
               }
             ]
           },
@@ -4155,6 +4297,12 @@
         "node_system": {
           "additionalProperties": {
             "$ref": "#/$defs/SystemPerformanceProfile"
+          },
+          "type": "object"
+        },
+        "node_tensorfold": {
+          "additionalProperties": {
+            "$ref": "#/$defs/NativeCapabilities"
           },
           "type": "object"
         },
@@ -4535,6 +4683,51 @@
       },
       "required": [
         "TaskStatusUpdated"
+      ],
+      "type": "object"
+    },
+    "TensorFoldInstance": {
+      "additionalProperties": false,
+      "properties": {
+        "TensorFoldInstance": {
+          "additionalProperties": false,
+          "properties": {
+            "context_length": {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            "deployment_id": {
+              "type": "string"
+            },
+            "instance_id": {
+              "type": "string"
+            },
+            "parallel": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "shard_assignments": {
+              "$ref": "#/$defs/ShardAssignments"
+            }
+          },
+          "required": [
+            "instance_id",
+            "shard_assignments"
+          ],
+          "type": "object",
+          "x-extra": "forbid",
+          "x-strict": true
+        }
+      },
+      "required": [
+        "TensorFoldInstance"
       ],
       "type": "object"
     },
@@ -5287,6 +5480,7 @@
     "exo.shared.types.state:State._encode_topology": "76ab97afa6ac",
     "exo.shared.types.text_generation:ChatTemplateValue.<locals>.<lambda>": "f8b5b40c1afa",
     "exo.shared.types.worker.instances:BoundInstance.validate_shard_exists": "5a77bba6657e",
+    "exo.shared.types.worker.instances:TensorFoldInstance.validate_single_rank": "bfa0866e4fc1",
     "exo.shared.types.worker.runners:ShardAssignments.validate_runners_exist": "f8222d577d10",
     "exo.utils.pydantic_ext:TaggedModel._serialize": "a081cb7cdd55",
     "exo.utils.pydantic_ext:TaggedModel._validate": "e148573669ab",

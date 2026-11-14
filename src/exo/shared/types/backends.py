@@ -6,3 +6,5 @@ class Backend(str, Enum):
     MlxCpu = "MlxCpu"
     MlxCuda = "MlxCuda"
     Vllm = "Vllm"
+    TensorFoldMetal = "TensorFoldMetal"
+    TensorFoldCuda = "TensorFoldCuda"

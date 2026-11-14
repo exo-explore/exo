@@ -191,6 +191,7 @@ class ModelCard(FrozenModel):
     # config.json `model_type` of the checkpoint. The master looks up the model's family
     # (placement rules) by it; see exo.worker.engines.mlx.models.
     model_type: str | None = None
+    tensorfold_format: str | None = None
     quantization: str = ""
     base_model: str = ""
     capabilities: list[str] = []

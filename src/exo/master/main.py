@@ -25,6 +25,7 @@ from exo.routing.membership import (
     listed_nodes,
 )
 from exo.shared.apply import apply
+from exo.shared.tensorfold_support import prefill_link_refusal
 from exo.shared.types.commands import (
     AddCustomModelCard,
     AnnounceDeployments,
@@ -348,6 +349,13 @@ class Master:
                                 CustomModelCardDeleted(model_id=command.model_id)
                             )
                         case SetInstanceLink():
+                            refusal = prefill_link_refusal(
+                                [*command.prefill_instances, *command.decode_instances],
+                                self.state.instances,
+                            )
+                            if refusal is not None:
+                                logger.warning("Cannot link instances: {}", refusal)
+                                continue
                             link = InstanceLink(
                                 link_id=command.link_id,
                                 prefill_instances=list(
