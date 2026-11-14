@@ -1,3 +1,4 @@
+import importlib.util
 import os
 import shutil
 import sys
@@ -22,6 +23,7 @@ from exo.shared.types.profiling import (
     NetworkInterfaceInfo,
     ThunderboltBridgeStatus,
 )
+from exo.shared.types.tensorfold import NativeCapabilities
 from exo.shared.types.thunderbolt import (
     ThunderboltConnection,
     ThunderboltConnectivity,
@@ -32,6 +34,7 @@ from exo.utils.pydantic_ext import TaggedModel
 from exo.utils.task_group import TaskGroup
 
 from .macmon import MacmonMetrics
+from .metal_memory import get_metal_working_set
 from .system_info import (
     get_friendly_name,
     get_gpu_working_set,
@@ -40,6 +43,7 @@ from .system_info import (
     get_os_build_version,
     get_os_version,
 )
+from .tensorfold import cuda_memory_available, detected_backends, probe_tensorfold
 
 IS_DARWIN = sys.platform == "darwin"
 
@@ -355,6 +359,15 @@ async def _gather_iface_map() -> dict[str, str] | None:
     return ports
 
 
+def _has_mlx() -> bool:
+    if "mlx.core" in sys.modules:
+        return True
+    try:
+        return importlib.util.find_spec("mlx.core") is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def _has_nvml_cuda() -> bool:
     try:
         import pynvml as nvml  # pyright: ignore[reportMissingModuleSource]
@@ -372,16 +385,20 @@ def _has_nvml_cuda() -> bool:
 
 class NodeBackends(TaggedModel):
     backends: list[Backend]
+    tensorfold: NativeCapabilities | None = None
 
     @classmethod
     async def gather(cls) -> Self:
-        backends: list[Backend] = [Backend.MlxCpu]
-        if IS_DARWIN:
+        mlx = await to_thread.run_sync(_has_mlx)
+        backends: list[Backend] = [Backend.MlxCpu] if mlx else []
+        if IS_DARWIN and mlx:
             backends.append(Backend.MlxMetal)
-        if await to_thread.run_sync(_has_nvml_cuda):
+        if mlx and await to_thread.run_sync(_has_nvml_cuda):
             backends.append(Backend.MlxCuda)
             backends.append(Backend.Vllm)
-        return cls(backends=backends)
+        tensorfold = await to_thread.run_sync(probe_tensorfold)
+        backends.extend(detected_backends(tensorfold))
+        return cls(backends=backends, tensorfold=tensorfold)
 
 
 GatheredInfo = (
@@ -406,6 +423,7 @@ class InfoGatherer:
     _tg: TaskGroup = field(init=False, default_factory=TaskGroup)
     _psutil_enabled: bool = field(init=False, default=False)
     _gpu_working_set: Memory | None = field(init=False, default=None)
+    _gpu_available: Memory | None = field(init=False, default=None)
 
     async def _can_read_macmon_metrics(self, macmon_path: str) -> bool:
         try:
@@ -449,6 +467,16 @@ class InfoGatherer:
         except Exception as e:
             logger.opt(exception=e).warning("Error reading the GPU's working set")
         async with self._tg as tg:
+            backends = await NodeBackends.gather()
+            await self.info_sender.send(backends)
+            if (
+                Backend.TensorFoldMetal in backends.backends
+                and self._gpu_working_set is None
+            ):
+                self._gpu_working_set = await to_thread.run_sync(get_metal_working_set)
+            if Backend.TensorFoldCuda in backends.backends:
+                self._gpu_available = await to_thread.run_sync(cuda_memory_available)
+                tg.start_soon(self._monitor_cuda_memory)
             if IS_DARWIN:
                 tg.start_soon(self._monitor_macmon, 1)
                 tg.start_soon(self._monitor_system_profiler_thunderbolt_data, 5)
@@ -465,10 +493,13 @@ class InfoGatherer:
             if nc is not None:
                 await self.info_sender.send(nc)
 
-            await self.info_sender.send(await NodeBackends.gather())
-
     def shutdown(self):
         self._tg.cancel_tasks()
+
+    async def _monitor_cuda_memory(self) -> None:
+        while True:
+            await anyio.sleep(5)
+            self._gpu_available = await to_thread.run_sync(cuda_memory_available)
 
     async def _monitor_static_info(self, static_info_poll_interval: float):
         while True:
@@ -530,6 +561,7 @@ class InfoGatherer:
                     MemoryUsage.from_psutil(
                         override_memory=override_memory,
                         gpu_working_set=self._gpu_working_set,
+                        gpu_available=self._gpu_available,
                     )
                 )
             except Exception as e:

@@ -1,4 +1,9 @@
 <script lang="ts">
+  import {
+    RUNTIME_DESCRIPTIONS,
+    RUNTIME_LABELS,
+    type InstanceMeta,
+  } from "$lib/utils/runtimes";
   import { exoYellow } from "$lib/utils/brand_colors";
   import type {
     DownloadProgress,
@@ -30,7 +35,7 @@
     } | null;
     nodes?: Record<string, NodeInfo>;
     sharding?: "Pipeline" | "Tensor";
-    runtime?: "MlxRing" | "MlxJaccl";
+    runtime?: InstanceMeta;
     onLaunch?: () => void;
     tags?: string[];
     apiPreview?: PlacementPreview | null;
@@ -585,23 +590,19 @@
     <div class="flex items-center gap-1.5 mb-2">
       <span
         class="px-1.5 py-0.5 text-xs font-mono tracking-wider uppercase bg-exo-medium-gray/30 text-exo-light-gray border border-exo-medium-gray/40"
-        title={sharding === "Pipeline"
-          ? "Pipeline: splits model into sequential stages across devices. Lower network overhead."
-          : "Tensor: splits each layer across devices. Best with high-bandwidth connections (Thunderbolt)."}
+        title={runtime === "TensorFold"
+          ? "The complete model runs on one supported device."
+          : sharding === "Pipeline"
+            ? "Pipeline: splits model into sequential stages across devices. Lower network overhead."
+            : "Tensor: splits each layer across devices. Best with high-bandwidth connections (Thunderbolt)."}
       >
-        {sharding}
+        {runtime === "TensorFold" ? "Single device" : sharding}
       </span>
       <span
         class="px-1.5 py-0.5 text-xs font-mono tracking-wider uppercase bg-exo-medium-gray/30 text-exo-light-gray border border-exo-medium-gray/40"
-        title={runtime === "MlxRing"
-          ? "Standard (TCP/IP): works over any connection (Wi-Fi, Ethernet, Thunderbolt)."
-          : "RDMA over Thunderbolt: direct memory access between devices. Much faster when a model is split across devices."}
+        title={RUNTIME_DESCRIPTIONS[runtime]}
       >
-        {runtime === "MlxRing"
-          ? "Standard (TCP/IP)"
-          : runtime === "MlxJaccl"
-            ? "RDMA over Thunderbolt"
-            : runtime}
+        {RUNTIME_LABELS[runtime]}
       </span>
     </div>
 

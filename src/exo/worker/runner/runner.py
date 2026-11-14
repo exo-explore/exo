@@ -128,6 +128,11 @@ class Runner:
     def _start_prefill_server(self) -> int | None:
         if not ENABLE_DISAGGREGATION:
             return None
+        if (
+            not isinstance(self.generator, Engine)
+            or not self.generator.supports_prefill
+        ):
+            return None
         if self.device_rank != 0:
             return None
         if self._prefill_server_port is not None:
@@ -208,7 +213,12 @@ class Runner:
         self._start_task_reader()
         try:
             while True:
-                item = self._work_queue.get()
+                try:
+                    item = self._work_queue.get(timeout=1.0)
+                except queue.Empty:
+                    if isinstance(self.generator, Engine):
+                        self.generator.check_health()
+                    continue
                 if isinstance(item, _TaskStreamClosed):
                     break
                 if isinstance(item, PrefillTask):
@@ -225,10 +235,14 @@ class Runner:
             if self._prefill_server is not None:
                 self._prefill_server.stop()
                 self._prefill_server = None
-            self.task_receiver.close()
-            if self._task_reader_thread is not None:
-                self._task_reader_thread.join(timeout=5)
-                self._task_reader_thread = None
+            try:
+                if not isinstance(self.current_status, RunnerShutdown):
+                    self.generator.close()
+            finally:
+                self.task_receiver.close()
+                if self._task_reader_thread is not None:
+                    self._task_reader_thread.join(timeout=5)
+                    self._task_reader_thread = None
 
     def handle_first_task(self, task: Task):
         self.send_task_status(task.task_id, TaskStatus.Running)

@@ -14,6 +14,7 @@ from exo.shared.types.worker.instances import (
     BoundInstance,
     Instance,
     MlxJacclInstance,
+    TensorFoldInstance,
 )
 from exo.utils.channels import ClosedResourceError, MpReceiver, MpSender
 from exo.worker.engines.base import Builder
@@ -107,12 +108,12 @@ def entrypoint(
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 2048), hard), hard))
 
-    fast_synch = use_fast_synch(
-        bound_instance.instance, os.environ.get("EXO_FAST_SYNCH")
-    )
-    os.environ["MLX_METAL_FAST_SYNCH"] = "1" if fast_synch else "0"
-
-    logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
+    if not isinstance(bound_instance.instance, TensorFoldInstance):
+        fast_synch = use_fast_synch(
+            bound_instance.instance, os.environ.get("EXO_FAST_SYNCH")
+        )
+        os.environ["MLX_METAL_FAST_SYNCH"] = "1" if fast_synch else "0"
+        logger.info(f"Fast synch flag: {os.environ['MLX_METAL_FAST_SYNCH']}")
 
     # Import main after setting global logger - this lets us just import logger from this module
     try:
@@ -123,7 +124,15 @@ def entrypoint(
         from exo.worker.runner.runner import Runner
 
         builder: Builder
-        if bound_instance.is_image_model:
+        if isinstance(bound_instance.instance, TensorFoldInstance):
+            from exo.worker.engines.tensorfold.builder import TensorFoldBuilder
+
+            builder = TensorFoldBuilder(
+                model_id=bound_instance.bound_shard.model_card.model_id,
+                event_sender=event_sender_downcast,
+                cancel_receiver=cancel_receiver,
+            )
+        elif bound_instance.is_image_model:
             from exo.worker.engines.image.builder import MfluxBuilder
 
             builder = MfluxBuilder(

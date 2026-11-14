@@ -1,5 +1,13 @@
 <script lang="ts">
   import { exoYellow } from "$lib/utils/brand_colors";
+  import RuntimeSelector from "$lib/components/RuntimeSelector.svelte";
+  import {
+    alternateRuntimeSettings,
+    instanceRuntimeLabel,
+    isInstanceMeta,
+    RUNTIME_LABELS,
+    type InstanceMeta,
+  } from "$lib/utils/runtimes";
   import {
     describeDevice,
     pollDevicesOnOtherVersions,
@@ -958,12 +966,20 @@
     selectPreviewModel(modelId);
     onboardingStep = 7;
     // Launch via standard placement API (same as main dashboard)
-    // Single-node: force Pipeline/Ring regardless of persisted defaults
+    // Single-node MLX uses Pipeline/Ring.
     const nodeCount = topologyData()
       ? Object.keys(topologyData()!.nodes).length
       : 1;
-    const sharding = nodeCount <= 1 ? "Pipeline" : selectedSharding;
-    const instanceType = nodeCount <= 1 ? "MlxRing" : selectedInstanceType;
+    const sharding =
+      nodeCount <= 1 || selectedInstanceType === "TensorFold"
+        ? "Pipeline"
+        : selectedSharding;
+    const instanceType =
+      selectedInstanceType === "TensorFold"
+        ? "TensorFold"
+        : nodeCount <= 1
+          ? "MlxRing"
+          : selectedInstanceType;
     try {
       const placementResponse = await fetch(
         `/instance/placement?model_id=${encodeURIComponent(modelId)}&sharding=${sharding}&instance_meta=${instanceType}&min_nodes=1`,
@@ -1215,7 +1231,6 @@
   }
 
   let selectedSharding = $state<"Pipeline" | "Tensor">("Pipeline");
-  type InstanceMeta = "MlxRing" | "MlxJaccl";
 
   // Launch defaults persistence
   const LAUNCH_DEFAULTS_KEY = "exo-launch-defaults-v2";
@@ -1259,9 +1274,11 @@
     if (!defaults) return;
 
     // Apply sharding and instance type unconditionally
-    selectedSharding = defaults.sharding;
-    selectedInstanceType =
-      defaults.instanceType === "MlxRing" ? "MlxRing" : "MlxJaccl";
+    selectedInstanceType = isInstanceMeta(defaults.instanceType)
+      ? defaults.instanceType
+      : "MlxRing";
+    selectedSharding =
+      selectedInstanceType === "TensorFold" ? "Pipeline" : defaults.sharding;
 
     // Apply minNodes if valid (between 1 and maxNodes)
     if (
@@ -1269,7 +1286,8 @@
       defaults.minNodes >= 1 &&
       defaults.minNodes <= maxNodes
     ) {
-      selectedMinNodes = defaults.minNodes;
+      selectedMinNodes =
+        selectedInstanceType === "TensorFold" ? 1 : defaults.minNodes;
     }
 
     // Only apply model if it exists in the available models
@@ -1475,9 +1493,7 @@
   }
 
   const matchesSelectedRuntime = (runtime: InstanceMeta): boolean =>
-    selectedInstanceType === "MlxRing"
-      ? runtime === "MlxRing"
-      : runtime === "MlxJaccl";
+    selectedInstanceType === runtime;
 
   // Helper to check if a model can be launched (has valid placement with >= minNodes)
   function canModelFit(modelId: string): boolean {
@@ -1496,13 +1512,6 @@
       (p: PlacementPreview) => getPreviewNodeCount(p) >= selectedMinNodes,
     );
   }
-
-  // What a connection type is called everywhere: the Connection options
-  // under Advanced Options, the start cards and the running-model cards
-  const RUNTIME_LABELS: Record<InstanceMeta, string> = {
-    MlxRing: "Standard (TCP/IP)",
-    MlxJaccl: "RDMA over Thunderbolt",
-  };
 
   // Plain-language version of a placement error reported by the backend.
   // Matches the ValueError messages raised by place_instance in
@@ -1543,7 +1552,8 @@
     const failed = previews.filter((p) => p.error);
     const preferred =
       failed.find(
-        (p) => p.sharding === "Pipeline" && p.instance_meta === "MlxRing",
+        (p) =>
+          p.sharding === "Pipeline" && p.instance_meta === selectedInstanceType,
       ) ?? failed[0];
     return preferred?.error
       ? describePlacementError(preferred.error, modelId)
@@ -3005,11 +3015,7 @@
     }
 
     // Connection type from tag, with the same labels as the launch panel
-    let instanceType = "Unknown";
-    if (instanceTag === "MlxRingInstance")
-      instanceType = RUNTIME_LABELS.MlxRing;
-    else if (instanceTag === "MlxJacclInstance")
-      instanceType = RUNTIME_LABELS.MlxJaccl;
+    const instanceType = instanceRuntimeLabel(instanceTag) ?? "Unknown";
 
     const inst = instance as {
       shardAssignments?: {
@@ -3800,7 +3806,19 @@
   function pickOptimalPlacement(
     previews: PlacementPreview[],
   ): PlacementPreview | null {
-    const valid = previews.filter((p) => p.instance && !p.error);
+    const valid = previews.filter(
+      (p) =>
+        p.instance &&
+        !p.error &&
+        (selectedInstanceType === "TensorFold"
+          ? p.instance_meta === "TensorFold"
+          : p.instance_meta !== "TensorFold"),
+    );
+    if (selectedInstanceType === "TensorFold") {
+      return (
+        valid.find((preview) => preview.instance_meta === "TensorFold") ?? null
+      );
+    }
 
     // Check if any valid placement uses multiple nodes (indicates multi-node cluster)
     const hasMultiNode = valid.some((p) => getPreviewNodeCount(p) > 1);
@@ -4539,7 +4557,9 @@
   }
 
   // Available min nodes options based on topology (like old dashboard)
-  const availableMinNodes = $derived(Math.max(1, nodeCount));
+  const availableMinNodes = $derived(
+    selectedInstanceType === "TensorFold" ? 1 : Math.max(1, nodeCount),
+  );
 
   // Compute which min node values have valid previews for the current model/sharding/instance type
   // A minNodes value N is valid if there exists a placement with nodeCount >= N
@@ -4612,23 +4632,16 @@
         matchesSelectedRuntime(p.instance_meta) &&
         p.error,
     );
-    const otherSharding: "Pipeline" | "Tensor" =
-      selectedSharding === "Pipeline" ? "Tensor" : "Pipeline";
-    const otherRuntime: InstanceMeta =
-      selectedInstanceType === "MlxRing" ? "MlxJaccl" : "MlxRing";
     const alternative =
-      [
-        { sharding: selectedSharding, runtime: otherRuntime },
-        { sharding: otherSharding, runtime: selectedInstanceType },
-        { sharding: otherSharding, runtime: otherRuntime },
-      ].find(({ sharding, runtime }) =>
-        previewsData.some(
-          (p) =>
-            p.sharding === sharding &&
-            p.instance_meta === runtime &&
-            p.error === null &&
-            p.memory_delta_by_node !== null,
-        ),
+      alternateRuntimeSettings(selectedInstanceType, selectedSharding).find(
+        ({ sharding, runtime }) =>
+          previewsData.some(
+            (p) =>
+              p.sharding === sharding &&
+              p.instance_meta === runtime &&
+              p.error === null &&
+              p.memory_delta_by_node !== null,
+          ),
       ) ?? null;
     return {
       // Previews are limited to the node filter when one is active
@@ -4647,8 +4660,9 @@
     sharding: "Pipeline" | "Tensor",
     runtime: InstanceMeta,
   ) {
-    selectedSharding = sharding;
+    selectedSharding = runtime === "TensorFold" ? "Pipeline" : sharding;
     selectedInstanceType = runtime;
+    if (runtime === "TensorFold") selectedMinNodes = 1;
     saveLaunchDefaults();
   }
 
@@ -7249,172 +7263,126 @@
 
               {#if showAdvancedOptions}
                 <div class="mt-3 space-y-3 pl-1" in:fade={{ duration: 150 }}>
-                  <!-- Split by (sharding) -->
-                  <div>
-                    <div class="text-xs text-white/50 font-mono mb-2">
-                      Split by:
-                    </div>
-                    <div class="flex gap-2">
-                      <button
-                        onclick={() => {
-                          selectedSharding = "Pipeline";
-                          saveLaunchDefaults();
-                        }}
-                        class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding ===
-                        'Pipeline'
-                          ? 'bg-transparent text-exo-yellow border-exo-yellow'
-                          : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
-                      >
-                        <span
-                          class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedSharding ===
+                  <RuntimeSelector
+                    value={selectedInstanceType}
+                    onchange={(runtime) =>
+                      useLaunchSettings(selectedSharding, runtime)}
+                  />
+                  {#if selectedInstanceType !== "TensorFold"}
+                    <!-- Split by (sharding) -->
+                    <div>
+                      <div class="text-xs text-white/50 font-mono mb-2">
+                        Split by:
+                      </div>
+                      <div class="flex gap-2">
+                        <button
+                          onclick={() => {
+                            selectedSharding = "Pipeline";
+                            saveLaunchDefaults();
+                          }}
+                          class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding ===
                           'Pipeline'
-                            ? 'border-exo-yellow'
-                            : 'border-exo-medium-gray'}"
-                        >
-                          {#if selectedSharding === "Pipeline"}
-                            <span class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
-                            ></span>
-                          {/if}
-                        </span>
-                        Pipeline
-                      </button>
-                      <button
-                        onclick={() => {
-                          selectedSharding = "Tensor";
-                          saveLaunchDefaults();
-                        }}
-                        class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding ===
-                        'Tensor'
-                          ? 'bg-transparent text-exo-yellow border-exo-yellow'
-                          : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
-                      >
-                        <span
-                          class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedSharding ===
-                          'Tensor'
-                            ? 'border-exo-yellow'
-                            : 'border-exo-medium-gray'}"
-                        >
-                          {#if selectedSharding === "Tensor"}
-                            <span class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
-                            ></span>
-                          {/if}
-                        </span>
-                        Tensor
-                      </button>
-                    </div>
-                  </div>
-
-                  <!-- Connection (instance type) -->
-                  <div>
-                    <div class="text-xs text-white/50 font-mono mb-2">
-                      Connection:
-                    </div>
-                    <div class="flex flex-wrap gap-2 whitespace-nowrap">
-                      <button
-                        onclick={() => {
-                          selectedInstanceType = "MlxRing";
-                          saveLaunchDefaults();
-                        }}
-                        class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
-                        'MlxRing'
-                          ? 'bg-transparent text-exo-yellow border-exo-yellow'
-                          : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
-                      >
-                        <span
-                          class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
-                          'MlxRing'
-                            ? 'border-exo-yellow'
-                            : 'border-exo-medium-gray'}"
-                        >
-                          {#if selectedInstanceType === "MlxRing"}
-                            <span class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
-                            ></span>
-                          {/if}
-                        </span>
-                        {RUNTIME_LABELS.MlxRing}
-                      </button>
-                      <button
-                        onclick={() => {
-                          selectedInstanceType = "MlxJaccl";
-                          saveLaunchDefaults();
-                        }}
-                        class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedInstanceType ===
-                        'MlxJaccl'
-                          ? 'bg-transparent text-exo-yellow border-exo-yellow'
-                          : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
-                      >
-                        <span
-                          class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedInstanceType ===
-                          'MlxJaccl'
-                            ? 'border-exo-yellow'
-                            : 'border-exo-medium-gray'}"
-                        >
-                          {#if selectedInstanceType === "MlxJaccl"}
-                            <span class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
-                            ></span>
-                          {/if}
-                        </span>
-                        {RUNTIME_LABELS.MlxJaccl}
-                      </button>
-                    </div>
-                  </div>
-
-                  <!-- Devices to use (minimum nodes) -->
-                  <div>
-                    <div class="text-xs text-white/50 font-mono mb-2">
-                      Devices to use:
-                    </div>
-                    <!-- Discrete slider track with drag support -->
-                    <!-- svelte-ignore a11y_no_static_element_interactions -->
-                    <div
-                      bind:this={sliderTrackElement}
-                      class="relative h-16 cursor-pointer select-none px-2 pr-6"
-                      onmousedown={handleSliderMouseDown}
-                      ontouchstart={handleSliderTouchStart}
-                    >
-                      <!-- Track background -->
-                      <div
-                        class="absolute top-6 left-0 right-0 h-2 bg-exo-medium-gray/50 rounded-full"
-                      ></div>
-                      <!-- Active track (fills up to selected) -->
-                      {#if availableMinNodes > 1}
-                        <div
-                          class="absolute top-6 left-0 h-2 bg-white/30 rounded-full transition-all pointer-events-none"
-                          style="width: {((selectedMinNodes - 1) /
-                            (availableMinNodes - 1)) *
-                            100}%"
-                        ></div>
-                      {/if}
-                      <!-- Dots and labels for each device count -->
-                      {#each Array.from({ length: availableMinNodes }, (_, i) => i + 1) as n}
-                        {@const isValid = validMinNodeCounts().has(n)}
-                        {@const isSelected = selectedMinNodes === n}
-                        {@const position =
-                          availableMinNodes > 1
-                            ? ((n - 1) / (availableMinNodes - 1)) * 100
-                            : 50}
-                        <div
-                          class="absolute flex flex-col items-center pointer-events-none"
-                          style="left: {position}%; top: 0; transform: translateX(-50%);"
+                            ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                            : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
                         >
                           <span
-                            class="rounded-full transition-all {isSelected
-                              ? 'w-6 h-6 bg-exo-yellow shadow-[0_0_10px_color-mix(in_srgb,var(--exo-yellow)_60%,transparent)]'
-                              : isValid
-                                ? 'w-4 h-4 bg-exo-light-gray/70 mt-1'
-                                : 'w-3 h-3 bg-exo-medium-gray/50 mt-1.5'}"
-                          ></span>
-                          <span
-                            class="text-sm font-mono mt-1.5 tabular-nums transition-colors {isSelected
-                              ? 'text-exo-yellow font-bold'
-                              : isValid
-                                ? 'text-white/70'
-                                : 'text-white/30'}">{n}</span
+                            class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedSharding ===
+                            'Pipeline'
+                              ? 'border-exo-yellow'
+                              : 'border-exo-medium-gray'}"
                           >
-                        </div>
-                      {/each}
+                            {#if selectedSharding === "Pipeline"}
+                              <span
+                                class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
+                              ></span>
+                            {/if}
+                          </span>
+                          Pipeline
+                        </button>
+                        <button
+                          onclick={() => {
+                            selectedSharding = "Tensor";
+                            saveLaunchDefaults();
+                          }}
+                          class="flex items-center gap-2 py-1.5 px-3 text-xs font-mono border rounded transition-all duration-200 cursor-pointer {selectedSharding ===
+                          'Tensor'
+                            ? 'bg-transparent text-exo-yellow border-exo-yellow'
+                            : 'bg-transparent text-white/70 border-exo-medium-gray/50 hover:border-exo-yellow/50'}"
+                        >
+                          <span
+                            class="w-3 h-3 rounded-full border-2 flex items-center justify-center {selectedSharding ===
+                            'Tensor'
+                              ? 'border-exo-yellow'
+                              : 'border-exo-medium-gray'}"
+                          >
+                            {#if selectedSharding === "Tensor"}
+                              <span
+                                class="w-1.5 h-1.5 rounded-full bg-exo-yellow"
+                              ></span>
+                            {/if}
+                          </span>
+                          Tensor
+                        </button>
+                      </div>
                     </div>
-                  </div>
+
+                    <!-- Devices to use (minimum nodes) -->
+                    <div>
+                      <div class="text-xs text-white/50 font-mono mb-2">
+                        Devices to use:
+                      </div>
+                      <!-- Discrete slider track with drag support -->
+                      <!-- svelte-ignore a11y_no_static_element_interactions -->
+                      <div
+                        bind:this={sliderTrackElement}
+                        class="relative h-16 cursor-pointer select-none px-2 pr-6"
+                        onmousedown={handleSliderMouseDown}
+                        ontouchstart={handleSliderTouchStart}
+                      >
+                        <!-- Track background -->
+                        <div
+                          class="absolute top-6 left-0 right-0 h-2 bg-exo-medium-gray/50 rounded-full"
+                        ></div>
+                        <!-- Active track (fills up to selected) -->
+                        {#if availableMinNodes > 1}
+                          <div
+                            class="absolute top-6 left-0 h-2 bg-white/30 rounded-full transition-all pointer-events-none"
+                            style="width: {((selectedMinNodes - 1) /
+                              (availableMinNodes - 1)) *
+                              100}%"
+                          ></div>
+                        {/if}
+                        <!-- Dots and labels for each device count -->
+                        {#each Array.from({ length: availableMinNodes }, (_, i) => i + 1) as n}
+                          {@const isValid = validMinNodeCounts().has(n)}
+                          {@const isSelected = selectedMinNodes === n}
+                          {@const position =
+                            availableMinNodes > 1
+                              ? ((n - 1) / (availableMinNodes - 1)) * 100
+                              : 50}
+                          <div
+                            class="absolute flex flex-col items-center pointer-events-none"
+                            style="left: {position}%; top: 0; transform: translateX(-50%);"
+                          >
+                            <span
+                              class="rounded-full transition-all {isSelected
+                                ? 'w-6 h-6 bg-exo-yellow shadow-[0_0_10px_color-mix(in_srgb,var(--exo-yellow)_60%,transparent)]'
+                                : isValid
+                                  ? 'w-4 h-4 bg-exo-light-gray/70 mt-1'
+                                  : 'w-3 h-3 bg-exo-medium-gray/50 mt-1.5'}"
+                            ></span>
+                            <span
+                              class="text-sm font-mono mt-1.5 tabular-nums transition-colors {isSelected
+                                ? 'text-exo-yellow font-bold'
+                                : isValid
+                                  ? 'text-white/70'
+                                  : 'text-white/30'}">{n}</span
+                            >
+                          </div>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
                 </div>
               {/if}
             </div>

@@ -55,6 +55,13 @@ def make_cluster(
         pytest.fail("teardown: " + "; ".join(problems))
 
 
+def report_cluster(request: pytest.FixtureRequest, cluster: Cluster) -> None:
+    """Attach a cluster this test uses but did not make here (one a module shares) to a
+    failing test's report, as make_cluster's clusters are."""
+    stash = cast(pytest.Item, request.node).stash
+    stash.setdefault(_CLUSTERS, []).append(cluster)
+
+
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_makereport(
     item: pytest.Item, call: pytest.CallInfo[None]

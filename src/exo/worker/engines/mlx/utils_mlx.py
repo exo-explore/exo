@@ -64,6 +64,7 @@ from exo.shared.types.worker.instances import (
     BoundInstance,
     MlxJacclInstance,
     MlxRingInstance,
+    TensorFoldInstance,
 )
 from exo.shared.types.worker.runner_response import ModelLoadingResponse
 from exo.shared.types.worker.shards import (
@@ -115,6 +116,8 @@ def mlx_distributed_init(
         )
         # TODO: singleton instances
         match bound_instance.instance:
+            case TensorFoldInstance():
+                raise ValueError("TensorFold instances cannot initialize an MLX group")
             case MlxRingInstance(hosts_by_node=hosts_by_node, ephemeral_port=_):
                 hosts_for_node = hosts_by_node[bound_instance.bound_node_id]
                 hosts_json = HostList.from_hosts(hosts_for_node).model_dump_json()
