@@ -1,0 +1,33 @@
+model_id = "mlx-community/Qwen3.5-2B-MLX-4bit"
+n_layers = 24
+hidden_size = 2048
+num_key_value_heads = 2
+supports_tensor = true
+tasks = ["TextGeneration"]
+family = "qwen"
+model_type = "qwen3_5"
+tensorfold_format = "mlx-q4g64"
+quantization = "4bit"
+base_model = "Qwen3.5 2B"
+capabilities = ["text", "thinking", "thinking_toggle"]
+reasoning_dialect = "post_last_user"
+context_length = 262144
+backends = ["MlxMetal", "MlxCuda", "MlxCpu", "TensorFoldMetal", "TensorFoldCuda"]
+
+# Checkpoint revision 93760be4f1f69842a46bc13dbdc0f19e291392a3, model.safetensors bytes.
+[storage_size]
+in_bytes = 1722271785
+
+[sampling_defaults]
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+repetition_penalty = 1.0
+
+[sampling_defaults.non_thinking]
+temperature = 0.7
+top_p = 0.8
+top_k = 20
+min_p = 0.0
+repetition_penalty = 1.0

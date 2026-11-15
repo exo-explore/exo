@@ -6,6 +6,7 @@ from pydantic import Field, model_validator
 from exo.shared.models.model_cards import ModelTask
 from exo.shared.types.common import DeploymentId, Host, Id, NodeId
 from exo.shared.types.worker.runners import RunnerId, ShardAssignments, ShardMetadata
+from exo.shared.types.worker.shards import PipelineShardMetadata
 from exo.utils.pydantic_ext import FrozenModel, TaggedModel
 
 
@@ -30,6 +31,7 @@ InstanceRemovalReason = (
 class InstanceMeta(str, Enum):
     MlxRing = "MlxRing"
     MlxJaccl = "MlxJaccl"
+    TensorFold = "TensorFold"
 
 
 class BaseInstance(TaggedModel):
@@ -53,8 +55,33 @@ class MlxJacclInstance(BaseInstance):
     jaccl_coordinators: dict[NodeId, str]
 
 
-# TODO: Single node instance
-Instance = MlxRingInstance | MlxJacclInstance
+class TensorFoldInstance(BaseInstance):
+    context_length: int = Field(default=8192, gt=0)
+    parallel: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def validate_single_rank(self) -> "TensorFoldInstance":
+        assignments = self.shard_assignments
+        if (
+            len(assignments.node_to_runner) != 1
+            or len(assignments.runner_to_shard) != 1
+        ):
+            raise ValueError("TensorFold requires exactly one node and one runner")
+        shard = next(iter(assignments.runner_to_shard.values()))
+        if (
+            not isinstance(shard, PipelineShardMetadata)
+            or shard.device_rank != 0
+            or shard.world_size != 1
+            or shard.start_layer != 0
+            or shard.end_layer != shard.model_card.n_layers
+            or shard.n_layers != shard.model_card.n_layers
+            or assignments.model_id != shard.model_card.model_id
+        ):
+            raise ValueError("TensorFold requires the complete model on rank zero")
+        return self
+
+
+Instance = MlxRingInstance | MlxJacclInstance | TensorFoldInstance
 
 
 class BoundInstance(FrozenModel):

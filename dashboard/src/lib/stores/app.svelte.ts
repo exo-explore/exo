@@ -8,6 +8,7 @@
  */
 
 import type { RawDeployment } from "$lib/utils/deployments";
+import { instanceRuntimeLabel, type InstanceMeta } from "$lib/utils/runtimes";
 import { browser } from "$app/environment";
 import {
   extractApiErrorMessage,
@@ -204,7 +205,7 @@ export interface ModelDownloadStatus {
 export interface PlacementPreview {
   model_id: string;
   sharding: "Pipeline" | "Tensor";
-  instance_meta: "MlxRing" | "MlxJaccl";
+  instance_meta: InstanceMeta;
   instance: unknown | null;
   memory_delta_by_node: Record<string, number> | null;
   error: string | null;
@@ -256,6 +257,7 @@ interface RawStateResponse {
     {
       MlxRingInstance?: Instance;
       MlxJacclInstance?: Instance;
+      TensorFoldInstance?: Instance;
     }
   >;
   runners?: Record<string, unknown>;
@@ -1197,9 +1199,7 @@ class AppStore {
       return { sharding: null, instanceType: null };
     }
 
-    let instanceType: string | null = null;
-    if (instanceTag === "MlxRingInstance") instanceType = "MLX Ring";
-    else if (instanceTag === "MlxJacclInstance") instanceType = "MLX RDMA";
+    const instanceType = instanceRuntimeLabel(instanceTag);
 
     let sharding: string | null = null;
     const inst = instance as {

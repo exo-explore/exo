@@ -37,6 +37,8 @@ class DeploymentSpec(FrozenModel):
     min_nodes: int = Field(default=1, ge=1)
     # Nodes it must always include (the dashboard's node filter)
     pinned_nodes: list[NodeId] = []
+    tensorfold_context_length: int = Field(default=8192, gt=0)
+    tensorfold_parallel: int | None = Field(default=None, gt=0)
 
 
 # A deployment that has had no instance for this long is held until the user resumes it,

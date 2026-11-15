@@ -17,6 +17,7 @@
     MlxRingInstance?: Instance;
     MlxJacclInstance?: Instance;
     VllmInstance?: Instance;
+    TensorFoldInstance?: Instance;
   };
 
   let interval: ReturnType<typeof setInterval> | null = null;
@@ -43,6 +44,7 @@
     const ids = nodeIdentities();
     for (const [id, raw] of Object.entries(instances())) {
       const wrapper = raw as InstanceWrapper;
+      if (wrapper.TensorFoldInstance) continue;
       const inst =
         wrapper.MlxRingInstance ??
         wrapper.MlxJacclInstance ??

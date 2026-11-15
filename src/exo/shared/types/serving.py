@@ -12,6 +12,7 @@ from typing import Annotated, final
 from pydantic import TypeAdapter
 
 from exo.shared.types.chunks import (
+    EngineHeartbeatChunk,
     ErrorChunk,
     ImageChunk,
     PrefillProgressChunk,
@@ -62,6 +63,7 @@ ServeFrame = Annotated[
     | ImageChunk
     | ToolCallChunk
     | ErrorChunk
+    | EngineHeartbeatChunk
     | PrefillProgressChunk,
     ByTag(),
 ]

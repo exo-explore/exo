@@ -14,7 +14,9 @@ from exo.master.placement_utils import (
     get_shard_assignments,
     get_smallest_cycles,
 )
+from exo.master.tensorfold_placement import place_tensorfold, tensorfold_launch_refusal
 from exo.shared.models.model_cards import ModelId
+from exo.shared.tensorfold_support import runtime_reserve
 from exo.shared.topology import Topology
 from exo.shared.types.backends import Backend
 from exo.shared.types.commands import (
@@ -35,6 +37,7 @@ from exo.shared.types.profiling import (
     NodeRdmaCtlStatus,
 )
 from exo.shared.types.state import State
+from exo.shared.types.tensorfold import NativeCapabilities
 from exo.shared.types.worker.downloads import (
     DownloadCompleted,
     DownloadFailed,
@@ -49,6 +52,7 @@ from exo.shared.types.worker.instances import (
     InstanceRemovalReason,
     MlxJacclInstance,
     MlxRingInstance,
+    TensorFoldInstance,
 )
 from exo.shared.types.worker.runners import (
     RunnerId,
@@ -73,6 +77,7 @@ from exo.worker.engines.mlx.models.spec_registry import placement_rules_for_mode
 INSTANCE_META_BACKENDS: dict[InstanceMeta, list[Backend]] = {
     InstanceMeta.MlxRing: [Backend.MlxMetal, Backend.MlxCuda, Backend.MlxCpu],
     InstanceMeta.MlxJaccl: [Backend.MlxMetal],
+    InstanceMeta.TensorFold: [Backend.TensorFoldMetal, Backend.TensorFoldCuda],
 }
 
 
@@ -101,6 +106,13 @@ def instance_beyond_memory(instance: Instance, state: State) -> str | None:
     with it against its own state: two launches sent at the same time were otherwise both
     placed in memory that holds one. The API checks a launch the same way before sending it,
     but against its own state, which may not show the other launch yet."""
+    if isinstance(instance, TensorFoldInstance):
+        return tensorfold_launch_refusal(
+            instance,
+            memory_once_loaded(state.node_memory, state.instances, state.runners),
+            state.node_backends,
+            state.node_tensorfold,
+        )
     return shard_beyond_memory(
         instance.shard_assignments,
         usable_memory(
@@ -279,6 +291,10 @@ def memory_once_loaded(
             if isinstance(status, _NOT_PENDING):
                 continue
             shard = shard_bytes(assignments.runner_to_shard[runner_id])
+            if isinstance(instance, TensorFoldInstance):
+                shard += runtime_reserve(
+                    assignments.runner_to_shard[runner_id].model_card
+                )
             if isinstance(status, RunnerLoading) and status.total_layers > 0:
                 unloaded = max(0, status.total_layers - status.layers_loaded)
                 shard = shard * unloaded // status.total_layers
@@ -288,7 +304,12 @@ def memory_once_loaded(
             update={
                 "ram_available": Memory.from_bytes(
                     max(0, usage.ram_available.in_bytes - pending[node_id])
+                ),
+                "gpu_available": Memory.from_bytes(
+                    max(0, usage.gpu_available.in_bytes - pending[node_id])
                 )
+                if usage.gpu_available is not None
+                else None,
             }
         )
         for node_id, usage in node_memory.items()
@@ -309,6 +330,7 @@ def place_instance(
     node_identities: Mapping[NodeId, NodeIdentity] | None = None,
     allowed_nodes: AbstractSet[NodeId] | None = None,
     cycles: Sequence[Cycle] | None = None,
+    node_tensorfold: Mapping[NodeId, NativeCapabilities] | None = None,
 ) -> dict[InstanceId, Instance]:
     """Place an instance of the requested model on the best group of nodes.
 
@@ -320,6 +342,18 @@ def place_instance(
     """
     if runners is not None:
         node_memory = memory_once_loaded(node_memory, current_instances, runners)
+    if request.instance_meta == InstanceMeta.TensorFold:
+        return place_tensorfold(
+            request,
+            topology,
+            current_instances,
+            node_memory,
+            node_backends,
+            node_tensorfold or {},
+            required_nodes,
+            allowed_nodes,
+            download_status or {},
+        )
     node_memory = usable_memory(node_memory)
     if cycles is None:
         cycles = topology.get_cycles()
@@ -496,6 +530,10 @@ def place_instance(
     target_instances = dict(deepcopy(current_instances))
 
     match request.instance_meta:
+        case InstanceMeta.TensorFold:
+            raise AssertionError(
+                "TensorFold placement must use the single-node planner"
+            )
         case InstanceMeta.MlxJaccl:
             # TODO(evan): shard assignments should contain information about ranks, this is ugly
             def get_device_rank(node_id: NodeId) -> int:

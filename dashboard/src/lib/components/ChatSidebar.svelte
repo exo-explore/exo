@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { instanceRuntimeLabel } from "$lib/utils/runtimes";
   import {
     conversations,
     activeConversationId,
@@ -199,9 +200,7 @@
       return { sharding: null, instanceType: null };
     }
 
-    let instanceType: string | null = null;
-    if (instanceTag === "MlxRingInstance") instanceType = "MLX Ring";
-    else if (instanceTag === "MlxJacclInstance") instanceType = "MLX RDMA";
+    const instanceType = instanceRuntimeLabel(instanceTag);
 
     let sharding: string | null = null;
     const inst = instance as {

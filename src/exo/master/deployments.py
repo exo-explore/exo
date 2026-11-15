@@ -58,6 +58,7 @@ from exo.shared.types.worker.instances import (
     InstanceId,
     InstanceMeta,
     MlxJacclInstance,
+    TensorFoldInstance,
 )
 from exo.shared.types.worker.shards import Sharding, TensorShardMetadata
 
@@ -79,11 +80,19 @@ def spec_of(
         sharding=Sharding.Tensor
         if isinstance(shard, TensorShardMetadata)
         else Sharding.Pipeline,
-        instance_meta=InstanceMeta.MlxJaccl
+        instance_meta=InstanceMeta.TensorFold
+        if isinstance(instance, TensorFoldInstance)
+        else InstanceMeta.MlxJaccl
         if isinstance(instance, MlxJacclInstance)
         else InstanceMeta.MlxRing,
         min_nodes=min_nodes,
         pinned_nodes=list(pinned_nodes),
+        tensorfold_context_length=instance.context_length
+        if isinstance(instance, TensorFoldInstance)
+        else 8192,
+        tensorfold_parallel=instance.parallel
+        if isinstance(instance, TensorFoldInstance)
+        else None,
     )
 
 
@@ -142,6 +151,8 @@ def place_deployment(
                 sharding=spec.sharding,
                 instance_meta=instance_meta,
                 min_nodes=spec.min_nodes,
+                tensorfold_context_length=spec.tensorfold_context_length,
+                tensorfold_parallel=spec.tensorfold_parallel,
             ),
             state.topology,
             instances,
@@ -155,6 +166,7 @@ def place_deployment(
             node_identities=state.node_identities,
             allowed_nodes=allowed_nodes,
             cycles=cycles,
+            node_tensorfold=state.node_tensorfold,
         )
         (new,) = (
             instance

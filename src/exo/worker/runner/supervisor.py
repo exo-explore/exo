@@ -18,7 +18,7 @@ from loguru import logger
 from exo.shared.constants import EXO_RUNNER_STDERR_LOG, EXO_RUNNER_STDOUT_LOG
 from exo.shared.models.model_cards import ModelCard
 from exo.shared.request_errors import MODEL_STOPPED
-from exo.shared.types.chunks import Chunk, ErrorChunk
+from exo.shared.types.chunks import Chunk, EngineHeartbeatChunk, ErrorChunk
 from exo.shared.types.common import CommandId
 from exo.shared.types.events import (
     ChunkGenerated,
@@ -42,7 +42,7 @@ from exo.shared.types.tasks import (
     TaskStatus,
     TextGeneration,
 )
-from exo.shared.types.worker.instances import BoundInstance
+from exo.shared.types.worker.instances import BoundInstance, TensorFoldInstance
 from exo.shared.types.worker.runners import (
     RunnerConnected,
     RunnerConnecting,
@@ -61,6 +61,7 @@ from exo.utils.async_process import AsyncProcess
 from exo.utils.channels import MpReceiver, MpSender, Receiver, Sender, mp_channel
 from exo.utils.fs import ensure_parent_directory_exists
 from exo.utils.task_group import TaskGroup
+from exo.worker.engines.tensorfold.config import positive_seconds
 from exo.worker.runner.bootstrap import RunnerTerminationError, entrypoint
 from exo.worker.runner.diagnostics import (
     RunnerDiagnosticCollector,
@@ -127,14 +128,20 @@ SLOWEST_CPU_WARMUP_BYTES_PER_SECOND = 1_000_000
 MLX_USES_METAL = sys.platform == "darwin"
 
 
-def runner_load_timeout(model_card: ModelCard) -> float:
+def runner_load_timeout(model_card: ModelCard, *, tensorfold: bool = False) -> float:
+    if tensorfold:
+        return positive_seconds("EXO_TENSORFOLD_STARTUP_TIMEOUT", 900.0) + 10.0
     return (
         RUNNER_LOAD_TIMEOUT_BASE
         + model_card.storage_size.in_bytes / SLOWEST_DISK_BYTES_PER_SECOND
     )
 
 
-def runner_warmup_timeout(model_card: ModelCard, on_metal: bool) -> float:
+def runner_warmup_timeout(
+    model_card: ModelCard, on_metal: bool, *, tensorfold: bool = False
+) -> float:
+    if tensorfold:
+        return positive_seconds("EXO_TENSORFOLD_REQUEST_TIMEOUT", 300.0) + 10.0
     rate = (
         SLOWEST_METAL_WARMUP_BYTES_PER_SECOND
         if on_metal
@@ -551,14 +558,23 @@ class RunnerSupervisor:
                 self._step = _Step.start(
                     "load the model",
                     RunnerLoaded,
-                    runner_load_timeout(self.shard_metadata.model_card),
+                    runner_load_timeout(
+                        self.shard_metadata.model_card,
+                        tensorfold=isinstance(
+                            self.bound_instance.instance, TensorFoldInstance
+                        ),
+                    ),
                 )
             case StartWarmup():
                 self._step = _Step.start(
                     "warm up",
                     RunnerReady,
                     runner_warmup_timeout(
-                        self.shard_metadata.model_card, on_metal=MLX_USES_METAL
+                        self.shard_metadata.model_card,
+                        on_metal=MLX_USES_METAL,
+                        tensorfold=isinstance(
+                            self.bound_instance.instance, TensorFoldInstance
+                        ),
                     ),
                 )
             case _:
@@ -638,6 +654,8 @@ class RunnerSupervisor:
                         self.pending.pop(event.task_id).set()
                         continue
                     if isinstance(event, ChunkGenerated):
+                        if isinstance(event.chunk, EngineHeartbeatChunk):
+                            continue
                         # A request's output goes to its stream, never into the cluster's log
                         await self._send_output(event.command_id, event.chunk)
                         continue

@@ -561,6 +561,16 @@ def apply_node_timed_out(event: NodeTimedOut | NodeLeft, state: State) -> State:
             "node_thunderbolt_bridge": node_thunderbolt_bridge,
             "node_rdma_ctl": node_rdma_ctl,
             "node_identities": node_identities,
+            "node_backends": {
+                key: value
+                for key, value in state.node_backends.items()
+                if key != event.node_id
+            },
+            "node_tensorfold": {
+                key: value
+                for key, value in state.node_tensorfold.items()
+                if key != event.node_id
+            },
             "thunderbolt_bridge_cycles": thunderbolt_bridge_cycles,
         }
     )
@@ -685,6 +695,12 @@ def apply_node_gathered_info(event: NodeGatheredInfo, state: State) -> State:
                 **state.node_backends,
                 event.node_id: info.backends,
             }
+            capabilities = dict(state.node_tensorfold)
+            if info.tensorfold is None:
+                capabilities.pop(event.node_id, None)
+            else:
+                capabilities[event.node_id] = info.tensorfold
+            update["node_tensorfold"] = capabilities
 
     return state.model_copy(update=update)
 

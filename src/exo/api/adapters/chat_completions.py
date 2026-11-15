@@ -186,7 +186,9 @@ def chunk_to_response(
     """Convert a TokenChunk to a streaming ChatCompletionResponse."""
     # Build logprobs if available
     logprobs: Logprobs | None = None
-    if chunk.logprob is not None:
+    if chunk.logprobs_content is not None:
+        logprobs = Logprobs(content=chunk.logprobs_content)
+    elif chunk.logprob is not None:
         logprobs = Logprobs(
             content=[
                 LogprobsContentItem(
@@ -331,7 +333,9 @@ async def collect_chat_response(
                     thinking_parts.append(chunk.text)
                 else:
                     text_parts.append(chunk.text)
-                if chunk.logprob is not None:
+                if chunk.logprobs_content is not None:
+                    logprobs_content.extend(chunk.logprobs_content)
+                elif chunk.logprob is not None:
                     logprobs_content.append(
                         LogprobsContentItem(
                             token=chunk.text,

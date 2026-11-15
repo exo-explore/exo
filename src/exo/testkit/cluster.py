@@ -428,7 +428,6 @@ class ChatHandle:
 # --- the cluster -------------------------------------------------------------------------
 
 
-@final
 class Cluster:
     """N exo nodes on this machine. Use it as a context manager; `start()` waits for a cluster.
 
