@@ -1,5 +1,6 @@
 <script lang="ts">
   import { exoYellow } from "$lib/utils/brand_colors";
+  import { formatBytes } from "$lib/utils/format_bytes";
   import type {
     DownloadProgress,
     NodeInfo,
@@ -138,16 +139,6 @@
       return Math.round(2 * quantMultiplier);
 
     return 16; // Default fallback
-  }
-
-  function formatBytes(bytes: number, decimals = 1): string {
-    if (!bytes || bytes === 0) return "0 B";
-    const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB", "TB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return (
-      parseFloat((bytes / Math.pow(k, i)).toFixed(decimals)) + " " + sizes[i]
-    );
   }
 
   function formatSpeed(bps: number): string {
