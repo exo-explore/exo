@@ -60,11 +60,16 @@
   function formatBytes(bytes: number): string {
     if (!bytes || bytes <= 0) return "0B";
     const units = ["B", "KB", "MB", "GB"];
-    const i = Math.min(
+    let i = Math.min(
       Math.floor(Math.log(bytes) / Math.log(1024)),
       units.length - 1,
     );
-    const val = bytes / Math.pow(1024, i);
+    let val = bytes / Math.pow(1024, i);
+    // 1023.6 would print as 1024 of this unit: show 1.0 of the next one
+    if (val.toFixed(0) === "1024" && i < units.length - 1) {
+      i++;
+      val /= 1024;
+    }
     return `${val.toFixed(val >= 10 ? 0 : 1)}${units[i]}`;
   }
 

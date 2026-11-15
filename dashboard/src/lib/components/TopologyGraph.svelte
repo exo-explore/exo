@@ -1,5 +1,6 @@
 <script lang="ts">
   import { exoYellow } from "$lib/utils/brand_colors";
+  import { formatBytes as formatByteCount } from "$lib/utils/format_bytes";
   import { onMount, onDestroy } from "svelte";
   import * as d3 from "d3";
   import {
@@ -129,11 +130,7 @@
   const LOGO_NATIVE_HEIGHT = 1000;
 
   function formatBytes(bytes: number, decimals = 1): string {
-    if (!bytes || bytes === 0) return "0B";
-    const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB", "TB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(decimals)) + sizes[i];
+    return formatByteCount(bytes, decimals, "");
   }
 
   function getTemperatureColor(temp: number): string {
