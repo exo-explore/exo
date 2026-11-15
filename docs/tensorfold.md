@@ -23,15 +23,18 @@ gate remains in force.
 
 ## Requirements
 
-Use a TensorFold build with token stream protocol version 1, added by
-[ashhart/TensorFold#3285](https://github.com/ashhart/TensorFold/pull/3285).
+Use TensorFold 1.2.9 or later, the first release with token stream protocol
+version 1 ([ashhart/TensorFold#3285](https://github.com/ashhart/TensorFold/pull/3285)).
 TensorFold 1.2.8 and earlier lack it: EXO needs the exact committed token IDs,
 where they fall against the semantic streaming events, and the raw token
-position of each log probability row. Build the native executable using
-TensorFold's instructions for your platform, then check its capabilities:
+position of each log probability row. Release archives for macOS arm64 and
+Linux are on TensorFold's
+[releases page](https://github.com/ashhart/TensorFold/releases), each with
+`bin/tensorfold-native`. On macOS, Homebrew also installs it:
 
 ```bash
-export EXO_TENSORFOLD_BINARY=/absolute/path/to/tensorfold-native
+brew install ashhart/tensorfold/tensorfold
+export EXO_TENSORFOLD_BINARY="$(brew --prefix)/bin/tensorfold-native"
 "$EXO_TENSORFOLD_BINARY" capabilities --json
 ```
 
