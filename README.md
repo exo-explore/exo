@@ -113,7 +113,7 @@ To see which version a Mac runs:
 - in the app: choose **About EXO** from the menu bar icon, or open **Settings** › **General**;
 - from source: run `uv run exo --version`.
 
-The app and a source checkout number their versions differently. The app uses its release number (such as 1.0.71), while a source checkout uses the version in `pyproject.toml` (such as 0.3.70). Because the default [cluster name](#cluster-name) is the version, an app and a source checkout don't join each other by default. To mix them, give every device the same cluster name.
+The app and a source checkout number their versions differently. The app uses its release number (such as 1.0.71), while a source checkout uses the version in `pyproject.toml` (such as 0.3.70). Both use `exo` as the default [cluster name](#cluster-name), but devices also need the same wire version and build to join. The app names its own build, so giving an app and a source checkout the same custom name does not make them compatible. Use the same app release on all Macs, or matching source builds. Custom names keep clusters separate; see [Cluster name](#cluster-name) for the build requirements.
 
 If a Mac doesn't show up:
 
