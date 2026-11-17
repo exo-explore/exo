@@ -57,14 +57,23 @@ class PipelineFirstLayer(CustomMlxLayer):
         # as layer(x, mask, cache, prev_topk) and return (x, topk); the previous rank
         # sends the selection its last layer used once the context exceeds index_topk.
         self.shared_topk_size: int | None = None
+        # Set when this rank computes in another dtype than the checkpoint's (float32 on
+        # the CPU backend): the dtype every rank sends hidden states in. recv_like sizes
+        # the receive from its template, so a rank that received in its own dtype would
+        # wait for bytes a rank in the checkpoint's dtype never sends.
+        self.wire_dtype: mx.Dtype | None = None
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         if self.r != 0:
             # We want to avoid GPU timeout errors by evalling the distributed operation
             # so that it stays on CPU, which does not have a timeout.
             mx.eval(x)
-            x = mx.distributed.recv_like(x, (self.r - 1), group=self.group)
+            compute_dtype = x.dtype
+            template = x if self.wire_dtype is None else x.astype(self.wire_dtype)
+            x = mx.distributed.recv_like(template, (self.r - 1), group=self.group)
             mx.eval(x)
+            if x.dtype != compute_dtype:
+                x = x.astype(compute_dtype)
             if self.shared_topk_size is not None and len(args) >= 2:
                 mask, cache = args[0], args[1]
                 if _indexed_keys(x, cache) > self.shared_topk_size:
@@ -96,6 +105,8 @@ class PipelineLastLayer(CustomMlxLayer):
         self.queue_sends: bool = False
         # See PipelineFirstLayer.shared_topk_size.
         self.shared_topk_size: int | None = None
+        # See PipelineFirstLayer.wire_dtype.
+        self.wire_dtype: mx.Dtype | None = None
 
     def __call__(self, x: mx.array, *args: object, **kwargs: object) -> mx.array:
         cache = self.original_layer_signature.bind_partial(
@@ -114,6 +125,11 @@ class PipelineLastLayer(CustomMlxLayer):
             extra = tuple(rest)
         else:
             output = cast(mx.array, result)
+
+        # Sent and gathered in the wire dtype; returned in the dtype this rank computes in
+        compute_dtype = output.dtype
+        if self.wire_dtype is not None:
+            output = output.astype(self.wire_dtype)
 
         # Eval layer output to materialize it before send — this splits the graph
         # so the send is isolated and the receiving rank's recv can complete.
@@ -168,6 +184,9 @@ class PipelineLastLayer(CustomMlxLayer):
             output = gathered[-output.shape[0] :]
             mx.eval(output)
 
+        if output.dtype != compute_dtype:
+            output = output.astype(compute_dtype)
+
         if extra:
             return cast(mx.array, cast(object, (output, *extra)))
         return output
@@ -177,6 +196,12 @@ def set_pipeline_prefill(model: nn.Module, is_prefill: bool) -> None:
     for layer in model.layers:  # type: ignore
         if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
             layer.is_prefill = is_prefill
+
+
+def set_pipeline_wire_dtype(model: nn.Module, wire_dtype: mx.Dtype) -> None:
+    for layer in get_layers(get_inner_model(model)):
+        if isinstance(layer, (PipelineFirstLayer, PipelineLastLayer)):
+            layer.wire_dtype = wire_dtype
 
 
 def set_pipeline_queue_sends(model: nn.Module, queue_sends: bool) -> None:
