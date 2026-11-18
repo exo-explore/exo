@@ -384,6 +384,16 @@ class NodeBackends(TaggedModel):
         return cls(backends=backends)
 
 
+def _override_memory_bytes() -> int | None:
+    # OVERRIDE_MEMORY_MB replaces the measured available RAM, whichever source measured it.
+    override_memory_env = os.getenv("OVERRIDE_MEMORY_MB")
+    return (
+        Memory.from_mb(int(override_memory_env)).in_bytes
+        if override_memory_env
+        else None
+    )
+
+
 GatheredInfo = (
     MacmonMetrics
     | MemoryUsage
@@ -518,12 +528,7 @@ class InfoGatherer:
         if self._psutil_enabled:
             return
         self._psutil_enabled = True
-        override_memory_env = os.getenv("OVERRIDE_MEMORY_MB")
-        override_memory: int | None = (
-            Memory.from_mb(int(override_memory_env)).in_bytes
-            if override_memory_env
-            else None
-        )
+        override_memory = _override_memory_bytes()
         while True:
             try:
                 await self.info_sender.send(
@@ -599,6 +604,7 @@ class InfoGatherer:
         # Timeout: if macmon produces no output for this many seconds, restart it.
         # macmon writes every macmon_interval seconds, so 10x that is generous.
         read_timeout = max(macmon_interval * 10, 30)
+        override_memory = _override_memory_bytes()
         while True:
             try:
                 async with await open_process(
@@ -620,7 +626,7 @@ class InfoGatherer:
                             )
                             text = data.decode("utf-8", errors="replace").strip()
                             metrics = MacmonMetrics.from_raw_json(
-                                text, self._gpu_working_set
+                                text, self._gpu_working_set, override_memory
                             )
                         await self.info_sender.send(metrics)
             except TimeoutError:

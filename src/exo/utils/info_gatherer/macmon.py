@@ -50,7 +50,10 @@ class MacmonMetrics(TaggedModel):
 
     @classmethod
     def from_raw(
-        cls, raw: RawMacmonMetrics, gpu_working_set: Memory | None = None
+        cls,
+        raw: RawMacmonMetrics,
+        gpu_working_set: Memory | None = None,
+        override_memory: int | None = None,
     ) -> Self:
         return cls(
             system_profile=SystemPerformanceProfile(
@@ -62,7 +65,11 @@ class MacmonMetrics(TaggedModel):
             ),
             memory=MemoryUsage.from_bytes(
                 ram_total=raw.memory.ram_total,
-                ram_available=(raw.memory.ram_total - raw.memory.ram_usage),
+                ram_available=(
+                    raw.memory.ram_total - raw.memory.ram_usage
+                    if override_memory is None
+                    else override_memory
+                ),
                 swap_total=raw.memory.swap_total,
                 swap_available=(raw.memory.swap_total - raw.memory.swap_usage),
                 gpu_working_set=gpu_working_set,
@@ -70,5 +77,12 @@ class MacmonMetrics(TaggedModel):
         )
 
     @classmethod
-    def from_raw_json(cls, json: str, gpu_working_set: Memory | None = None) -> Self:
-        return cls.from_raw(RawMacmonMetrics.model_validate_json(json), gpu_working_set)
+    def from_raw_json(
+        cls,
+        json: str,
+        gpu_working_set: Memory | None = None,
+        override_memory: int | None = None,
+    ) -> Self:
+        return cls.from_raw(
+            RawMacmonMetrics.model_validate_json(json), gpu_working_set, override_memory
+        )

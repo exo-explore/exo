@@ -44,6 +44,15 @@ def test_memory_reports_carry_the_gpus_working_set() -> None:
     assert metrics.memory.gpu_working_set == working_set
 
 
+def test_the_memory_override_replaces_macmons_available_ram() -> None:
+    metrics = MacmonMetrics.from_raw_json(
+        _macmon_line(16 * GB, 4 * GB), override_memory=8 * GB
+    )
+
+    assert metrics.memory.ram_available == Memory.from_bytes(8 * GB)
+    assert metrics.memory.ram_total == Memory.from_bytes(16 * GB)
+
+
 def test_the_gpus_working_set_is_most_of_the_ram() -> None:
     working_set = get_gpu_working_set()
     if working_set is None:
