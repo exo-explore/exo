@@ -1,3 +1,5 @@
+import os
+
 # TODO: Do we want so many constants?
 #  I think we want a lot of these as parameters?
 
@@ -10,6 +12,9 @@ KEEP_KV_SIZE: int | None = 1600
 QUANTIZE_MODEL_MODE: str | None = "affine"
 CACHE_GROUP_SIZE: int = 64
 KV_CACHE_BITS: int | None = None
+# Prompt tokens per prefill forward pass. Larger is faster on short prompts; the attention
+# transients grow with it times the context, so a long prompt on a small machine may need less.
+PREFILL_STEP_SIZE: int = int(os.environ.get("EXO_PREFILL_STEP_SIZE", "4096"))
 
 DEFAULT_TOP_LOGPROBS: int = 5
 
