@@ -32,7 +32,11 @@ from exo.worker.engines.mlx.cache import (
     encode_prompt,
     make_kv_cache,
 )
-from exo.worker.engines.mlx.constants import DEFAULT_TOP_LOGPROBS, MAX_TOKENS
+from exo.worker.engines.mlx.constants import (
+    DEFAULT_TOP_LOGPROBS,
+    MAX_TOKENS,
+    PREFILL_STEP_SIZE,
+)
 from exo.worker.engines.mlx.generator.generate import (
     ban_token_ids,
     eos_ids_from_tokenizer,
@@ -109,7 +113,7 @@ class ExoBatchGenerator:
         self._mlx_gen = MlxBatchGenerator(
             model=self.model,
             stop_tokens=[[t] for t in eos_ids_from_tokenizer(self.tokenizer)],
-            prefill_step_size=4096,
+            prefill_step_size=PREFILL_STEP_SIZE,
         )
         self._step_count = 0
         # Cancelled sequences left to finish at their next step

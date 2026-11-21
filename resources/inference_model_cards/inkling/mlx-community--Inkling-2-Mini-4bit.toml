@@ -1,0 +1,19 @@
+model_id = "mlx-community/Inkling-2-Mini-4bit"
+n_layers = 24
+hidden_size = 2304
+num_key_value_heads = 8
+# Single node: exo has no tensor-parallel sharding for Inkling 2's looped layers.
+supports_tensor = false
+tasks = ["TextGeneration"]
+family = "inkling"
+model_type = "inkling2_loop"
+# Routed experts NVFP4/MXFP8, attention 4-bit affine (mlx-lm, ml-explore/mlx-lm#2086).
+quantization = "4bit"
+base_model = "Inkling 2 Mini"
+# Text only: the vision tower and the multi-token-prediction layers aren't used.
+capabilities = ["text", "thinking", "thinking_toggle", "code"]
+reasoning_dialect = "post_last_user"
+context_length = 262144
+backends = ["MlxMetal"]
+[storage_size]
+in_bytes = 17308326283

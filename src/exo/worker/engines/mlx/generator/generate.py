@@ -47,6 +47,7 @@ from exo.worker.engines.mlx.constants import (
     KV_BITS,
     KV_GROUP_SIZE,
     MAX_TOKENS,
+    PREFILL_STEP_SIZE,
 )
 from exo.worker.engines.mlx.generator.remote_prefill import remote_prefill
 from exo.worker.engines.mlx.models.registry import keeps_think_tags, model_type_of
@@ -335,7 +336,7 @@ def prefill(
 
     is_pipeline = _has_pipeline_communication_layer(model)
 
-    prefill_step_size = 4096
+    prefill_step_size = PREFILL_STEP_SIZE
 
     try:
         if is_pipeline and num_tokens >= prefill_step_size:
@@ -383,7 +384,7 @@ def prefill(
         non_trimmable = is_non_trimmable_cache_entry(c)
         if has_ssm and non_trimmable:
             assert pre_gen is not None
-            restored = copy_snapshot_entry(pre_gen.states[i])
+            restored = copy_snapshot_entry(pre_gen.states[i], c)
             if restored is not None:
                 cache[i] = restored  # type: ignore
         else:

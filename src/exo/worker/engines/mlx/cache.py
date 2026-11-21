@@ -1,7 +1,7 @@
 import gc
 import os
 from copy import deepcopy
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, final
 
 import mlx.core as mx
 import numpy as np
@@ -91,7 +91,30 @@ def _copy_arrays_cache(ac: ArraysCache) -> ArraysCache:
     return copy
 
 
-def _copy_cache_list(cl: CacheList) -> CacheList:
+@final
+class TrimmedTo:
+    """A trimmable cache in a snapshotted CacheList, kept as its length only.
+
+    A CacheList is snapshotted whole when one of its caches can't be trimmed (Inkling 2: each
+    layer visit's keys and values next to its convolution states). The trimmable ones, a
+    KVCache, only grow: their first ``offset`` positions never change, so the snapshot keeps
+    the length and a restore trims the live cache back to it. Copying their keys and values
+    instead made every prefill chunk's snapshot hold all of the prompt so far, which ran a
+    long prompt out of memory.
+    """
+
+    def __init__(self, offset: int):
+        self.offset = offset
+
+    @property
+    def nbytes(self) -> int:
+        return 0
+
+    def is_trimmable(self) -> bool:
+        return True
+
+
+def _snapshot_cache_list(cl: CacheList) -> CacheList:
     inners: list[object] = list(cl)  # type: ignore[reportUnknownArgumentType]
     copied: list[object] = []
     for inner in inners:
@@ -100,6 +123,36 @@ def _copy_cache_list(cl: CacheList) -> CacheList:
             copied.append(snap if snap is not None else deepcopy(inner))
         elif isinstance(inner, ArraysCache):
             copied.append(_copy_arrays_cache(inner))
+        elif isinstance(inner, KVCache) and type(inner) is KVCache:
+            copied.append(TrimmedTo(inner.offset))
+        else:
+            copied.append(deepcopy(inner))
+    return CacheList(*copied)
+
+
+def _copy_cache_list(cl: CacheList, live: object = None) -> CacheList:
+    """A cache to run with from a snapshotted CacheList; ``live`` is the cache it replaces,
+    whose trimmable caches are trimmed back to the snapshot's lengths (see TrimmedTo)."""
+    inners: list[object] = list(cl)  # type: ignore[reportUnknownArgumentType]
+    live_inners: list[object] | None = (
+        cast(list[object], list(live))  # type: ignore[reportUnknownArgumentType]
+        if isinstance(live, CacheList)
+        else None
+    )
+    copied: list[object] = []
+    for j, inner in enumerate(inners):
+        if isinstance(inner, RotatingKVCache):
+            snap = copy_rotating_kv_cache(inner)
+            copied.append(snap if snap is not None else deepcopy(inner))
+        elif isinstance(inner, ArraysCache):
+            copied.append(_copy_arrays_cache(inner))
+        elif isinstance(inner, TrimmedTo):
+            if live_inners is None:
+                raise ValueError("Restoring this snapshot needs the cache it replaces")
+            kv = live_inners[j]
+            assert isinstance(kv, KVCache) and kv.offset >= inner.offset
+            kv.trim(kv.offset - inner.offset)
+            copied.append(kv)
         else:
             copied.append(deepcopy(inner))
     return CacheList(*copied)
@@ -112,7 +165,10 @@ def copy_snapshot_entry(
     | DeepseekV4Cache
     | SnapshotCache
     | None,
+    live: object = None,
 ) -> ArraysCache | RotatingKVCache | CacheList | DeepseekV4Cache | SnapshotCache | None:
+    """A copy of a snapshot entry to run with. ``live``: the cache entry it replaces (needed for
+    a CacheList snapshot, whose trimmable caches are trimmed in place rather than copied)."""
     match entry:
         case None:
             return None
@@ -122,7 +178,7 @@ def copy_snapshot_entry(
         case ArraysCache():
             return _copy_arrays_cache(entry)
         case CacheList():
-            return _copy_cache_list(entry)
+            return _copy_cache_list(entry, live)
         case DeepseekV4Cache():
             return copy_deepseek_v4_cache(entry)
         case SnapshotCache():
@@ -144,7 +200,7 @@ def snapshot_ssm_states(cache: KVCacheType) -> CacheSnapshot:
         elif isinstance(c, RotatingKVCache):
             states.append(copy_rotating_kv_cache(c))
         elif isinstance(c, CacheList) and not bool(c.is_trimmable()):  # type: ignore[reportUnknownMemberType]
-            states.append(_copy_cache_list(c))
+            states.append(_snapshot_cache_list(c))
         elif isinstance(c, DeepseekV4Cache):
             states.append(copy_deepseek_v4_cache(c))
         elif isinstance(c, SnapshotCache):
@@ -468,7 +524,7 @@ def trim_cache(
             # It can only go back to a snapshot.
             if snapshot is None or snapshot.states[i] is None:
                 raise ValueError(f"Cannot trim {type(c).__name__} without a snapshot")
-            restored = copy_snapshot_entry(snapshot.states[i])
+            restored = copy_snapshot_entry(snapshot.states[i], c)
             assert restored is not None
             cache[i] = restored  # type: ignore
             continue
@@ -476,7 +532,7 @@ def trim_cache(
         # is restored from the snapshot like the other non-trimmable entries.
         if is_non_trimmable_cache_entry(c):
             if snapshot is not None and snapshot.states[i] is not None:
-                restored = copy_snapshot_entry(snapshot.states[i])
+                restored = copy_snapshot_entry(snapshot.states[i], c)
                 if restored is not None:
                     cache[i] = restored  # type: ignore
             elif isinstance(c, (ArraysCache, RotatingKVCache)):
